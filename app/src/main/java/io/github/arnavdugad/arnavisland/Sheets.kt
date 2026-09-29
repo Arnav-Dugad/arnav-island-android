@@ -267,13 +267,20 @@ import kotlin.math.sin
 /** Release notes in Markdown, shown simply: headings, bullets and paragraphs. */
 @Composable fun Notes(markdown: String) {
     val t = LocalTokens.current
+    // Links show their words; emphasis marks go; the release's own title (the sheet has one) is left out.
+    val link = Regex("\\[([^\\]]+)]\\([^)]+\\)"); val numbered = Regex("^(\\d+)\\. (.*)")
+    fun inline(text: String) = link.replace(text, "\$1").replace("**", "").replace("`", "").replace("*", "")
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        markdown.lines().map { it.trimEnd() }.filter { it.isNotBlank() && !it.startsWith("<!--") }.take(40).forEach { line ->
-            val clean = line.replace("**", "").replace("`", "")
+        markdown.lines().map { it.trimEnd() }.filter { it.isNotBlank() && !it.startsWith("<!--") && !it.startsWith("# ") }.take(60).forEach { line ->
+            val body = line.trimStart(); val indent = ((line.length - body.length) / 2).coerceAtMost(3).dp * 16
+            val number = numbered.matchEntire(body)
             when {
-                clean.startsWith("#") -> Text(clean.trimStart('#', ' '), style = Type.bodyStrong, color = t.text, modifier = Modifier.padding(top = 6.dp))
-                clean.trimStart().startsWith("- ") || clean.trimStart().startsWith("* ") -> Row { Text("•", style = Type.body, color = t.accent); Spacer(Modifier.width(8.dp)); Text(clean.trimStart().drop(2), style = Type.body, color = t.muted) }
-                else -> Text(clean, style = Type.body, color = t.muted)
+                body.startsWith("#") -> Text(inline(body.trimStart('#', ' ')), style = Type.bodyStrong, color = t.text, modifier = Modifier.padding(top = 8.dp))
+                body.startsWith("- ") || body.startsWith("* ") -> Row(Modifier.padding(start = indent)) {
+                    Text(if (indent > 0.dp) "◦" else "•", style = Type.body, color = t.accent); Spacer(Modifier.width(8.dp)); Text(inline(body.drop(2)), style = Type.body, color = t.muted) }
+                number != null -> Row(Modifier.padding(start = indent)) {
+                    Text("${number.groupValues[1]}.", style = Type.body, color = t.accent); Spacer(Modifier.width(8.dp)); Text(inline(number.groupValues[2]), style = Type.body, color = t.muted) }
+                else -> Text(inline(body), style = Type.body, color = t.muted, modifier = Modifier.padding(start = indent))
             }
         }
     }
