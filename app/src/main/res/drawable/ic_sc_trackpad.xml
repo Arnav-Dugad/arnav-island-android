@@ -1,0 +1,8 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="oval">
+            <gradient android:angle="270" android:startColor="#FF1B2436" android:endColor="#FF070A12" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/ic_sc_trackpad_glyph" android:left="12dp" android:top="12dp" android:right="12dp" android:bottom="12dp" />
+</layer-list>

@@ -9,6 +9,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -22,8 +23,10 @@ import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -37,6 +40,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.arnavdugad.arnavisland.link.Lyrics
 import io.github.arnavdugad.arnavisland.link.PcStatus
 import io.github.arnavdugad.arnavisland.link.PeerView
 import io.github.arnavdugad.arnavisland.link.Proto
@@ -45,21 +49,27 @@ import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/** Your PC from your phone: what plays there (its cover, where it is, the controls and the volume), and quick actions. */
-@Composable fun RemoteScreen(pc: PeerView?, status: PcStatus?, error: String?, cover: Bitmap?, onPair: () -> Unit, onLink: () -> Unit, padding: PaddingValues) {
+/**
+ * Your PC from your phone: what plays there (its cover, where it is, its lyrics, the controls), its sound on a dial,
+ * and quick actions (the clipboard, a link, lock, find it, the trackpad).
+ */
+@Composable fun RemoteScreen(pc: PeerView?, status: PcStatus?, error: String?, cover: Bitmap?, lyrics: Lyrics?, onPair: () -> Unit, onLink: () -> Unit, onTrackpad: () -> Unit, padding: PaddingValues) {
     val t = LocalTokens.current
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(horizontal = 20.dp)) {
         if (pc == null) { Welcome(onPair); return@Column }
-        ScreenTitle(pc.name, over = if (pc.online) "Your PC  ·  here" else "Your PC  ·  away") { LiveDot(pc.online) }
+        ScreenTitle(pc.name, over = when { !pc.online -> "Your PC  ·  away"; pc.internet -> "Your PC  ·  over the internet"; else -> "Your PC  ·  here" }) { LiveDot(pc.online) }
         // What the PC reports: its battery, how busy it is, and the weather where it is.
         if (status != null) Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (status.batteryPresent && status.battery >= 0) GlassChip("${status.battery}%", icon = if (status.charging) Icons.Rounded.BatteryChargingFull else Icons.Rounded.BatteryFull, iconTint = if (status.charging) t.good else if (status.battery <= 20) t.danger else Color.Unspecified)
             if (status.cpu in 0..100) GlassChip("CPU ${status.cpu}%", icon = Icons.Rounded.Memory)
-            if (status.weather.isNotBlank()) GlassChip(status.weather, icon = if (status.weather.contains("Clear", true)) Icons.Rounded.WbSunny else Icons.Rounded.Cloud)
+            if (status.weather.isNotBlank()) GlassChip(status.weather, icon = when (skyOf(status.weather)) {
+                Sky.Storm -> Icons.Rounded.Thunderstorm; Sky.Rain, Sky.Drizzle -> Icons.Rounded.Umbrella; Sky.Snow -> Icons.Rounded.AcUnit
+                else -> if (status.weather.contains("Clear", true)) Icons.Rounded.WbSunny else Icons.Rounded.Cloud })
         }
-        NowPlaying(pc, status, error, cover)
+        NowPlaying(pc, status, error, cover, lyrics)
+        if (status != null) { SectionLabel("Sound on ${pc.name}"); SoundPanel(pc, status) }
         SectionLabel("Quick actions")
-        QuickActions(pc, onLink)
+        QuickActions(pc, onLink, onTrackpad)
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -87,7 +97,7 @@ import java.nio.ByteOrder
         GlassPanel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp)) {
                 Text("On your PC", style = Type.micro, color = t.muted); Spacer(Modifier.height(8.dp))
-                Step(1, "Open Arnav Island’s Settings › Sharing"); Step(2, "Turn on “Share with my PCs”"); Step(3, "Keep both on the same Wi-Fi, then pair here")
+                Step(1, "Open Arnav Island’s Settings › Sharing"); Step(2, "Turn on “Share with my PCs”"); Step(3, "Pair here: on the same Wi-Fi, or anywhere with the island’s code")
             }
         }
     }
@@ -101,15 +111,15 @@ import java.nio.ByteOrder
 }
 
 /**
- * Now playing on the PC. The cover shrinks back a little while paused and leans with the phone; the play button morphs;
- * the scrubber and the volume answer the finger at once and tell the PC as they go.
+ * Now playing on the PC. The cover shrinks back a little while paused, leans with the phone and lifts off the card
+ * over a shadow that slides the other way; tapped, it turns over to the song's lyrics. The play button morphs; the
+ * scrubber answers the finger at once, clicking softly at each lyric line, and tells the PC as it goes.
  */
-@Composable private fun NowPlaying(pc: PeerView, status: PcStatus?, error: String?, cover: Bitmap?) {
+@Composable private fun NowPlaying(pc: PeerView, status: PcStatus?, error: String?, cover: Bitmap?, lyrics: Lyrics?) {
     val t = LocalTokens.current; val scope = rememberCoroutineScope(); val tilt = LocalTilt.current
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     // Optimistic state: what the finger just asked for, until the PC says so too.
     var playingAsked by remember { mutableStateOf<Pair<Boolean, Long>?>(null) }
-    var volumeAsked by remember { mutableStateOf<Pair<Float, Long>?>(null) }
     var seekAsked by remember { mutableStateOf<Pair<Double, Long>?>(null) }
     val playing = playingAsked?.takeIf { now - it.second < 1800 }?.first ?: (status?.playing == true)
     LaunchedEffect(playing) { while (true) { now = System.currentTimeMillis(); delay(if (playing) 250 else 1000) } }
@@ -126,23 +136,41 @@ import java.nio.ByteOrder
         }
         Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             val scale by springy(if (playing) 1f else .9f, .62f, 260f)
-            val shadow = t.accent
+            val shadow = t.accent; val reduced = LocalReduced.current
+            var flipped by rememberSaveable { mutableStateOf(false) }
+            val flip by animateFloatAsState(if (flipped) 180f else 0f, if (reduced) snap() else spring(dampingRatio = .76f, stiffness = 160f), label = "Flip")
             Box(Modifier.fillMaxWidth(.82f).aspectRatio(1f), contentAlignment = Alignment.Center) {
+                // Depth: a soft shadow that slides against the tilt, so the cover seems to float above the card.
+                Canvas(Modifier.fillMaxSize().graphicsLayer {
+                    val tl = tilt(); translationX = -tl.x * 16.dp.toPx(); translationY = 24.dp.toPx() - tl.y * 12.dp.toPx(); scaleX = scale * .94f; scaleY = scale * .9f
+                }) { drawCircle(Brush.radialGradient(listOf(Color.Black.copy(alpha = if (t.dark) .55f else .28f), Color.Transparent), center, size.minDimension * .56f), size.minDimension * .56f, center) }
                 // The cover's own light beneath it.
                 Canvas(Modifier.fillMaxSize().graphicsLayer { scaleX = scale * 1.02f; scaleY = scale * 1.02f; translationY = 18.dp.toPx() }) {
                     drawCircle(Brush.radialGradient(listOf(shadow.copy(alpha = .45f), Color.Transparent), center, size.minDimension * .62f), size.minDimension * .62f, center)
                 }
-                Crossfade(cover, animationSpec = tween(520), label = "Cover") { art ->
-                    Box(Modifier.fillMaxSize().graphicsLayer {
-                        val tl = tilt(); scaleX = scale; scaleY = scale; rotationY = tl.x * 7f; rotationX = -tl.y * 5f; cameraDistance = 14 * density
-                    }.clip(RoundedCornerShape(26.dp)).background(Brush.linearGradient(listOf(t.accent.copy(alpha = .5f), t.accent2.copy(alpha = .4f))))) {
-                        if (art != null) Image(art.asImageBitmap(), "Cover of ${status.title}", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                        else Icon(Icons.Rounded.MusicNote, null, tint = Color.White.copy(alpha = .8f), modifier = Modifier.size(72.dp).align(Alignment.Center))
-                        // A glint that slides over the cover as the phone tilts.
-                        Canvas(Modifier.fillMaxSize()) {
-                            val tl = tilt(); val x = size.width * (.5f + tl.x * .6f)
-                            drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = .16f), Color.Transparent), Offset(x - size.width * .5f, 0f), Offset(x + size.width * .1f, size.height)))
+                Box(Modifier.fillMaxSize().graphicsLayer {
+                    // It lifts toward the light as the phone tilts, and turns over for the lyrics.
+                    val tl = tilt(); scaleX = scale; scaleY = scale; translationX = tl.x * 6.dp.toPx(); translationY = tl.y * 4.dp.toPx()
+                    rotationY = flip + tl.x * 7f * (1f - flip / 90f).coerceIn(-1f, 1f); rotationX = -tl.y * 5f; cameraDistance = 16 * density
+                }.clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { if (pc.revision >= 3) flipped = !flipped }
+                    .semantics { contentDescription = if (flipped) "Lyrics. Tap to show the cover" else "Cover of ${status.title}. Tap for the lyrics" }) {
+                    if (flip < 90f) Crossfade(cover, animationSpec = tween(520), label = "Cover") { art ->
+                        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(26.dp)).background(Brush.linearGradient(listOf(t.accent.copy(alpha = .5f), t.accent2.copy(alpha = .4f))))) {
+                            if (art != null) Image(art.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            else Icon(Icons.Rounded.MusicNote, null, tint = Color.White.copy(alpha = .8f), modifier = Modifier.size(72.dp).align(Alignment.Center))
+                            // A glint that slides over the cover as the phone tilts.
+                            Canvas(Modifier.fillMaxSize()) {
+                                val tl = tilt(); val x = size.width * (.5f + tl.x * .6f)
+                                drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = .16f), Color.Transparent), Offset(x - size.width * .5f, 0f), Offset(x + size.width * .1f, size.height)))
+                            }
                         }
+                    } else Box(Modifier.fillMaxSize().graphicsLayer { rotationY = 180f }.clip(RoundedCornerShape(26.dp)).background(Color(0xFF0B0E14))) {
+                        // The lyrics, over the cover blurred into light.
+                        cover?.let { Image(it.asImageBitmap(), null, contentScale = ContentScale.Crop, alpha = .7f, modifier = Modifier.fillMaxSize().blur(30.dp)) }
+                        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .32f), Color.Black.copy(alpha = .58f)))))
+                        LyricsView(lyrics, { status.positionNow(System.currentTimeMillis()) }, playing, pc.name, onSeek = { to ->
+                            if (status.canSeek) { seekAsked = to to System.currentTimeMillis(); scope.launch { Hub.command(Proto.CMD_SEEK, f64(to)) } }
+                        }, Modifier.fillMaxSize())
                     }
                 }
             }
@@ -155,9 +183,11 @@ import java.nio.ByteOrder
             val position = seekAsked?.takeIf { now - it.second < 2500 }?.first ?: status.positionNow(now).let { if (playingAsked != null && !playing) status.position else it }
             var scrubbing by remember { mutableStateOf<Float?>(null) }
             val fraction = scrubbing ?: if (duration > 0) (position / duration).toFloat() else 0f
+            // Scrubbing clicks at each lyric line.
+            val ticks = remember(lyrics, duration) { lyrics?.lines?.takeIf { duration > 0 && lyrics.state == 2 && synced(it) }?.map { (it.time / duration).toFloat() } }
             GlassSlider(fraction, onChange = { scrubbing = it }, onDone = { f ->
                 scrubbing = null; if (status.canSeek && duration > 0) { val to = f * duration; seekAsked = to to System.currentTimeMillis(); scope.launch { Hub.command(Proto.CMD_SEEK, f64(to)) } }
-            }, color = Color.White.copy(alpha = if (t.dark) .92f else 1f).takeIf { t.dark } ?: t.text, height = 6.dp, description = "Position in ${status.title}", modifier = Modifier.fillMaxWidth())
+            }, color = Color.White.copy(alpha = if (t.dark) .92f else 1f).takeIf { t.dark } ?: t.text, height = 6.dp, description = "Position in ${status.title}", modifier = Modifier.fillMaxWidth(), ticks = ticks)
             Row(Modifier.fillMaxWidth()) {
                 Text(clock((scrubbing?.let { it * duration }) ?: position), style = Type.caption, color = t.muted)
                 Spacer(Modifier.weight(1f))
@@ -173,27 +203,47 @@ import java.nio.ByteOrder
                 }
                 GlassIconButton(Icons.Rounded.SkipNext, "Next", { scope.launch { Hub.command(Proto.CMD_MEDIA, byteArrayOf(3)) } }, size = 60.dp, iconSize = 30.dp, enabled = status.canNext)
             }
-            Spacer(Modifier.height(18.dp))
-            // The PC's volume.
-            val volume = volumeAsked?.takeIf { now - it.second < 1600 }?.first ?: (status.volume / 100f)
-            var lastSent by remember { mutableLongStateOf(0L) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                GlassIconButton(if (status.muted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp, if (status.muted) "Sound on" else "Mute",
-                    { scope.launch { Hub.command(Proto.CMD_MUTE, byteArrayOf(2)); Hub.refreshStatus() } }, size = 40.dp, iconSize = 19.dp)
-                Spacer(Modifier.width(12.dp))
-                GlassSlider(volume, onChange = { v ->
-                    volumeAsked = v to System.currentTimeMillis()
-                    if (System.currentTimeMillis() - lastSent > 110) { lastSent = System.currentTimeMillis(); scope.launch { Hub.command(Proto.CMD_VOLUME, byteArrayOf((v * 100).toInt().toByte()), quiet = true) } }
-                }, onDone = { v -> volumeAsked = v to System.currentTimeMillis(); scope.launch { Hub.command(Proto.CMD_VOLUME, byteArrayOf((v * 100).toInt().toByte())) } },
-                    modifier = Modifier.weight(1f), description = "Volume on ${pc.name}")
-                Spacer(Modifier.width(12.dp))
-                Text("${(volume * 100).toInt()}", style = Type.caption, color = t.muted, modifier = Modifier.width(28.dp), textAlign = TextAlign.End)
+            if (pc.revision >= 3) {
+                Spacer(Modifier.height(14.dp))
+                GlassChip(if (flipped) "Cover" else "Lyrics", icon = if (flipped) Icons.Rounded.Album else Icons.Rounded.Lyrics, selected = flipped) { flipped = !flipped }
             }
         }
     }
 }
 
-@Composable private fun QuickActions(pc: PeerView, onLink: () -> Unit) {
+/**
+ * The PC's sound: a dial to twist (with a click at every 5%), its middle to mute, and a few levels a tap away. It
+ * answers the finger at once and tells the PC as it turns.
+ */
+@Composable private fun SoundPanel(pc: PeerView, status: PcStatus) {
+    val t = LocalTokens.current; val scope = rememberCoroutineScope()
+    var asked by remember { mutableStateOf<Pair<Float, Long>?>(null) }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(asked) { now = System.currentTimeMillis(); delay(1700); now = System.currentTimeMillis() }
+    val volume = asked?.takeIf { now - it.second < 1600 }?.first ?: (status.volume / 100f)
+    var lastSent by remember { mutableLongStateOf(0L) }
+    fun send(v: Float, final: Boolean) {
+        asked = v to System.currentTimeMillis()
+        if (final || System.currentTimeMillis() - lastSent > 110) { lastSent = System.currentTimeMillis(); scope.launch { Hub.command(Proto.CMD_VOLUME, byteArrayOf((v * 100 + .5f).toInt().toByte()), quiet = !final) } }
+    }
+    GlassPanel(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            VolumeDial(volume, status.muted, onChange = { send(it, false) }, onDone = { send(it, true) },
+                onMute = { scope.launch { Hub.command(Proto.CMD_MUTE, byteArrayOf(2)); Hub.refreshStatus() } }, size = 168.dp, description = "Volume on ${pc.name}")
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(if (status.muted) "Muted" else "${(volume * 100 + .5f).toInt()}%", style = Type.headline, color = t.text)
+                Text("Twist the dial; tap its middle to mute", style = Type.caption, color = t.muted)
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(25, 50, 75).forEach { level -> GlassChip("$level", selected = !status.muted && (volume * 100 + .5f).toInt() == level) { send(level / 100f, true) } }
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun QuickActions(pc: PeerView, onLink: () -> Unit, onTrackpad: () -> Unit) {
     val t = LocalTokens.current; val scope = rememberCoroutineScope(); val context = LocalContext.current
     val clipboard = remember { context.getSystemService(ClipboardManager::class.java) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -217,6 +267,12 @@ import java.nio.ByteOrder
             GlassTile(Icons.Rounded.Language, "Open a link", "In ${pc.name}’s browser", Modifier.weight(1f).fillMaxHeight(), tint = t.accent2) { onLink() }
             GlassTile(Icons.Rounded.Lock, "Lock ${pc.name}", "Right away", Modifier.weight(1f).fillMaxHeight(), tint = t.warn) {
                 scope.launch { if (Hub.command(Proto.CMD_LOCK)?.ok == true) Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Locked ${pc.name}")) }
+            }
+        }
+        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            GlassTile(Icons.Rounded.NotificationsActive, "Find ${pc.name}", "It chimes and lights up", Modifier.weight(1f).fillMaxHeight(), tint = t.warn) { scope.launch { Hub.ringPc() } }
+            GlassTile(Icons.Rounded.Mouse, "Trackpad", "And the keyboard", Modifier.weight(1f).fillMaxHeight(), tint = t.accent2) {
+                if (pc.revision < 3 && pc.online) Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${pc.name}", "The trackpad needs version 0.20 or later")) else onTrackpad()
             }
         }
     }

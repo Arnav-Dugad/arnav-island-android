@@ -1,18 +1,28 @@
 package io.github.arnavdugad.arnavisland
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
@@ -26,10 +36,13 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.background
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -38,10 +51,15 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import io.github.arnavdugad.arnavisland.link.Proto
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val share = mutableStateOf<ShareRequest?>(null)
     private val opened = mutableStateOf<String?>(null)
+    private var pasteOnFocus = false
     private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,6 +86,21 @@ class MainActivity : ComponentActivity() {
     override fun onResume() { super.onResume(); Hub.visible = true; Hub.sendBattery() }
     override fun onPause() { Hub.visible = false; super.onPause() }
     override fun onStop() { super.onStop(); if (!Hub.prefs.getBoolean("reachable", true) && !isChangingConfigurations) LinkService.stop(this) }
+    /** Android lets the app read the clipboard only while it has the focus: a new copy goes to the PC now (universal clipboard, or Paste on PC). */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) return
+        if (pasteOnFocus) { pasteOnFocus = false; pasteNow() } else Hub.clipboardOut(this)
+    }
+    private fun pasteNow() {
+        val text = runCatching { getSystemService(android.content.ClipboardManager::class.java).primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString() }.getOrNull().orEmpty()
+        if (text.isBlank()) { Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Your clipboard is empty", "Copy something first")); return }
+        Hub.scope.launch {
+            for (i in 0 until 40) { if (Hub.link != null && Hub.pc()?.online == true) break; delay(100) }
+            val pc = Hub.pc() ?: return@launch
+            if (Hub.command(Proto.CMD_CLIP_SET, text.toByteArray())?.ok == true) Hub.banners.tryEmit(Banner(Banner.Kind.Clipboard, "On ${pc.name}’s clipboard", text.lineSequence().first().take(60)))
+        }
+    }
 
     private fun handle(intent: Intent?) {
         intent ?: return
@@ -81,27 +114,55 @@ class MainActivity : ComponentActivity() {
                 share.value = ShareRequest(uris.orEmpty().toList(), null)
             }
         }
-        intent.getStringExtra("open")?.let { opened.value = it }
+        when (val what = intent.getStringExtra("open")) {
+            null -> Unit
+            "paste" -> { pasteOnFocus = true; if (hasWindowFocus()) { pasteOnFocus = false; pasteNow() } }
+            else -> opened.value = what
+        }
+        intent.removeExtra("open")
         // Test builds only: a PC at a known address (an emulator can't hear discovery broadcasts).
         if (BuildConfig.DEBUG) intent.getStringExtra("qa_peer")?.let { spec ->
             val id = spec.substringBefore('@'); val host = spec.substringAfter('@').substringBeforeLast(':'); val port = spec.substringAfterLast(':').toIntOrNull() ?: return@let
-            Hub.scope.launch { repeat(50) { Hub.link?.let { it.addPeer(id, intent.getStringExtra("qa_name") ?: "Studio PC", host, port, 2, 2); return@launch }; delay(100) } }
+            Hub.scope.launch { repeat(50) { Hub.link?.let { it.addPeer(id, intent.getStringExtra("qa_name") ?: "Studio PC", host, port, 2, intent.getIntExtra("qa_revision", 3)); return@launch }; delay(100) } }
         }
     }
 }
 
+/** Android's battery saver: the light behind the glass stands still while it is on. */
+@Composable private fun rememberPowerSave(): Boolean {
+    val context = LocalContext.current
+    val power = remember { context.getSystemService(PowerManager::class.java) }
+    var on by remember { mutableStateOf(power?.isPowerSaveMode == true) }
+    DisposableEffect(power) {
+        val receiver = object : BroadcastReceiver() { override fun onReceive(c: Context, i: Intent) { on = power?.isPowerSaveMode == true } }
+        runCatching { ContextCompat.registerReceiver(context, receiver, IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED) }
+        onDispose { runCatching { context.unregisterReceiver(receiver) } }
+    }
+    return on
+}
+
+/** A new file for a photo taken for a PC (photos older than a day, long gone to the PC, are cleared). */
+private fun newPhoto(context: Context): Uri {
+    val dir = File(context.cacheDir, "camera").apply { mkdirs() }
+    dir.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 86_400_000L }?.forEach { it.delete() }
+    val file = File(dir, "Photo " + SimpleDateFormat("yyyy-MM-dd HH.mm.ss", Locale.US).format(Date()) + ".jpg")
+    return FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+}
+
 @Composable private fun App(share: ShareRequest?, onShareDone: () -> Unit, opened: String?, onOpened: () -> Unit, onDark: (Boolean) -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var appearance by remember { mutableIntStateOf(Hub.prefs.getInt("appearance", 0)) }
-    val dark = when (appearance) { 1 -> true; 2 -> false; else -> isSystemInDarkTheme() }
+    val context = LocalContext.current
+    var look by remember { mutableStateOf(Look(Hub.prefs.getInt("appearance", 0), Hub.prefs.getBoolean("glass", true), Hub.prefs.getBoolean("weatherGlass", true))) }
+    val dark = when (look.appearance) { 1 -> true; 2 -> false; else -> isSystemInDarkTheme() }
     LaunchedEffect(dark) { onDark(dark) }
     val reduced = remember { runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false) }
+    val saver = rememberPowerSave()
     val peers by Hub.peers.collectAsState(); val selected by Hub.selected.collectAsState()
     val status by Hub.status.collectAsState(); val statusError by Hub.statusError.collectAsState()
-    val running by Hub.running.collectAsState(); val failure by Hub.failure.collectAsState()
+    val running by Hub.running.collectAsState(); val failure by Hub.failure.collectAsState(); val internet by Hub.internet.collectAsState()
     val transfers by Hub.transfers.collectAsState(); val moments by Hub.moments.collectAsState()
     val offers by Hub.offers.collectAsState(); val music by Hub.music.collectAsState(); val ringing by Hub.ringing.collectAsState()
     val pairCode by Hub.pairCode.collectAsState(); val pairResult by Hub.pairResult.collectAsState()
+    val lyrics by Hub.lyrics.collectAsState()
     val playingHere by Player.now.collectAsState()
     val pc = Hub.pc(peers, selected)
 
@@ -113,7 +174,8 @@ class MainActivity : ComponentActivity() {
     val accent2 by animateColorAsState(art?.let { Color(it.second) } ?: Periwinkle, tween(900), label = "Accent2")
     val deep by animateColorAsState(art?.let { Color(it.deep) } ?: Color(0xFF0B1220), tween(900), label = "Deep")
     val tokens = tokens(dark, accent, accent2, deep)
-    val tilt = rememberTilt(!reduced)
+    // Without the glass, nothing follows the tilt: the sensor stays off.
+    val tilt = rememberTilt(!reduced && look.glass)
 
     // The remote's status while the app is on screen: every second while music plays, a little less often otherwise.
     val owner = LocalLifecycleOwner.current
@@ -132,55 +194,91 @@ class MainActivity : ComponentActivity() {
     }
 
     var pairing by remember { mutableStateOf(false) }
+    var pairByCode by remember { mutableStateOf(false) }
     var linkOpen by remember { mutableStateOf(false) }
     var updatesOpen by remember { mutableStateOf(false) }
+    var trackpadOpen by remember { mutableStateOf(false) }
+    var islandOpen by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(pairCode) { if (pairCode != null) pairing = true }
-    LaunchedEffect(opened) {
-        when (opened) { "pair" -> pairing = true; "updates" -> updatesOpen = true; "music_play" -> Hub.music.value?.let { Hub.answerMusic(it, true, context) } }
-        if (opened != null) onOpened()
+    LaunchedEffect(status?.available) { if (status?.available != true) islandOpen = false }
+
+    // A photo for a PC's Shelf: the camera app takes it, then it goes.
+    var photo by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Uri?>(null) }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken -> val uri = photo; photo = null; if (taken && uri != null) Hub.sendPhoto(uri) else Hub.photoFor = null }
+    fun takePhoto() {
+        if (pc == null && Hub.photoFor == null) { pairing = true; return }
+        runCatching { val uri = newPhoto(context); photo = uri; camera.launch(uri) }.onFailure { Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "No camera app", "Install one to take photos for your PC")) }
     }
+    val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { uris -> pc?.let { Hub.send(it.id, uris) } }
+    fun open(what: String) {
+        when (what) {
+            "pair" -> { pairByCode = false; pairing = true }; "pair_code" -> { pairByCode = true; pairing = true }
+            "updates" -> updatesOpen = true; "music_play" -> Hub.music.value?.let { Hub.answerMusic(it, true, context) }
+            "camera" -> takePhoto(); "trackpad" -> if (pc != null) trackpadOpen = true else pairing = true
+            "findpc" -> scope.launch { Hub.ringPc() }
+            "send_photos" -> if (pc != null) pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) else pairing = true
+        }
+    }
+    LaunchedEffect(opened) { if (opened != null) { open(opened); onOpened() } }
+    val openNow by rememberUpdatedState<(String) -> Unit> { what -> open(what) }
+    LaunchedEffect(Unit) { Hub.requests.collect { openNow(it) } }
     val banner by rememberBanner()
 
-    CompositionLocalProvider(LocalTokens provides tokens, LocalReduced provides reduced, LocalTilt provides { tilt.value }) {
+    CompositionLocalProvider(LocalTokens provides tokens, LocalReduced provides reduced, LocalTilt provides { tilt.value }, LocalGlassOn provides look.glass) {
         MaterialTheme(colorScheme = if (dark) darkColorScheme(primary = accent) else lightColorScheme(primary = accent)) {
             val ambient = rememberLayerBackdrop(); val screen = rememberLayerBackdrop()
             val floating = remember(ambient, screen) { GlassBackdrops(ambient, screen) }
             val content = remember(ambient) { GlassBackdrops(ambient, ambient) }
             val tabs = listOf(TabItem("Remote", Icons.Rounded.Laptop), TabItem("Send", Icons.AutoMirrored.Rounded.Send), TabItem("Shelf", Icons.Rounded.Inventory2), TabItem("Devices", Icons.Rounded.Devices))
             val pager = rememberPagerState { tabs.size }
-            val scope = rememberCoroutineScope()
-            Box(Modifier.fillMaxSize()) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val density = LocalDensity.current
+                val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding(); val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
                 Box(Modifier.fillMaxSize().layerBackdrop(screen)) {
-                    AmbientBackground(tokens.accent, tokens.accent2, tokens.deep, status?.playing == true, Modifier.layerBackdrop(ambient))
+                    AmbientBackground(tokens.accent, tokens.accent2, tokens.deep, status?.playing == true, Modifier.layerBackdrop(ambient), still = saver)
                     CompositionLocalProvider(LocalGlass provides content) {
                         val insets = WindowInsets.systemBars.asPaddingValues()
                         val padding = PaddingValues(top = insets.calculateTopPadding() + 58.dp, bottom = insets.calculateBottomPadding() + if (playingHere != null) 180.dp else 104.dp)
                         HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
                             when (page) {
-                                0 -> RemoteScreen(pc, status, statusError, cover, { pairing = true }, { linkOpen = true }, padding)
-                                1 -> SendScreen(pc, peers, transfers, moments, { linkOpen = true }, { pairing = true }, padding)
+                                0 -> RemoteScreen(pc, status, statusError, cover, lyrics, { pairing = true }, { linkOpen = true }, { trackpadOpen = true }, padding)
+                                1 -> SendScreen(pc, peers, transfers, moments, { takePhoto() }, { pairing = true }, padding)
                                 2 -> ShelfScreen(pc, transfers, pager.currentPage == 2, { pairing = true }, padding)
-                                else -> DevicesScreen(peers, pc, running, failure, appearance, { appearance = it; Hub.prefs.edit().putInt("appearance", it).apply() }, { pairing = true }, { updatesOpen = true }, padding)
+                                else -> DevicesScreen(peers, pc, running, failure, internet, look, { next ->
+                                    look = next; Hub.prefs.edit().putInt("appearance", next.appearance).putBoolean("glass", next.glass).putBoolean("weatherGlass", next.weather).apply()
+                                }, { pairByCode = false; pairing = true }, { pairByCode = true; pairing = true }, { updatesOpen = true }, padding)
                             }
                         }
                     }
                 }
                 // Content fades out under the status bar and the island, as it scrolls up.
-                Box(Modifier.fillMaxWidth().height(WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 64.dp)
+                Box(Modifier.fillMaxWidth().height(top + 64.dp)
                     .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(tokens.deep.copy(alpha = if (dark) .92f else .8f).compositeOverBlack(dark), Color.Transparent))))
+                // The weather where the PC is, on the glass; and files in flight, between this phone's island and the PC.
+                if (look.weather) WeatherGlass(skyOf(status?.weather.orEmpty()))
+                val h = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
+                HandoffParticles(transfers, Offset(.5f, with(density) { (top + 27.dp).toPx() } / h), Offset(.5f, with(density) { (maxHeight - bottom - 130.dp).toPx() } / h))
                 CompositionLocalProvider(LocalGlass provides floating) {
-                    MiniIsland(status, cover, pc?.name, pc?.online == true, banner, transfers.values.maxByOrNull { it.id }, { scope.launch { pager.animateScrollToPage(if (transfers.isNotEmpty()) 1 else 0) } },
-                        Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp, start = 16.dp, end = 16.dp))
+                    // The island opened: a tap anywhere else (or back) folds it away.
+                    if (islandOpen) {
+                        Box(Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null) { islandOpen = false })
+                        BackHandler { islandOpen = false }
+                    }
+                    MiniIsland(status, cover, pc?.name, pc?.online == true, banner, transfers.values.maxByOrNull { it.id },
+                        { if (islandOpen) islandOpen = false else if (status?.available == true && banner == null) islandOpen = true else scope.launch { pager.animateScrollToPage(if (transfers.isNotEmpty()) 1 else 0) } },
+                        Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp, start = 16.dp, end = 16.dp), expanded = islandOpen, internet = pc?.internet == true)
                     GlassTabBar(tabs, pager.currentPage + pager.currentPageOffsetFraction, { scope.launch { pager.animateScrollToPage(it) } },
                         Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 22.dp, vertical = 14.dp).widthIn(max = 460.dp).fillMaxWidth())
                     androidx.compose.animation.AnimatedVisibility(playingHere != null, Modifier.align(Alignment.BottomCenter),
                         enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut()) {
                         playingHere?.let { PlayingHere(it, Modifier.navigationBarsPadding().padding(start = 22.dp, end = 22.dp, bottom = 92.dp).widthIn(max = 460.dp).fillMaxWidth()) }
                     }
-                    PairSheet(pairing, peers, pairCode, pairResult) { pairing = false }
+                    PairSheet(pairing, peers, pairCode, pairResult, { pairing = false }, startWithCode = pairByCode)
                     OfferSheet(offers.firstOrNull())
                     MusicSheet(music, transfers)
                     LinkSheet(linkOpen, pc) { linkOpen = false }
+                    TrackpadSheet(trackpadOpen, pc) { trackpadOpen = false }
                     UpdatesSheet(updatesOpen) { updatesOpen = false }
                     ShareSheet(share, peers, pc, onShareDone)
                     WhatsNewSheet(whatsNew) { whatsNew = null }

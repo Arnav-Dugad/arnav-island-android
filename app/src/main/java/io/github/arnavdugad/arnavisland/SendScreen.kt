@@ -44,8 +44,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Sending to your PC (photos, files, the clipboard, a link), transfers as they go, and what came and went. */
-@Composable fun SendScreen(pc: PeerView?, peers: List<PeerView>, transfers: Map<Int, Transfer>, moments: List<Moment>, onLink: () -> Unit, onPair: () -> Unit, padding: PaddingValues) {
+/** Sending to your PC (photos, files, a photo taken for its Shelf, the clipboard), transfers as they go, and what came and went. */
+@Composable fun SendScreen(pc: PeerView?, peers: List<PeerView>, transfers: Map<Int, Transfer>, moments: List<Moment>, onCamera: () -> Unit, onPair: () -> Unit, padding: PaddingValues) {
     val t = LocalTokens.current; val context = LocalContext.current; val scope = rememberCoroutineScope()
     val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { uris -> pc?.let { Hub.send(it.id, uris) } }
     val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> pc?.let { Hub.send(it.id, uris) } }
@@ -63,14 +63,18 @@ import kotlinx.coroutines.withContext
         }
         Spacer(Modifier.height(12.dp))
         Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            GlassTile(Icons.Rounded.PhotoCamera, "Camera", if (pc.revision >= 3) "Straight onto ${pc.name}’s Shelf" else "A photo, to ${pc.name}", Modifier.weight(1f).fillMaxHeight(), tint = t.accent2, enabled = ready) { onCamera() }
             GlassTile(Icons.Rounded.ContentPaste, "Clipboard", "Paste it on ${pc.name}", Modifier.weight(1f).fillMaxHeight(), enabled = ready) {
                 val clipboard = context.getSystemService(ClipboardManager::class.java)
                 val text = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
                 if (text.isBlank()) Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Your clipboard is empty")) else scope.launch { if (Hub.command(Proto.CMD_CLIP_SET, text.toByteArray())?.ok == true) Hub.banners.tryEmit(Banner(Banner.Kind.Clipboard, "On ${pc.name}’s clipboard", text.lineSequence().first().take(60))) }
             }
-            GlassTile(Icons.Rounded.Language, "A link", "Opens on ${pc.name}", Modifier.weight(1f).fillMaxHeight(), tint = t.accent2, enabled = ready) { onLink() }
         }
-        if (!ready) Text("${pc.name} is away. Files go once it is on the same Wi-Fi with Arnav Island running.", style = Type.caption, color = t.muted, modifier = Modifier.padding(top = 12.dp, start = 6.dp))
+        if (!ready) Text("${pc.name} is away. Files go once Arnav Island runs there, on this Wi-Fi or any other.", style = Type.caption, color = t.muted, modifier = Modifier.padding(top = 12.dp, start = 6.dp))
+        else if (pc.internet) Row(Modifier.padding(top = 12.dp, start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Public, null, tint = t.muted, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(6.dp))
+            Text("${pc.name} is on another network: files go over the internet, end-to-end encrypted", style = Type.caption, color = t.muted)
+        }
         // Transfers under way.
         AnimatedVisibility(transfers.isNotEmpty(), enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             Column {
@@ -129,7 +133,7 @@ import kotlinx.coroutines.withContext
         val l = list
         when {
             pc == null -> Empty(Icons.Rounded.Inventory2, "Pair with your PC", "Then take anything on its Shelf with a tap") { GlassButton(onPair, prominent = true) { Text("Pair", style = Type.bodyStrong) } }
-            !pc.online -> Empty(Icons.Rounded.WifiOff, "${pc.name} is away", "Its Shelf shows here when it is on the same Wi-Fi")
+            !pc.online -> Empty(Icons.Rounded.WifiOff, "${pc.name} is away", "Its Shelf shows here when Arnav Island runs there")
             l == null -> Empty(Icons.Rounded.Inventory2, "Looking at ${pc.name}’s Shelf…", "")
             l.error != null -> Empty(Icons.Rounded.ErrorOutline, "Couldn’t look", l.error)
             !l.shared -> Empty(Icons.Rounded.Lock, "${pc.name} keeps its Shelf to itself", "Turn on “My PCs can take from the Shelf” in the island’s Settings › Sharing")

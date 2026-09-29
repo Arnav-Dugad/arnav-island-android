@@ -37,6 +37,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -63,7 +67,7 @@ import kotlin.math.sin
     val t = LocalTokens.current; val density = LocalDensity.current; val scope = rememberCoroutineScope()
     val drag = remember { Animatable(0f) }
     LaunchedEffect(visible) { if (visible) drag.snapTo(0f) }
-    if (visible) BackHandler(enabled = dismissible) { onDismiss() }
+    if (visible) { BackHandler(enabled = dismissible) { onDismiss() }; DisposableEffect(Unit) { Scene.sheets++; onDispose { Scene.sheets-- } } }
     AnimatedVisibility(visible, enter = fadeIn(tween(220)), exit = fadeOut(tween(220))) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (t.dark) .5f else .28f)).clickable(remember { MutableInteractionSource() }, null, enabled = dismissible) { onDismiss() })
     }
@@ -92,14 +96,17 @@ import kotlin.math.sin
 /**
  * Pairing. The radar looks for your PCs (those with sharing on, on this Wi-Fi) and each pops up around it; tapping one
  * asks it to pair, and both show the same six digits, which roll in here. A PC that starts pairing opens this too.
+ * On another network, the island's own code (Shelf › Nearby › Pair with a code) pairs through the relay, the same way.
  */
-@Composable fun PairSheet(visible: Boolean, peers: List<PeerView>, code: LinkEvent.PairCode?, result: LinkEvent.Paired?, onDismiss: () -> Unit) {
+@Composable fun PairSheet(visible: Boolean, peers: List<PeerView>, code: LinkEvent.PairCode?, result: LinkEvent.Paired?, onDismiss: () -> Unit, startWithCode: Boolean = false) {
     val t = LocalTokens.current
     var asking by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(visible) { if (visible) { asking = null; Hub.pairResult.value = null } }
-    LaunchedEffect(result) { if (result?.ok == true) { delay(1600); onDismiss() } else if (result != null) asking = null }
+    var byCode by remember { mutableStateOf(false) }
+    var connecting by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) { if (visible) { asking = null; connecting = false; byCode = startWithCode; Hub.pairResult.value = null } }
+    LaunchedEffect(result) { if (result?.ok == true) { delay(1600); onDismiss() } else if (result != null) { asking = null; connecting = false } }
     GlassSheet(visible, { if (code != null) Hub.confirmPair(false); onDismiss() }) {
-        AnimatedContent(when { result?.ok == true -> 3; code != null -> 2; asking != null -> 1; else -> 0 }, transitionSpec = { (fadeIn(tween(260)) + scaleIn(initialScale = .94f)) togetherWith fadeOut(tween(160)) }, label = "Pair") { stage ->
+        AnimatedContent(when { result?.ok == true -> 3; code != null -> 2; byCode -> 4; asking != null -> 1; else -> 0 }, transitionSpec = { (fadeIn(tween(260)) + scaleIn(initialScale = .94f)) togetherWith fadeOut(tween(160)) }, label = "Pair") { stage ->
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 when (stage) {
                     0, 1 -> {
@@ -123,7 +130,12 @@ import kotlin.math.sin
                         }
                         if (result?.ok == false) Text(result.detail, style = Type.caption, color = t.danger, textAlign = TextAlign.Center)
                         else if (found.isEmpty()) Text("Looking on this Wi-Fi…", style = Type.caption, color = t.muted)
+                        Spacer(Modifier.height(16.dp))
+                        GlassButton({ Hub.pairResult.value = null; byCode = true }, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) {
+                            Icon(Icons.Rounded.Public, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("On another network? Pair with a code", style = Type.caption)
+                        }
                     }
+                    4 -> CodeEntry(connecting, result?.takeIf { !it.ok }?.detail, onBack = { byCode = false; Hub.pairResult.value = null }) { typed -> connecting = true; Hub.pairWithCode(typed) }
                     2 -> if (code != null) {
                         Text("Pair with ${code.name}?", style = Type.title, color = t.text, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(6.dp))
@@ -147,6 +159,51 @@ import kotlin.math.sin
                 }
             }
         }
+    }
+}
+
+/**
+ * The island's pairing code, typed: eight letters and digits in two groups, each landing in its own glass cell. The
+ * last one pairs at once; the island and this phone then show the same six digits, as on one Wi-Fi.
+ */
+@Composable private fun CodeEntry(connecting: Boolean, error: String?, onBack: () -> Unit, onCode: (String) -> Unit) {
+    val t = LocalTokens.current; val focus = remember { FocusRequester() }
+    var text by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { delay(300); runCatching { focus.requestFocus() } }
+    LaunchedEffect(error) { if (error != null) text = "" }
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Pair with a code", style = Type.title, color = t.text)
+        Spacer(Modifier.height(4.dp))
+        Text("On your PC, open the island’s Shelf › Nearby › Pair with a code, then type the code it shows. Any network works.", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(22.dp))
+        BasicTextField(text, { typed ->
+            val clean = typed.uppercase().filter { it.isLetterOrDigit() }.take(8)
+            text = clean
+            if (clean.length == 8 && !connecting) onCode(clean)
+        }, singleLine = true, enabled = !connecting, cursorBrush = SolidColor(Color.Transparent), textStyle = Type.body.copy(color = Color.Transparent),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Characters, autoCorrectEnabled = false, imeAction = ImeAction.Go),
+            keyboardActions = KeyboardActions(onGo = { if (text.length == 8) onCode(text) }),
+            modifier = Modifier.focusRequester(focus),
+            decorationBox = { _ ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    for (i in 0 until 8) {
+                        if (i == 4) Text("–", style = Type.headline, color = t.faint, modifier = Modifier.padding(horizontal = 6.dp))
+                        val ch = text.getOrNull(i); val here = i == text.length && !connecting
+                        val lift by animateFloatAsState(if (ch != null) 1f else 0f, spring(dampingRatio = .55f, stiffness = 500f), label = "Cell")
+                        Box(Modifier.padding(horizontal = 2.5.dp).size(34.dp, 46.dp).glass(GlassShapes.inner, GlassLevel.Control, if (here) t.accent else Color.Unspecified), contentAlignment = Alignment.Center) {
+                            if (ch != null) Text(ch.toString(), style = Type.headline.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = t.text, modifier = Modifier.graphicsLayer { val s = .7f + .3f * lift; scaleX = s; scaleY = s; alpha = lift })
+                        }
+                    }
+                }
+            })
+        Spacer(Modifier.height(20.dp))
+        when {
+            connecting -> Row(verticalAlignment = Alignment.CenterVertically) { Radar(t.accent, Modifier.size(28.dp)); Spacer(Modifier.width(10.dp)); Text("Finding your PC over the internet…", style = Type.caption, color = t.muted) }
+            error != null -> Text(error, style = Type.caption, color = t.danger, textAlign = TextAlign.Center)
+            else -> Text("Encrypted end to end. The relay passes sealed bytes only.", style = Type.caption, color = t.faint, textAlign = TextAlign.Center)
+        }
+        Spacer(Modifier.height(16.dp))
+        GlassButton(onBack, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) { Text("Back to this Wi-Fi", style = Type.caption) }
     }
 }
 
@@ -202,29 +259,86 @@ import kotlin.math.sin
     }
 }
 
-/** Find my phone: the screen pulses while it rings, until Found it. */
+/**
+ * Find my phone: the screen pulses in time with the alarm's vibration (two beats, then a rest), with rings spreading on
+ * every beat; its light warms from amber to a glowing red the longer it rings and the more the phone is moved, the
+ * "getting warmer" of whoever is looking for it. Until Found it.
+ */
 @Composable fun RingOverlay(from: String?) {
-    val t = LocalTokens.current; val context = LocalContext.current
+    val context = LocalContext.current
     AnimatedVisibility(from != null, enter = fadeIn() + scaleIn(initialScale = 1.08f), exit = fadeOut() + scaleOut(targetScale = .96f)) {
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF120A04), Color(0xFF040306), Color(0xFF1A0E05)))).clickable(remember { MutableInteractionSource() }, null) {}, contentAlignment = Alignment.Center) {
-            Box(Modifier.size(520.dp).background(Brush.radialGradient(listOf(t.warn.copy(alpha = .28f), Color.Transparent))))
-            Radar(t.warn, Modifier.size(440.dp))
+        val reduced = LocalReduced.current
+        var now by remember { mutableLongStateOf(android.os.SystemClock.uptimeMillis()) }
+        LaunchedEffect(Unit) { if (!reduced) while (true) { withFrameMillis { now = android.os.SystemClock.uptimeMillis() } } }
+        val moved = rememberMotion()
+        val since = (now - Ringer.startedAt).coerceAtLeast(0)
+        val warmth = ((since / 30_000f) + moved.value).coerceIn(0f, 1f)
+        val glow = androidx.compose.ui.graphics.lerp(Color(0xFFFFC04D), Color(0xFFFF4D2E), warmth)
+        val beat = if (reduced) 0f else Ringer.beat(since)
+        // Where the bell is: the glow and the rings spread from it.
+        var bell by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Unspecified) }
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(androidx.compose.ui.graphics.lerp(Color(0xFF120A04), Color(0xFF1C0604), warmth), Color(0xFF040306), Color(0xFF1A0E05))))
+            .clickable(remember { MutableInteractionSource() }, null) {}, contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
+                val c = if (bell.isSpecified) bell else center; val r = 230.dp.toPx()
+                // The glow, swelling with each beat.
+                val g = 290.dp.toPx() * (1f + .08f * beat)
+                drawCircle(Brush.radialGradient(listOf(glow.copy(alpha = .22f + .18f * beat + .1f * warmth), Color.Transparent), c, g), g, c)
+                // A ring spreads from each beat of the vibration.
+                for (age in Ringer.rings(since)) {
+                    drawCircle(glow.copy(alpha = (1f - age) * .55f), r * (.26f + .74f * age), c, style = androidx.compose.ui.graphics.drawscope.Stroke((2.5f - 1.5f * age).dp.toPx()))
+                }
+                // The warm shimmer: a comet of light circling the bell, faster as it warms.
+                val a = (since / (1400f - 700f * warmth)) * 360f
+                val orbit = 104.dp.toPx(); val head = glow.copy(alpha = .55f + .4f * warmth)
+                rotate(a % 360f, c) {
+                    drawArc(Brush.sweepGradient(0f to Color.Transparent, .62f to Color.Transparent, 1f to head, center = c), 225f, 135f, false,
+                        androidx.compose.ui.geometry.Offset(c.x - orbit, c.y - orbit), androidx.compose.ui.geometry.Size(orbit * 2, orbit * 2),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                    val tip = androidx.compose.ui.geometry.Offset(c.x + orbit, c.y)
+                    drawCircle(Brush.radialGradient(listOf(head, Color.Transparent), tip, 16.dp.toPx()), 16.dp.toPx(), tip)
+                    drawCircle(Color.White.copy(alpha = .9f), 2.5.dp.toPx(), tip)
+                }
+            }
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(30.dp)) {
-                val beat by rememberInfiniteTransition(label = "Beat").animateFloat(1f, 1.12f, infiniteRepeatable(tween(520, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "S")
                 val swing by rememberInfiniteTransition(label = "Swing").animateFloat(-14f, 14f, infiniteRepeatable(tween(180, easing = LinearEasing), RepeatMode.Reverse), label = "W")
-                Box(Modifier.size(116.dp).graphicsLayer { scaleX = beat; scaleY = beat }.clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFFFFC04D), Color(0xFFFF7A2F)))), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.NotificationsActive, null, tint = Color.White, modifier = Modifier.size(56.dp).graphicsLayer { rotationZ = swing })
+                Box(Modifier.size(116.dp).onGloballyPositioned { bell = it.boundsInRoot().center }.graphicsLayer { val s = 1f + .14f * beat; scaleX = s; scaleY = s }.clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(androidx.compose.ui.graphics.lerp(Color(0xFFFFC04D), Color(0xFFFFD27A), warmth), androidx.compose.ui.graphics.lerp(Color(0xFFFF7A2F), Color(0xFFFF3B2F), warmth)))), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.NotificationsActive, null, tint = Color.White, modifier = Modifier.size(56.dp).graphicsLayer { rotationZ = if (beat > .05f && !reduced) swing else 0f })
                 }
                 Spacer(Modifier.height(34.dp))
                 Text("Here I am", style = Type.hero, color = Color.White)
                 Spacer(Modifier.height(6.dp))
                 Text("${from ?: "Your PC"} is looking for this phone", style = Type.body, color = Color.White.copy(alpha = .75f), textAlign = TextAlign.Center)
+                Spacer(Modifier.height(4.dp))
+                Text(when { moved.value > .45f -> "Hot! You found it"; moved.value > .12f -> "Getting warmer…"; else -> " " }, style = Type.caption, color = glow)
                 Spacer(Modifier.height(38.dp))
                 Row(Modifier.clip(GlassShapes.capsule).background(Color.White).clickable(role = androidx.compose.ui.semantics.Role.Button) { Ringer.stop(context) }.padding(horizontal = 46.dp, vertical = 18.dp),
                     verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Rounded.Check, null, tint = Color(0xFF1A0E05)); Spacer(Modifier.width(8.dp)); Text("Found it", style = Type.bodyStrong, color = Color(0xFF1A0E05)) }
             }
         }
     }
+}
+
+/** How much the phone has been moved lately (0..1), from its accelerometer while this shows: picking it up warms the ring screen. */
+@Composable private fun rememberMotion(): State<Float> {
+    val context = LocalContext.current
+    val energy = remember { mutableFloatStateOf(0f) }
+    DisposableEffect(Unit) {
+        val manager = context.getSystemService(android.hardware.SensorManager::class.java)
+        val sensor = manager?.getDefaultSensor(android.hardware.Sensor.TYPE_LINEAR_ACCELERATION)
+        val listener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(e: android.hardware.SensorEvent) {
+                val m = kotlin.math.sqrt(e.values[0] * e.values[0] + e.values[1] * e.values[1] + e.values[2] * e.values[2])
+                // It rises with movement and settles back slowly.
+                energy.floatValue = (energy.floatValue * .985f + (m / 60f).coerceAtMost(.08f)).coerceIn(0f, 1f)
+            }
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) = Unit
+        }
+        if (sensor != null) manager.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_UI)
+        onDispose { manager?.unregisterListener(listener) }
+    }
+    return energy
 }
 
 /** The update tracker: every release, newest first, with its notes; this version marked, a newer one ready to install. */

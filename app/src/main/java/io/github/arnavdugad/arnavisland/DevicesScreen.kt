@@ -1,8 +1,11 @@
 package io.github.arnavdugad.arnavisland
 
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -10,7 +13,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -22,7 +24,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -31,17 +32,26 @@ import androidx.compose.ui.unit.dp
 import io.github.arnavdugad.arnavisland.link.PeerView
 import kotlinx.coroutines.launch
 
-/** This phone, your PCs, what the island may show of the phone, updates and the app's look. */
-@Composable fun DevicesScreen(peers: List<PeerView>, pc: PeerView?, running: Boolean, failure: String?, appearance: Int, onAppearance: (Int) -> Unit,
-                              onPair: () -> Unit, onUpdates: () -> Unit, padding: PaddingValues) {
-    val t = LocalTokens.current; val context = LocalContext.current; val scope = rememberCoroutineScope()
+/** How the app looks: the theme, liquid glass (or solid surfaces), and the PC's weather on the glass. */
+data class Look(val appearance: Int, val glass: Boolean, val weather: Boolean)
+
+/** This phone, your PCs (here, anywhere), what the island may show of the phone, this phone's own extras, updates and the app's look. */
+@Composable fun DevicesScreen(peers: List<PeerView>, pc: PeerView?, running: Boolean, failure: String?, internet: Boolean, look: Look, onLook: (Look) -> Unit,
+                              onPair: () -> Unit, onPairCode: () -> Unit, onUpdates: () -> Unit, padding: PaddingValues) {
+    val t = LocalTokens.current; val context = LocalContext.current
     var prefsVersion by remember { mutableIntStateOf(0) }
     // Reading prefsVersion here recomposes the switches when one changes.
     fun flag(key: String, default: Boolean = true): Boolean { prefsVersion.hashCode(); return Hub.prefs.getBoolean(key, default) }
     fun set(key: String, value: Boolean) { Hub.prefs.edit().putBoolean(key, value).apply(); prefsVersion++ }
-    // Coming back from Android's settings, whether notification access was given is read again.
+    // Coming back from Android's settings, what was given is read again.
     var mirrorAllowed by remember { mutableStateOf(Mirror.allowed(context)) }
-    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { mirrorAllowed = Mirror.allowed(context); onPauseOrDispose { } }
+    val power = remember { context.getSystemService(PowerManager::class.java) }
+    var unrestricted by remember { mutableStateOf(power?.isIgnoringBatteryOptimizations(context.packageName) == true) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        mirrorAllowed = Mirror.allowed(context); unrestricted = power?.isIgnoringBatteryOptimizations(context.packageName) == true
+        onPauseOrDispose { }
+    }
+    val anywhere = flag("internet")
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(horizontal = 20.dp)) {
         ScreenTitle("Devices", over = "Arnav Island")
@@ -52,7 +62,8 @@ import kotlinx.coroutines.launch
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(Hub.phoneName(), style = Type.headline, color = t.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(failure ?: if (running) "Visible to your PCs on this Wi-Fi" else "Starting…", style = Type.caption, color = if (failure != null) t.danger else t.muted)
+                    Text(failure ?: when { !running -> "Starting…"; internet -> "Reachable on this Wi-Fi and anywhere"; anywhere -> "Visible on this Wi-Fi  ·  connecting anywhere…"; else -> "Visible to your PCs on this Wi-Fi" },
+                        style = Type.caption, color = if (failure != null) t.danger else t.muted)
                 }
                 LiveDot(running && failure == null)
             }
@@ -64,7 +75,7 @@ import kotlinx.coroutines.launch
                 paired.forEachIndexed { i, p ->
                     if (i > 0) Hairline()
                     GlassRow(if (p.phone) Icons.Rounded.PhoneAndroid else Icons.Rounded.Laptop, p.name,
-                        listOf(if (p.online) "Here" else "Away", if (p.id == pc?.id) "Remote and sends go here" else "", if (p.online && !p.remote) "Update its island for the remote" else "").filter { it.isNotEmpty() }.joinToString("  ·  "),
+                        listOf(when { !p.online -> "Away"; p.internet -> "Over the internet"; else -> "Here" }, if (p.id == pc?.id) "Remote and sends go here" else "", if (p.online && !p.remote) "Update its island for the remote" else "").filter { it.isNotEmpty() }.joinToString("  ·  "),
                         tint = if (p.online) t.good else t.faint, onClick = { if (!p.phone) Hub.choose(p.id) }) {
                         var confirm by remember { mutableStateOf(false) }
                         Text(if (confirm) "Forget?" else "Forget", style = Type.caption, color = if (confirm) t.danger else t.muted,
@@ -72,20 +83,47 @@ import kotlinx.coroutines.launch
                     }
                 }
                 if (paired.isNotEmpty()) Hairline()
-                GlassRow(Icons.Rounded.Add, "Pair a PC", "Both show the same six digits", onClick = onPair)
+                GlassRow(Icons.Rounded.Add, "Pair a PC", "On this Wi-Fi: both show the same six digits", onClick = onPair)
+                Hairline()
+                GlassRow(Icons.Rounded.Public, "Pair with a code", "From anywhere: type the code the island shows (Shelf › Nearby)", onClick = onPairCode)
+            }
+        }
+        SectionLabel("Anywhere")
+        GlassPanel(Modifier.fillMaxWidth()) {
+            Column {
+                GlassRow(Icons.Rounded.Public, "Reach my PCs anywhere",
+                    if (!anywhere) "Off: only on the same Wi-Fi" else if (internet) "Connected${Hub.link?.relayBroker?.let { " through $it" } ?: ""}. Any Wi-Fi or mobile data, end-to-end encrypted" else "Connecting… Any Wi-Fi or mobile data, end-to-end encrypted") {
+                    GlassSwitch(anywhere, { on -> set("internet", on); Hub.restart() })
+                }
+                if (!unrestricted && Build.VERSION.SDK_INT >= 23) {
+                    Hairline()
+                    GlassRow(Icons.Rounded.BatteryAlert, "Always reachable", "Let Android keep Arnav Island running in the background, so your PCs always find it", tint = t.warn) {
+                        GlassButton({ runCatching { context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                            .onFailure { runCatching { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } } },
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp)) { Text("Allow", style = Type.caption) }
+                    }
+                }
             }
         }
         SectionLabel("On your PC’s island")
         GlassPanel(Modifier.fillMaxWidth()) {
             Column {
-                GlassRow(Icons.Rounded.NotificationsActive, "Your notifications", if (!mirrorAllowed) "Allow notification access so the island can show them" else "New ones show on the island, with the app’s icon") {
+                GlassRow(Icons.Rounded.NotificationsActive, "Your notifications", if (!mirrorAllowed) "Allow notification access so the island can show them" else "New ones show on the island, with the app’s icon; reply and act from the PC") {
                     GlassSwitch(mirrorAllowed && flag("mirror"), { on ->
                         if (on && !mirrorAllowed) runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                         set("mirror", on)
                     })
                 }
                 Hairline()
+                GlassRow(Icons.Rounded.Call, "Calls", "See who’s calling on the island, and decline from the PC") { GlassSwitch(mirrorAllowed && flag("calls"), { on -> if (on && !mirrorAllowed) runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }; set("calls", on) }) }
+                Hairline()
                 GlassRow(Icons.Rounded.BatteryChargingFull, "Your battery", "The island shows it by this phone, and says when it runs low") { GlassSwitch(flag("battery"), { set("battery", it); if (it) Hub.sendBattery(force = true) }) }
+                Hairline()
+                GlassRow(Icons.Rounded.PhoneAndroid, "Your phone’s details", "Storage, memory, network, sound and more, in the island’s view of this phone") { GlassSwitch(flag("details"), { set("details", it); if (it) Hub.sendDetails(force = true) }) }
+                Hairline()
+                GlassRow(Icons.Rounded.ContentPaste, "Universal clipboard", "Copy on one, paste on the other. On the island: Settings › Sharing › Universal clipboard") {
+                    GlassSwitch(flag("clipboard"), { set("clipboard", it) })
+                }
                 Hairline()
                 GlassRow(Icons.Rounded.Wifi, "Stay reachable", "Files, music and find-my-phone reach this phone while the app is closed") {
                     GlassSwitch(flag("reachable"), { on -> set("reachable", on); if (on) LinkService.start(context) })
@@ -94,12 +132,41 @@ import kotlinx.coroutines.launch
                 GlassRow(Icons.Rounded.Download, "Accept files from my PCs", "Without asking each time") { GlassSwitch(flag("autoAccept", false), { set("autoAccept", it) }) }
             }
         }
+        SectionLabel("On this phone")
+        GlassPanel(Modifier.fillMaxWidth()) {
+            Column {
+                GlassRow(Icons.Rounded.MusicNote, "Your PC’s music player", "What plays on your PC, on the lock screen and in quick settings, with its controls") {
+                    GlassSwitch(flag("pcMedia"), { on -> set("pcMedia", on); if (on) PcMedia.update(context, Hub.pc(), Hub.status.value) else PcMedia.clear(context) })
+                }
+                val widgets = remember { AppWidgetManager.getInstance(context) }
+                if (widgets.isRequestPinAppWidgetSupported) {
+                    Hairline()
+                    GlassRow(Icons.Rounded.Widgets, "Widgets", "Your PC’s music and quick actions on the home screen") {
+                        GlassButton({ runCatching { widgets.requestPinAppWidget(ComponentName(context, PcWidget::class.java), null, null) } }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp), description = "Add the now playing widget") { Text("Music", style = Type.caption) }
+                        Spacer(Modifier.width(6.dp))
+                        GlassButton({ runCatching { widgets.requestPinAppWidget(ComponentName(context, ActionsWidget::class.java), null, null) } }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp), description = "Add the quick actions widget") { Text("Actions", style = Type.caption) }
+                    }
+                }
+            }
+        }
         SectionLabel("Updates")
         UpdateCard(onUpdates)
         SectionLabel("Appearance")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Automatic" to Icons.Rounded.BrightnessAuto, "Dark" to Icons.Rounded.DarkMode, "Light" to Icons.Rounded.LightMode).forEachIndexed { i, (label, icon) ->
-                GlassChip(label, icon = icon, selected = appearance == i) { onAppearance(i) }
+                GlassChip(label, icon = icon, selected = look.appearance == i) { onLook(look.copy(appearance = i)) }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        GlassPanel(Modifier.fillMaxWidth()) {
+            Column {
+                GlassRow(Icons.Rounded.BlurOn, "Liquid glass", if (look.glass) "Surfaces bend and blur what’s behind them, and catch the light as you tilt the phone" else "Off: solid surfaces, calmer and lighter on the battery") {
+                    GlassSwitch(look.glass, { onLook(look.copy(glass = it)) })
+                }
+                Hairline()
+                GlassRow(Icons.Rounded.Umbrella, "Weather on the glass", "Rain, snow or fog on the app when that’s the weather where your PC is") {
+                    GlassSwitch(look.weather, { onLook(look.copy(weather = it)) })
+                }
             }
         }
         SectionLabel("Privacy")
@@ -107,7 +174,7 @@ import kotlinx.coroutines.launch
             Column(Modifier.padding(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Rounded.Shield, null, tint = t.good, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text("Only between your own devices", style = Type.bodyStrong, color = t.text) }
                 Spacer(Modifier.height(6.dp))
-                Text("Everything goes directly over your Wi-Fi, end-to-end encrypted (ECDH P-256 and AES-256-GCM), only to devices you paired with a code. No account, no cloud, no tracking. The app goes online only to look for its own updates on GitHub.", style = Type.caption, color = t.muted)
+                Text("On the same Wi-Fi everything goes directly between your devices. On different networks it passes through a free public relay (MQTT over TLS), sealed end to end: the relay sees only random-looking topics and encrypted bytes, never what they carry. Every connection is end-to-end encrypted (ECDH P-256 and AES-256-GCM), only with devices you paired with a code. No account, no cloud storage, no tracking. Otherwise the app goes online only to look for its own updates on GitHub.", style = Type.caption, color = t.muted)
             }
         }
         Spacer(Modifier.height(16.dp))

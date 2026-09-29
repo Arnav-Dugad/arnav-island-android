@@ -1,0 +1,9 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="14dp" />
+            <gradient android:angle="315" android:startColor="#FF3E6E62" android:endColor="#FF3B4A86" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/ic_w_music_soft" android:gravity="center" android:width="26dp" android:height="26dp" />
+</layer-list>

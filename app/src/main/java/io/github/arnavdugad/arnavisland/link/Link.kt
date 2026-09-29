@@ -25,6 +25,7 @@ import kotlin.concurrent.thread
  * Arnav Island's sharing protocol on the phone, exactly as the Windows island speaks it: devices announce themselves by
  * UDP broadcast; two pair once, each showing the same six-digit code; after that, everything goes between paired devices
  * over TCP, sealed with AES-256-GCM under a key from both sides' static ECDH keys and fresh nonces.
+ * On different networks the same protocol runs through the relay ([Relay]); devices that never shared one pair with a code.
  * Plain JVM code (no Android): the unit tests run it against the Windows ShareService itself.
  */
 class Link(
@@ -34,7 +35,8 @@ class Link(
     private val onEvent: (LinkEvent) -> Unit,
     private val options: Options = Options(),
 ) {
-    class Options(val tcpPort: Int = Proto.TCP_PORT, val udpPort: Int = Proto.UDP_PORT, val discovery: Boolean = true, val loopback: Boolean = false, val phone: Boolean = true)
+    class Options(val tcpPort: Int = Proto.TCP_PORT, val udpPort: Int = Proto.UDP_PORT, val discovery: Boolean = true, val loopback: Boolean = false, val phone: Boolean = true,
+                  val relay: Boolean = false, val relayBrokers: List<Pair<String, Int>> = Relay.DEFAULT_BROKERS)
 
     private class Peer(var name: String = "", var address: String? = null, var port: Int = 0, var version: Int = 1, var revision: Int = 0,
                        var online: Boolean = false, var seen: Long = 0, var key: ByteArray? = null, var phone: Boolean = false)
@@ -64,6 +66,14 @@ class Link(
     @Volatile private var stopping = false
     private var server: ServerSocket? = null
     private var udp: DatagramSocket? = null
+    private var relay: Relay? = null
+    @Volatile private var announceNow = false
+    /** Connected to the relay, and through which broker. */
+    val internet get() = relay?.connected == true
+    /** Revision 3, asked by a paired PC: run one of this phone's notifications' actions (0 done, 1 gone, 2 failed), and set the clipboard. */
+    @Volatile var onAction: ((key: String, index: Int, reply: String) -> Int)? = null
+    @Volatile var onClipboard: ((text: String, sensitive: Boolean) -> Boolean)? = null
+    val relayBroker get() = relay?.broker
     var failure: String? = null; private set
     val identity get() = id.hex()
     /** The port actually listened on (for tests that ask for any free port). */
@@ -81,9 +91,24 @@ class Link(
         } catch (e: Exception) { failure = "Discovery port ${options.udpPort} is in use"; server?.close(); return false }
         thread(name = "link-listen", isDaemon = true) { listen() }
         if (options.discovery) thread(name = "link-discover", isDaemon = true) { discover() }
+        if (options.relay) {
+            relay = Relay(id, { displayName }, options.phone, Proto.REVISION,
+                incoming = { s, _ -> val c = Conn(s); try { incoming(c) } catch (_: Exception) {} finally { c.close() } },
+                changed = { postPeers() }, brokers = options.relayBrokers).also { it.start() }
+            syncRelay()
+        }
         return true
     }
+    /** The relay listens for every paired device; each pair's secret is the static ECDH of the two keys. */
+    private fun syncRelay() {
+        val r = relay ?: return; val k = key ?: return
+        val keys = synchronized(lock) { peers.filter { it.value.key != null }.map { it.key to it.value.key!! } }
+        r.pairs(keys.mapNotNull { (peer, pubKey) -> val agreed = Crypto.agree(k, pubKey) ?: return@mapNotNull null; Relay.RelayPair(peer.unhex() ?: return@mapNotNull null, agreed) })
+    }
+    /** The phone moved to another network: the relay reconnects, and this phone announces itself at once. */
+    fun networkChanged() { relay?.kick(); announceNow = true }
     fun stop() {
+        relay?.stop(); relay = null
         stopping = true
         runCatching { server?.close() }; runCatching { udp?.close() }
         pairing?.complete(0); decisions.values.forEach { it.complete(0) }
@@ -122,7 +147,11 @@ class Link(
     private fun postPeers() = onEvent(LinkEvent.Peers(peers()))
 
     fun peers(): List<PeerView> = synchronized(lock) {
-        peers.filter { it.value.online || it.value.key != null }.map { (peer, p) -> PeerView(peer, p.name.ifEmpty { "A PC" }, p.key != null, p.online, p.phone, p.version, p.revision, p.address) }
+        peers.filter { it.value.online || it.value.key != null }.map { (peer, p) ->
+            // Here directly, or through the relay (which says what the device runs).
+            val r = if (p.key != null) relay?.presence(peer) else null; val internet = !p.online && r?.here == true
+            PeerView(peer, p.name.ifEmpty { "A PC" }, p.key != null, p.online || internet, p.phone || r?.phone == true, p.version, if (internet) r!!.revision else p.revision, p.address, internet)
+        }
     }.sortedWith(compareBy<PeerView>({ (if (it.online) 0 else 2) + (if (it.paired) 0 else 1) }, { it.name }))
 
     /** A device at a known address (tests, or a PC typed in by hand when broadcasts don't reach it). */
@@ -148,8 +177,8 @@ class Link(
         var last = 0L; val buffer = ByteArray(600)
         while (!stopping) {
             val now = System.currentTimeMillis()
-            if (now - last >= 3000) {
-                last = now
+            if (now - last >= 3000 || announceNow) {
+                last = now; announceNow = false
                 val data = announcement().toByteArray(Charsets.UTF_8)
                 for (to in broadcasts()) runCatching { socket.send(DatagramPacket(data, data.size, to, options.udpPort)) }
                 var changed = false
@@ -226,7 +255,7 @@ class Link(
         var claim: CompletableFuture<Int>? = null; var allowed = false
         synchronized(lock) {
             if (mode == Proto.MODE_PAIR && pairing == null) { claim = CompletableFuture(); pairing = claim; allowed = true }
-            else if (mode in listOf(Proto.MODE_SEND, Proto.MODE_MUSIC, Proto.MODE_FIND, Proto.MODE_LIST, Proto.MODE_TAKE)) allowed = peers[ss.peerId.hex()]?.key?.contentEquals(ss.peerPub) == true
+            else if (mode in listOf(Proto.MODE_SEND, Proto.MODE_MUSIC, Proto.MODE_FIND, Proto.MODE_LIST, Proto.MODE_TAKE, Proto.MODE_ACTION, Proto.MODE_CLIP, Proto.MODE_CAMERA)) allowed = peers[ss.peerId.hex()]?.key?.contentEquals(ss.peerPub) == true
         }
         if (!allowed) { c.send(Bytes().raw(Proto.MAGIC).u8(Proto.VERSION).u8(1).build()); return null }
         val nonce = Crypto.random(32)
@@ -251,6 +280,22 @@ class Link(
             // A phone keeps no Shelf of its own to show: it says so, and gives nothing.
             Proto.MODE_LIST -> sealed(c, ss, Bytes().u8(Proto.FRAME_SHELF).u8(0).u32(0).build())
             Proto.MODE_TAKE -> sealed(c, ss, Bytes().u8(Proto.FRAME_OFFER).u32(0).build())
+            Proto.MODE_ACTION -> {
+                val f = opened(c, ss) ?: return; val r = Reader(f); if (r.u8() != Proto.FRAME_ACTION) return
+                val key = r.string(512) ?: return; val index = r.u8() ?: return; val reply = r.string(8 * 1024) ?: ""
+                val status = runCatching { onAction?.invoke(key, index, reply) ?: 2 }.getOrDefault(2)
+                sealed(c, ss, byteArrayOf(Proto.FRAME_ACTION_ACK.toByte(), status.toByte()))
+            }
+            Proto.MODE_CLIP -> {
+                val f = opened(c, ss) ?: return; val r = Reader(f); if (r.u8() != Proto.FRAME_CLIP) return
+                val sensitive = (r.u8() ?: 0) != 0; val text = r.string(256 * 1024) ?: return
+                val done = runCatching { onClipboard?.invoke(text, sensitive) == true }.getOrDefault(false)
+                sealed(c, ss, byteArrayOf(Proto.FRAME_CLIP_ACK.toByte(), if (done) 0 else 2))
+            }
+            Proto.MODE_CAMERA -> {
+                val f = opened(c, ss) ?: return; if (f.size != 1 || f[0].toInt() != Proto.FRAME_CAMERA) return
+                sealed(c, ss, byteArrayOf(Proto.FRAME_CAMERA_ACK.toByte(), 0)); onEvent(LinkEvent.PhotoRequested(ss.peerId.hex(), nameOf(ss.peerId.hex(), ss.peerName)))
+            }
         }
     }
 
@@ -264,6 +309,7 @@ class Link(
         val talked = theirs != null && theirs.size == 1
         val both = talked && mine == 1 && theirs!![0].toInt() == 1
         if (both) synchronized(lock) { peers.getOrPut(peer) { Peer() }.apply { key = ss.peerPub; version = Proto.VERSION; if (name.isEmpty() || name == "A PC") name = ss.peerName }; savePeers() }
+        if (both) { syncRelay(); relay?.stopHosting() }
         release(d)
         onEvent(LinkEvent.Paired(peer, ss.peerName, both, when { both -> "Paired"; !talked -> "The other device stopped answering"; mine != 1 -> "Not paired"; else -> "Not confirmed on the other device" }))
         postPeers()
@@ -287,24 +333,64 @@ class Link(
         }
     }
     fun confirmPair(yes: Boolean) { pairing?.complete(if (yes) 1 else 0) }
-    fun forget(peer: String) { synchronized(lock) { peers[peer]?.key = null; savePeers() }; postPeers() }
+    fun forget(peer: String) { synchronized(lock) { peers[peer]?.key = null; savePeers() }; syncRelay(); postPeers() }
+
+    // ---- the trackpad and keyboard (revision 3) ----
+    /** A session of input frames to a PC, kept open while the trackpad shows. */
+    interface InputSession { val open: Boolean; fun send(frame: ByteArray): Boolean; fun close() }
+    private inner class InputChannel(private val c: Conn, private val ss: Session) : InputSession {
+        @Volatile override var open = true; private set
+        override fun send(frame: ByteArray): Boolean { if (!open) return false; val ok = synchronized(this) { sealed(c, ss, frame) }; if (!ok) close(); return ok }
+        override fun close() { open = false; c.close() }
+    }
+    fun openInput(peer: String): InputSession? {
+        val (t, _) = target(peer); if (t == null || t.revision < 3) return null
+        val (c, ss, _) = reach(peer, Proto.MODE_INPUT, null); return c?.let { it.timeout(120_000); InputChannel(it, ss) }
+    }
+
+    // ---- pairing from anywhere ----
+    /** Offers a pairing code for ten minutes (blocks up to 8 s); null when the relay can't be reached. */
+    fun hostPairing(): String? = relay?.host()
+    fun stopHosting() { relay?.stopHosting() }
+    val hostingCode get() = relay?.hosting
+    /** Pairs with the device showing this code, through the relay: PairCode, then Paired, as on one network. */
+    fun pairWithCode(code: String) {
+        val d: CompletableFuture<Int>
+        synchronized(lock) { if (pairing != null) return; d = CompletableFuture(); pairing = d }
+        thread(name = "link-pair-code", isDaemon = true) {
+            val (s, why) = relay?.openCode(code) ?: (null to "Connecting over the internet is off")
+            if (s == null) { release(d); onEvent(LinkEvent.Paired("", "", false, why)); return@thread }
+            val c = Conn(s)
+            try {
+                c.timeout(20_000); val ss = Session()
+                if (!runCatching { greet(c, Proto.MODE_PAIR, ss) }.getOrDefault(false)) { release(d); onEvent(LinkEvent.Paired("", "", false, if (ss.rejected) "That device is busy pairing" else "No device is showing that code")) }
+                else pairSession(c, ss, d)
+            } finally { c.close() }
+        }
+    }
 
     // ---- connecting to a paired device ----
     private fun connect(address: String, port: Int): Conn? = runCatching {
         Conn(Socket().apply { connect(InetSocketAddress(address, port), 5000); tcpNoDelay = true })
     }.getOrNull()
-    private class Target(val name: String, val address: String, val port: Int, val key: ByteArray, val revision: Int)
+    /** A paired device to reach: at its address on this network, or (address null) through the relay. */
+    private class Target(val name: String, val address: String?, val port: Int, val key: ByteArray, val revision: Int)
     private fun target(peer: String): Pair<Target?, String> = synchronized(lock) {
         val p = peers[peer] ?: return null to "Pair with this PC first"
         val k = p.key ?: return null to "Pair with this PC first"
-        if (!p.online || p.address == null) return null to "${p.name} isn't on this network right now"
         if (p.version < Proto.VERSION) return null to "Update Arnav Island on ${p.name} to share with it"
+        if (!p.online || p.address == null) {
+            val r = relay?.presence(peer)
+            if (r?.here != true) return null to if (relay != null) "${p.name} isn't reachable right now" else "${p.name} isn't on this network right now"
+            return Target(p.name, null, 0, k, r.revision) to ""
+        }
         Target(p.name, p.address!!, p.port, k, p.revision) to ""
     }
     /** Reached, greeted and checked against the pairing: the connection and session, or why not. */
     private fun reach(peer: String, mode: Int, transfer: Int?): Triple<Conn?, Session, String> {
-        val ss = Session(); val (t, why) = target(peer); if (t == null) return Triple(null, ss, why)
-        val c = connect(t.address, t.port) ?: return Triple(null, ss, "Couldn't reach ${t.name}")
+        val ss = Session(); val (t, whyNot) = target(peer); if (t == null) return Triple(null, ss, whyNot)
+        var why = "Couldn't reach ${t.name}"
+        val c = t.address?.let { connect(it, t.port) } ?: relay?.open(peer)?.let { (s, w) -> if (s == null) { why = w; null } else Conn(s) } ?: return Triple(null, ss, why)
         if (transfer != null) { val l = live[transfer]; if (l == null || l.stop.get()) { c.close(); return Triple(null, ss, "You stopped it") }; l.socket = c.socket }
         c.timeout(15_000)
         val greeted = runCatching { greet(c, mode, ss) }.getOrDefault(false)
@@ -329,22 +415,24 @@ class Link(
 
     // ---- sending files ----
     /** Sends these items to a paired PC in one transfer; returns its id (for [cancel]). */
-    fun send(peer: String, items: List<Source>, title: String, folder: Boolean = false): Int {
+    /** toShelf (revision 3): photos this phone took for the PC's Shelf. */
+    fun send(peer: String, items: List<Source>, title: String, folder: Boolean = false, toShelf: Boolean = false): Int {
         val transfer = newTransfer()
         thread(name = "link-send", isDaemon = true) {
             val total = items.sumOf { it.size }
             val (c, ss, why0) = reach(peer, Proto.MODE_SEND, transfer)
             var why = why0; var sent = false; val name = nameOf(peer, "")
-            if (c != null) { try { val failed = offerBatch(c, ss, items, total, folder, title, peer, name, transfer); sent = failed == null; if (failed != null) why = failed } finally { c.close() } }
+            val flags = (if (folder) 1 else 0) or (if (toShelf && (target(peer).first?.revision ?: 0) >= 3) 2 else 0)
+            if (c != null) { try { val failed = offerBatch(c, ss, items, total, flags, title, peer, name, transfer); sent = failed == null; if (failed != null) why = failed } finally { c.close() } }
             finish(transfer)
             onEvent(if (sent) LinkEvent.Sent(transfer, peer, name, title, items.size, total) else LinkEvent.Failed(transfer, peer, name, title, why.ifEmpty { "It didn't go" }, true))
         }
         return transfer
     }
     /** An offer of these files, then (answered yes) the files and the batch's end: null when all arrived, else why not. */
-    private fun offerBatch(c: Conn, ss: Session, items: List<Source>, total: Long, folder: Boolean, title: String, peer: String, name: String, transfer: Int): String? {
+    private fun offerBatch(c: Conn, ss: Session, items: List<Source>, total: Long, flags: Int, title: String, peer: String, name: String, transfer: Int): String? {
         c.timeout(90_000)
-        val offered = sealed(c, ss, Bytes().u8(Proto.FRAME_OFFER).u32(items.size).u64(total).u8(if (folder) 1 else 0).text(title).build())
+        val offered = sealed(c, ss, Bytes().u8(Proto.FRAME_OFFER).u32(items.size).u64(total).u8(flags).text(title).build())
         val reply = if (offered) opened(c, ss) else null
         if (reply == null || reply.size != 1) return if (stopped(transfer)) "You stopped it" else "$name didn't answer"
         if (reply[0].toInt() == 2) return "There isn't room on $name"
@@ -623,13 +711,43 @@ class Link(
             val lines = (r.string(64 * 1024) ?: return null).split('\n') + List(5) { "" }
             fun bit(i: Int) = flags and (1 shl i) != 0
             return PcStatus(bit(0), bit(1), bit(2), bit(3), bit(4), bit(7), bit(5), bit(6), bit(8), maxOf(0.0, position), maxOf(0.0, duration), volume.coerceIn(0, 100), battery,
-                if (cpu == 255) -1 else cpu, lines[0], lines[1], lines[2], lines[3], lines[4], cover, hash)
+                if (cpu == 255) -1 else cpu, lines[0], lines[1], lines[2], lines[3], lines[4], cover, hash, clipboard = bit(9))
         }
         fun statusFrame(battery: Int, charging: Boolean) = Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_STATUS).u8(battery).u8(if (charging) 1 else 0).build()
-        /** A notification for the island: app, title and text (each trimmed), the phone's name, an optional small PNG icon. */
-        fun notificationFrame(app: String, title: String, text: String, phone: String, urgent: Boolean, icon: ByteArray?): ByteArray {
+        /**
+         * A notification for the island: app, title and text (each trimmed), the phone's name, an optional small PNG icon;
+         * with revision 3 its key and up to three actions (a title each, and whether it takes a reply).
+         */
+        fun notificationFrame(app: String, title: String, text: String, phone: String, urgent: Boolean, icon: ByteArray?, key: String = "", actions: List<Pair<String, Boolean>> = emptyList()): ByteArray {
             val lines = listOf(app.take(80), title.take(200), text.take(600), phone.take(64)).joinToString("\n") { it.replace('\n', ' ') }
-            return Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_NOTIFICATION).u8(if (urgent) 1 else 0).string(lines).blob(icon?.takeIf { it.size <= 24 * 1024 } ?: ByteArray(0)).build()
+            val b = Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_NOTIFICATION).u8(if (urgent) 1 else 0).string(lines).blob(icon?.takeIf { it.size <= 24 * 1024 } ?: ByteArray(0))
+            b.string(key.take(200)).u8(minOf(actions.size, 3))
+            actions.take(3).forEach { (label, reply) -> val t = label.take(24).toByteArray(Charsets.UTF_8); b.u8(if (reply) 1 else 0).u8(t.size).raw(t) }
+            return b.build()
         }
+        fun parseLyrics(p: ByteArray): Lyrics? {
+            val r = Reader(p); val state = r.u8() ?: return null; val key = r.string(4096) ?: return null; val n = r.u32() ?: return null; if (n > 400) return null
+            val lines = ArrayList<LyricsLine>()
+            repeat(n.toInt()) {
+                val time = r.f64() ?: return null; val text = r.string(4096) ?: return null; val wn = r.u8() ?: return null
+                val words = ArrayList<Pair<Double, Int>>(); repeat(wn) { val wt = r.f64() ?: return null; val at = r.u16() ?: return null; words += wt to at }
+                lines += LyricsLine(time, text, words)
+            }
+            return Lyrics(state, key, lines)
+        }
+        /** The phone's readings for the island, one "name<TAB>value" a line. */
+        fun detailsFrame(details: List<Pair<String, String>>): ByteArray =
+            Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_DETAILS).string(details.joinToString("\n") { (k, v) -> k.replace('\t', ' ').replace('\n', ' ') + "\t" + v.replace('\t', ' ').replace('\n', ' ') }.take(12_000)).build()
+        /** A notification the phone no longer shows. */
+        fun goneFrame(key: String) = Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_GONE).string(key.take(200)).build()
+        // Trackpad and keyboard frames.
+        fun moveFrame(dx: Int, dy: Int) = Bytes().u8(Proto.INPUT_MOVE).u16(dx.coerceIn(-32768, 32767) and 0xFFFF).u16(dy.coerceIn(-32768, 32767) and 0xFFFF).build()
+        /** button: 0 left, 1 right, 2 middle; state: 0 up, 1 down, 2 a click. */
+        fun buttonFrame(button: Int, state: Int) = Bytes().u8(Proto.INPUT_BUTTON).u8(button).u8(state).build()
+        /** In wheel units (120 a notch). */
+        fun scrollFrame(vertical: Int, horizontal: Int) = Bytes().u8(Proto.INPUT_SCROLL).u16(vertical.coerceIn(-32768, 32767) and 0xFFFF).u16(horizontal.coerceIn(-32768, 32767) and 0xFFFF).build()
+        fun textFrame(text: String) = Bytes().u8(Proto.INPUT_TEXT).text(text.take(2000)).build()
+        /** A Windows virtual-key code, pressed and let go (state 2), or down (1) or up (0). */
+        fun keyFrame(vk: Int, state: Int = 2) = Bytes().u8(Proto.INPUT_KEY).u16(vk).u8(state).build()
     }
 }

@@ -22,9 +22,19 @@ import java.io.File
  */
 object Ringer {
     private var player: MediaPlayer? = null; private var vibrator: Vibrator? = null; private var savedVolume = -1
+    /** When it started ringing (uptime), for the ring screen's beat. */
+    @Volatile var startedAt = 0L; private set
+    /** The vibration: two 700 ms beats 400 ms apart, then 900 ms of rest. */
+    private val pattern = longArrayOf(0, 700, 400, 700, 900)
+    const val CYCLE = 2700L
+    /** How strongly it beats [ms] after starting (0..1): up at once as each vibration begins, easing off through it. */
+    fun beat(ms: Long): Float { val p = ms % CYCLE; val into = if (p < 700) p else if (p in 1100 until 1800) p - 1100 else return 0f; return (1f - into / 700f).let { it * it } }
+    /** How far the rings from the latest beats have spread [ms] after starting (0..1 each; a ring lasts 1.6 s). */
+    fun rings(ms: Long): List<Float> { val c = ms - ms % CYCLE; return listOf(c - CYCLE + 1100, c, c + 1100).filter { it in 0..ms }.map { (ms - it) / 1600f }.filter { it <= 1f } }
     private val main = Handler(Looper.getMainLooper())
     fun start(context: Context, from: String) = main.post {
         stopSound(context)
+        startedAt = android.os.SystemClock.uptimeMillis()
         Hub.ringing.value = from; if (!Hub.visible) Notify.showRing(context, from)
         val audio = context.getSystemService(AudioManager::class.java)
         runCatching { savedVolume = audio.getStreamVolume(AudioManager.STREAM_ALARM); audio.setStreamVolume(AudioManager.STREAM_ALARM, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0) }
@@ -34,7 +44,7 @@ object Ringer {
             setDataSource(context, uri); isLooping = true; prepare(); start()
         } }.getOrNull()
         vibrator = (if (Build.VERSION.SDK_INT >= 31) context.getSystemService(VibratorManager::class.java)?.defaultVibrator else @Suppress("DEPRECATION") context.getSystemService(Vibrator::class.java))
-        runCatching { vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 700, 400, 700, 900), 0)) }
+        runCatching { vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0)) }
         main.postDelayed({ stop(context) }, 60_000)
     }
     private fun stopSound(context: Context) {
@@ -74,7 +84,7 @@ object Player {
             setOnCompletionListener { publish(false) }
             start()
         } }.getOrNull()
-        if (player == null) { Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "Couldn't play ${music.title}", "The song's file isn't one this phone plays")); return@post }
+        if (player == null) { Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "Couldn't play ${music.title}", "The song’s file isn’t one this phone plays")); return@post }
         now.value = Now(music, peer, from, true, start, music.duration); publish(true)
         Hub.music.value = null
         Hub.banners.tryEmit(Banner(Banner.Kind.Music, "Playing here", music.title))

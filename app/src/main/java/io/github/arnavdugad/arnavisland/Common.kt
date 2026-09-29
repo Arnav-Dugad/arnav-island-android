@@ -116,14 +116,16 @@ fun openUrl(context: Context, url: String) { runCatching { context.startActivity
 /**
  * The island at the top of the app, as on the PC: a dark glass capsule. At rest it shows what plays on your PC (its
  * cover and level bars) or who is here; it widens for a transfer (with its ring), and drops open for a moment to say
- * what just happened, then settles back.
+ * what just happened, then settles back. Tapped while music plays, it melts open into the song's own card (cover,
+ * where it is, the controls) and flows back when tapped again or anywhere else.
  */
-@Composable fun MiniIsland(status: PcStatus?, cover: android.graphics.Bitmap?, pcName: String?, online: Boolean, banner: Banner?, transfer: Transfer?, onClick: () -> Unit, modifier: Modifier = Modifier) {
+@Composable fun MiniIsland(status: PcStatus?, cover: android.graphics.Bitmap?, pcName: String?, online: Boolean, banner: Banner?, transfer: Transfer?, onClick: () -> Unit, modifier: Modifier = Modifier,
+                           expanded: Boolean = false, internet: Boolean = false) {
     val t = LocalTokens.current; val reduced = LocalReduced.current
-    val mode = when { banner != null -> 2; transfer != null -> 1; else -> 0 }
-    val width by animateDpAsState(when (mode) { 2 -> 360.dp; 1 -> 250.dp; else -> if (status?.available == true) 190.dp else 150.dp }, if (reduced) snap() else spring(dampingRatio = .68f, stiffness = 330f), label = "IslandW")
-    val height by animateDpAsState(if (mode == 2) 74.dp else 38.dp, if (reduced) snap() else spring(dampingRatio = .64f, stiffness = 360f), label = "IslandH")
-    val corner by animateDpAsState(if (mode == 2) 30.dp else 19.dp, label = "IslandR")
+    val mode = when { banner != null -> 2; expanded && status?.available == true -> 3; transfer != null -> 1; else -> 0 }
+    val width by animateDpAsState(when (mode) { 3, 2 -> 360.dp; 1 -> 250.dp; else -> if (status?.available == true) 190.dp else 150.dp }, if (reduced) snap() else spring(dampingRatio = .68f, stiffness = 330f), label = "IslandW")
+    val height by animateDpAsState(when (mode) { 3 -> 190.dp; 2 -> 74.dp; else -> 38.dp }, if (reduced) snap() else spring(dampingRatio = if (mode == 3) .72f else .64f, stiffness = if (mode == 3) 300f else 360f), label = "IslandH")
+    val corner by animateDpAsState(when (mode) { 3 -> 46.dp; 2 -> 30.dp; else -> 19.dp }, if (reduced) snap() else spring(dampingRatio = .8f, stiffness = 300f), label = "IslandR")
     Box(modifier.widthIn(max = width).fillMaxWidth().height(height).glass(RoundedCornerShape(corner), GlassLevel.Island).clickable(role = Role.Button) { onClick() }
         .semantics { contentDescription = banner?.let { "${it.title}. ${it.detail}" } ?: status?.takeIf { it.available }?.let { "${it.title} on ${it.pcName}" } ?: (pcName ?: "No PC yet") }, contentAlignment = Alignment.Center) {
         AnimatedContent(mode to (banner?.title ?: ""), transitionSpec = { (fadeIn(tween(220, 90)) + scaleIn(initialScale = .92f)) togetherWith fadeOut(tween(110)) }, label = "Island") { (m, _) ->
@@ -137,6 +139,7 @@ fun openUrl(context: Context, url: String) { runCatching { context.startActivity
                         if (banner.detail.isNotEmpty()) Text(banner.detail, style = Type.caption, color = Color.White.copy(alpha = .66f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
+                3 -> if (status != null) IslandPlayer(status, cover, pcName.orEmpty())
                 1 -> if (transfer != null) Row(Modifier.fillMaxSize().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     val f = if (transfer.total > 0) transfer.done.toFloat() / transfer.total else 0f
                     Icon(if (transfer.outgoing) Icons.AutoMirrored.Rounded.Send else Icons.Rounded.Download, null, tint = t.accent, modifier = Modifier.size(17.dp))
@@ -156,6 +159,7 @@ fun openUrl(context: Context, url: String) { runCatching { context.startActivity
                         Spacer(Modifier.width(4.dp))
                     } else {
                         LiveDot(online, size = 7.dp); Spacer(Modifier.width(2.dp))
+                        if (online && internet) { Icon(Icons.Rounded.Public, "Over the internet", tint = Color.White.copy(alpha = .6f), modifier = Modifier.size(13.dp)); Spacer(Modifier.width(5.dp)) }
                         Text(pcName ?: "No PC yet", style = Type.caption, color = Color.White.copy(alpha = .8f), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                         Spacer(Modifier.width(10.dp))
                     }
@@ -164,6 +168,52 @@ fun openUrl(context: Context, url: String) { runCatching { context.startActivity
         }
     }
 }
+/** The island opened into the song's card: the cover, the song, where it is, and the controls. */
+@Composable private fun IslandPlayer(status: PcStatus, cover: android.graphics.Bitmap?, pcName: String) {
+    val t = LocalTokens.current; val scope = rememberCoroutineScope()
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var asked by remember { mutableStateOf<Pair<Boolean, Long>?>(null) }
+    val playing = asked?.takeIf { now - it.second < 1800 }?.first ?: status.playing
+    LaunchedEffect(playing) { while (true) { now = System.currentTimeMillis(); delay(if (playing) 400 else 1000) } }
+    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 18.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(64.dp).clip(RoundedCornerShape(17.dp)).background(t.accent.copy(alpha = .3f)), contentAlignment = Alignment.Center) {
+                if (cover != null) Image(cover.asImageBitmap(), "Cover of ${status.title}", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                else Icon(Icons.Rounded.MusicNote, null, tint = t.accent, modifier = Modifier.size(28.dp))
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("ON ${pcName.uppercase()}", style = Type.micro, color = Color.White.copy(alpha = .45f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(status.title, style = Type.bodyStrong, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(status.artist.ifBlank { status.app }, style = Type.caption, color = Color.White.copy(alpha = .66f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Equalizer(playing, t.accent, Modifier.size(22.dp, 16.dp))
+        }
+        Spacer(Modifier.height(14.dp))
+        val duration = status.duration.coerceAtLeast(0.0); val position = status.positionNow(now).let { if (asked != null && !playing) status.position else it }
+        val f = if (duration > 0) (position / duration).toFloat().coerceIn(0f, 1f) else 0f
+        Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = .16f))) { Box(Modifier.fillMaxWidth(f).fillMaxHeight().background(Color.White.copy(alpha = .92f))) }
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+            Text(clock(position), style = Type.caption, color = Color.White.copy(alpha = .55f)); Spacer(Modifier.weight(1f))
+            Text(if (duration > 0) "-" + clock(duration - position) else "", style = Type.caption, color = Color.White.copy(alpha = .55f))
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+            IslandControl(Icons.Rounded.SkipPrevious, "Previous", status.canPrevious) { scope.launch { Hub.command(io.github.arnavdugad.arnavisland.link.Proto.CMD_MEDIA, byteArrayOf(2)); Hub.refreshStatus() } }
+            Box(Modifier.size(50.dp).clip(CircleShape).background(Color.White).clickable(role = Role.Button, enabled = status.canToggle) {
+                asked = !playing to System.currentTimeMillis(); scope.launch { Hub.command(io.github.arnavdugad.arnavisland.link.Proto.CMD_MEDIA, byteArrayOf(1)) } }
+                .semantics { contentDescription = if (playing) "Pause" else "Play" }, contentAlignment = Alignment.Center) { PlayPause(playing, Color(0xFF0B0E14), Modifier.size(22.dp)) }
+            IslandControl(Icons.Rounded.SkipNext, "Next", status.canNext) { scope.launch { Hub.command(io.github.arnavdugad.arnavisland.link.Proto.CMD_MEDIA, byteArrayOf(3)); Hub.refreshStatus() } }
+        }
+    }
+}
+@Composable private fun IslandControl(icon: ImageVector, description: String, enabled: Boolean, onClick: () -> Unit) {
+    val haptics = LocalHapticFeedback.current
+    Box(Modifier.size(46.dp).clip(CircleShape).clickable(role = Role.Button, enabled = enabled) { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); onClick() }
+        .semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = Color.White.copy(alpha = if (enabled) .92f else .35f), modifier = Modifier.size(28.dp))
+    }
+}
+
 fun bannerIcon(kind: Banner.Kind, t: Tokens): Pair<ImageVector, Color> = when (kind) {
     Banner.Kind.Received -> Icons.Rounded.Download to t.good
     Banner.Kind.Sent -> Icons.Rounded.CheckCircle to t.good
@@ -174,6 +224,8 @@ fun bannerIcon(kind: Banner.Kind, t: Tokens): Pair<ImageVector, Color> = when (k
     Banner.Kind.Ring -> Icons.Rounded.NotificationsActive to t.warn
     Banner.Kind.Update -> Icons.Rounded.SystemUpdate to t.accent
     Banner.Kind.Clipboard -> Icons.Rounded.ContentPaste to t.accent
+    Banner.Kind.Photo -> Icons.Rounded.PhotoCamera to t.accent
+    Banner.Kind.Internet -> Icons.Rounded.Public to t.accent
 }
 
 /** Shows each banner for a moment, one after another. */

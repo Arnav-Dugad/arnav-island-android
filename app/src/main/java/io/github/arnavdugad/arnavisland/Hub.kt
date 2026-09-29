@@ -12,6 +12,7 @@ import android.provider.Settings
 import io.github.arnavdugad.arnavisland.link.Handoff
 import io.github.arnavdugad.arnavisland.link.Link
 import io.github.arnavdugad.arnavisland.link.LinkEvent
+import io.github.arnavdugad.arnavisland.link.Lyrics
 import io.github.arnavdugad.arnavisland.link.PcStatus
 import io.github.arnavdugad.arnavisland.link.PeerView
 import io.github.arnavdugad.arnavisland.link.Proto
@@ -39,7 +40,7 @@ data class Moment(val kind: Int, val title: String, val from: String, val count:
 
 /** A glass banner that drops from the app's island. */
 data class Banner(val kind: Kind, val title: String, val detail: String = "") {
-    enum class Kind { Received, Sent, Failed, Paired, Info, Music, Ring, Update, Clipboard }
+    enum class Kind { Received, Sent, Failed, Paired, Info, Music, Ring, Update, Clipboard, Photo, Internet }
 }
 
 /**
@@ -64,6 +65,12 @@ object Hub {
     val status = MutableStateFlow<PcStatus?>(null)
     val statusError = MutableStateFlow<String?>(null)
     val selected = MutableStateFlow<String?>(null)
+    /** Connected to the relay: paired devices on other networks are reachable. */
+    val internet = MutableStateFlow(false)
+    /** Something a screen should open now ("camera": a PC asked for a photo while the app was on screen). */
+    val requests = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    /** The song's lyrics from the PC, for the key "title<TAB>artist" of what plays there. */
+    val lyrics = MutableStateFlow<Lyrics?>(null)
     /** Whether the app is on screen (notifications for what the screen already shows are skipped then). */
     @Volatile var visible = false
 
@@ -78,15 +85,24 @@ object Hub {
 
     fun phoneName(): String = runCatching { Settings.Global.getString(app.contentResolver, "device_name") }.getOrNull()?.takeIf { it.isNotBlank() } ?: Build.MODEL
 
+    @Volatile private var starting: Link? = null
     @Synchronized fun start(): Link? {
         link?.let { return it }
-        val l = Link(PhoneStore(app), phoneName(), DownloadsInbox(app), ::onEvent)
-        if (!l.start()) { failure.value = l.failure ?: "The link couldn't start"; return null }
-        link = l; running.value = true; failure.value = null
+        // Over the internet too (through the relay, end-to-end encrypted) unless that is turned off.
+        val l = Link(PhoneStore(app), phoneName(), DownloadsInbox(app), ::onEvent, Link.Options(relay = prefs.getBoolean("internet", true)))
+        l.onAction = { key, index, reply -> NoticeActions.perform(app, key, index, reply) }
+        l.onClipboard = { text, sensitive -> Clip.receive(app, text, sensitive).also { if (it && visible) banners.tryEmit(Banner(Banner.Kind.Clipboard, "Copied from your PC", text.lineSequence().first().take(60))) } }
+        starting = l
+        if (!l.start()) { starting = null; failure.value = l.failure ?: "The link couldn't start"; return null }
+        link = l; starting = null; running.value = true; failure.value = null
         peers.value = l.peers(); pickDefault()
         return l
     }
-    @Synchronized fun stop() { link?.stop(); link = null; running.value = false; peers.value = emptyList() }
+    @Synchronized fun stop() { link?.stop(); link = null; running.value = false; internet.value = false; peers.value = emptyList() }
+    /** Starts the link again (after "Reach my PCs anywhere" changed). */
+    @Synchronized fun restart() { if (link == null) return; stop(); start() }
+    /** The phone moved to another network (Wi-Fi to mobile data, another Wi-Fi): reconnect at once. */
+    fun networkChanged() { link?.networkChanged() }
 
     // ---- your PCs ----
     /** The PC the remote and sends go to: the chosen one while it is paired, else the first paired PC that is here. */
@@ -99,17 +115,17 @@ object Hub {
     private fun onEvent(e: LinkEvent) {
         when (e) {
             is LinkEvent.Peers -> {
-                peers.value = e.peers; pickDefault()
-                // A PC that just came online hears this phone's battery at once.
+                peers.value = e.peers; pickDefault(); internet.value = (link ?: starting)?.internet == true
+                // A PC that just came online hears this phone's battery and details at once.
                 val online = e.peers.filter { it.paired && it.online && it.remote }.map { it.id }.toSet()
-                val arrived = online - lastOnline; lastOnline.clear(); lastOnline.addAll(online)
-                if (arrived.isNotEmpty()) sendBattery(force = true)
+                val arrived = synchronized(lastOnline) { val a = online - lastOnline; lastOnline.clear(); lastOnline.addAll(online); a }
+                if (arrived.isNotEmpty()) { sendBattery(force = true); sendDetails(force = true) }
             }
             is LinkEvent.PairCode -> { pairCode.value = e; if (!visible) Notify.pairing(app, e) }
             is LinkEvent.Paired -> {
                 pairCode.value = null; pairResult.value = e; Notify.cancel(app, Notify.PAIR)
-                if (e.ok) { if (pc()?.id == null || selected.value == null) choose(e.peer); banners.tryEmit(Banner(Banner.Kind.Paired, "Paired with ${e.name}", "Files, music and the remote are ready")); sendBattery(force = true) }
-                else banners.tryEmit(Banner(Banner.Kind.Failed, "Not paired with ${e.name}", e.detail))
+                if (e.ok) { if (pc()?.id == null || selected.value == null) choose(e.peer); banners.tryEmit(Banner(Banner.Kind.Paired, "Paired with ${e.name}", "Files, music and the remote are ready, on any network")); sendBattery(force = true); sendDetails(force = true) }
+                else banners.tryEmit(Banner(Banner.Kind.Failed, if (e.name.isEmpty()) "Not paired" else "Not paired with ${e.name}", e.detail))
             }
             is LinkEvent.Offer -> {
                 if (prefs.getBoolean("autoAccept", false)) { link?.answer(e.transfer, true); return }
@@ -148,6 +164,9 @@ object Hub {
                 Player.play(app, e.music, e.peer, e.name, e.shown, start)
             }
             is LinkEvent.Ring -> Ringer.start(app, e.name)
+            is LinkEvent.PairingCode -> Unit
+            // A PC asks for a photo for its Shelf: the camera opens at once while the app shows, else a notification asks.
+            is LinkEvent.PhotoRequested -> { photoFor = e.peer; if (visible) requests.tryEmit("camera") else Notify.photo(app, e.name) }
         }
     }
 
@@ -177,6 +196,13 @@ object Hub {
 
     // ---- pairing ----
     fun pair(peer: String) { pairResult.value = null; scope.launch { link?.pair(peer) } }
+    /** Pairs with the PC showing this code on its island (any network): its six digits then show here, as on one Wi-Fi. */
+    fun pairWithCode(code: String) {
+        pairResult.value = null
+        val l = link ?: run { pairResult.value = LinkEvent.Paired("", "", false, "Starting… try again in a moment"); return }
+        if (!prefs.getBoolean("internet", true)) { pairResult.value = LinkEvent.Paired("", "", false, "Turn on Devices › Reach my PCs anywhere first"); return }
+        scope.launch { l.pairWithCode(code) }
+    }
     fun confirmPair(yes: Boolean) { link?.confirmPair(yes); if (!yes) pairCode.value = null }
     fun forget(peer: String) { link?.forget(peer); if (selected.value == peer) { selected.value = null; prefs.edit().remove("pc").apply(); pickDefault() } }
 
@@ -184,17 +210,17 @@ object Hub {
     fun answer(offer: LinkEvent.Offer, accept: Boolean) { link?.answer(offer.transfer, accept); offers.update { list -> list.filterNot { it.transfer == offer.transfer } }; Notify.cancel(app, Notify.OFFER + offer.transfer) }
     fun cancel(transfer: Int) { link?.cancel(transfer) }
 
-    /** Files from other apps (content URIs) to a PC, in one transfer. */
-    fun send(peer: String, uris: List<Uri>) {
+    /** Files from other apps (content URIs) to a PC, in one transfer; [toShelf]: onto its island's Shelf (a photo taken for it). */
+    fun send(peer: String, uris: List<Uri>, toShelf: Boolean = false) {
         if (uris.isEmpty()) return
         scope.launch {
-            val l = link ?: run { banners.tryEmit(Banner(Banner.Kind.Failed, "Not connected", "Open Arnav Island on the same Wi-Fi as your PC")); return@launch }
+            val l = link ?: run { banners.tryEmit(Banner(Banner.Kind.Failed, "Not connected", "Open Arnav Island and try again")); return@launch }
             val sources = uris.mapNotNull { sourceOf(it) }
             if (sources.isEmpty()) { banners.tryEmit(Banner(Banner.Kind.Failed, "Couldn't read those files")); return@launch }
             val names = sources.map { it.rel }
             val title = if (names.size == 1) names[0] else "${names[0]} and ${names.size - 1} more"
             val target = peers.value.firstOrNull { it.id == peer }
-            val id = l.send(peer, sources, title)
+            val id = l.send(peer, sources, title, toShelf = toShelf)
             transfers.update { it + (id to Transfer(id, peer, target?.name ?: "your PC", title, 0, sources.sumOf { s -> s.size }, true, sampledAt = System.currentTimeMillis())) }
         }
     }
@@ -233,7 +259,7 @@ object Hub {
         if (!p.remote && p.online) { if (!quiet) banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${p.name}", "The remote needs version 0.19 or later")); return@withContext null }
         val reply = l.remote(p.id, cmd, payload)
         when {
-            reply == null -> if (!quiet) banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} didn't answer", l.lastRemoteError ?: "Is it on the same Wi-Fi?"))
+            reply == null -> if (!quiet) banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} didn't answer", l.lastRemoteError ?: "Is Arnav Island running there?"))
             reply.status == Proto.NOT_ALLOWED -> if (!quiet) banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} said no", "Turn on “My phone can control this PC” in the island’s Settings"))
             !reply.ok && !quiet -> banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't do that"))
         }
@@ -246,8 +272,63 @@ object Hub {
         if (!p.remote) { statusError.value = "Update Arnav Island on ${p.name} for the remote"; return@withContext null }
         val previous = status.value?.takeIf { it.pcName.isNotEmpty() }
         val s = l.status(p.id, previous?.coverHash, previous)
-        if (s == null) statusError.value = l.lastRemoteError ?: "${p.name} didn't answer" else { statusError.value = null; status.value = s }
+        if (s == null) statusError.value = l.lastRemoteError ?: "${p.name} didn't answer" else { statusError.value = null; status.value = s; lyricsFor(p, s) }
         s
+    }
+
+    // ---- lyrics, find my PC ----
+    private var lyricsKey: String? = null; private var lyricsAsked = 0L; private var lyricsTries = 0
+    /** The lyrics follow the song: asked when it changes, and again (a few times) while the PC is still looking. */
+    private fun lyricsFor(p: PeerView, s: PcStatus) {
+        if (!s.available || p.revision < 3) { lyrics.value = null; lyricsKey = null; return }
+        val key = s.title + "\t" + s.artist; val now = System.currentTimeMillis()
+        val current = lyrics.value
+        val again = key == lyricsKey && current?.state == 1 && now - lyricsAsked > 2500 && lyricsTries < 12
+        if (key == lyricsKey && !again) return
+        if (key != lyricsKey) { lyricsKey = key; lyricsTries = 0; if (current?.key != key) lyrics.value = null }
+        lyricsAsked = now; lyricsTries++
+        scope.launch {
+            val reply = command(Proto.CMD_LYRICS, quiet = true) ?: return@launch
+            if (!reply.ok) return@launch
+            val l = Link.parseLyrics(reply.payload) ?: return@launch
+            if (lyricsKey == key) lyrics.value = l.copy(key = key)
+        }
+    }
+    /** Rings the chosen PC (its island chimes and says "Here I am"). */
+    suspend fun ringPc(): Boolean {
+        val p = pc() ?: return false
+        if (p.online && p.revision < 3) { banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${p.name}", "Find my PC needs version 0.20 or later")); return false }
+        val ok = command(Proto.CMD_RING_PC)?.ok == true
+        if (ok) banners.tryEmit(Banner(Banner.Kind.Ring, "Ringing ${p.name}", "Its island chimes and lights up"))
+        return ok
+    }
+
+    // ---- the camera, for a PC's Shelf ----
+    /** The PC that asked for a photo (else the chosen one). */
+    @Volatile var photoFor: String? = null
+    /** A photo just taken for a PC: onto its Shelf. */
+    fun sendPhoto(uri: Uri) {
+        val target = photoFor?.let { id -> peers.value.firstOrNull { it.id == id && it.paired } } ?: pc()
+        photoFor = null; Notify.cancel(app, Notify.PHOTO)
+        if (target == null) { banners.tryEmit(Banner(Banner.Kind.Failed, "No PC yet", "Pair with your PC first")); return }
+        send(target.id, listOf(uri), toShelf = target.revision >= 3)
+        banners.tryEmit(Banner(Banner.Kind.Photo, "On its way to ${target.name}", if (target.revision >= 3) "It lands on the island’s Shelf" else "It goes to the PC’s Downloads"))
+    }
+
+    // ---- the universal clipboard ----
+    /** Called while the app has the focus: a new copy on this phone goes to the chosen PC when its island's universal clipboard is on. */
+    fun clipboardOut(context: Context) {
+        if (!Clip.enabled()) return
+        val p = pc() ?: return; if (!p.online) return
+        scope.launch {
+            // The PC's status says whether its universal clipboard is on; it may be on its way.
+            var s: PcStatus? = status.value
+            for (i in 0 until 30) { if (s != null) break; kotlinx.coroutines.delay(100); s = status.value }
+            if (s?.clipboard != true) return@launch
+            val text = withContext(Dispatchers.Main) { Clip.newCopy(context) } ?: return@launch
+            if (command(Proto.CMD_CLIP_SET, text.toByteArray(), quiet = true)?.ok == true)
+                banners.tryEmit(Banner(Banner.Kind.Clipboard, "On ${p.name}’s clipboard", text.lineSequence().first().take(60)))
+        }
     }
 
     // ---- this phone for the island ----
@@ -265,6 +346,27 @@ object Hub {
         val l = link ?: return; val frame = Link.statusFrame(percent, charging)
         val targets = peers.value.filter { it.paired && it.online && it.remote }
         scope.launch { targets.forEach { l.notice(it.id, frame) } }
+        sendDetails()
+    }
+
+    @Volatile private var sentDetails: List<Pair<String, String>>? = null; @Volatile private var detailsAt = 0L
+    /**
+     * This phone's readings (battery, storage, memory, network, sound...) to every paired island that shows them (0.20),
+     * when they changed, at least every five minutes while the phone is here, and at once when a PC arrives.
+     */
+    fun sendDetails(force: Boolean = false) {
+        if (!prefs.getBoolean("details", true)) return
+        val l = link ?: return
+        val targets = peers.value.filter { it.paired && it.online && it.revision >= 3 && !it.phone }; if (targets.isEmpty()) return
+        scope.launch {
+            val d = DeviceInfo.read(app); val compared = d.filter { it.first != "Uptime" }; val now = System.currentTimeMillis()
+            synchronized(this@Hub) {
+                if (!force && compared == sentDetails && now - detailsAt < 300_000) return@launch
+                sentDetails = compared; detailsAt = now
+            }
+            val frame = Link.detailsFrame(d)
+            targets.forEach { l.notice(it.id, frame) }
+        }
     }
 
     fun handBack(music: Handoff, peer: String) { scope.launch { val l = link ?: return@launch; val code = l.handoff(peer, music)

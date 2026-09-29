@@ -1,0 +1,26 @@
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="camera" android:enabled="true" android:icon="@drawable/ic_sc_camera"
+        android:shortcutShortLabel="@string/sc_camera" android:shortcutLongLabel="@string/sc_camera_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.MainActivity">
+            <extra android:name="open" android:value="camera" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="trackpad" android:enabled="true" android:icon="@drawable/ic_sc_trackpad"
+        android:shortcutShortLabel="@string/sc_trackpad" android:shortcutLongLabel="@string/sc_trackpad_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.MainActivity">
+            <extra android:name="open" android:value="trackpad" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="find" android:enabled="true" android:icon="@drawable/ic_sc_find"
+        android:shortcutShortLabel="@string/sc_find" android:shortcutLongLabel="@string/sc_find_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.MainActivity">
+            <extra android:name="open" android:value="findpc" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="paste" android:enabled="true" android:icon="@drawable/ic_sc_paste"
+        android:shortcutShortLabel="@string/sc_paste" android:shortcutLongLabel="@string/sc_paste_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.MainActivity">
+            <extra android:name="open" android:value="paste" />
+        </intent>
+    </shortcut>
+</shortcuts>

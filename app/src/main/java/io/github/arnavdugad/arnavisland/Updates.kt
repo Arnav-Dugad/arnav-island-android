@@ -135,7 +135,7 @@ object Updates {
         val mine = pm.getPackageInfo(context.packageName, flags)
         if (longVersion(theirs) <= longVersion(mine)) return "That version isn't newer"
         val a = certs(theirs); val b = certs(mine)
-        if (a.isEmpty() || a != b) return "It isn't signed by Arnav Island's key"
+        if (a.isEmpty() || a != b) return "It isn’t signed by Arnav Island’s key"
         return null
     }
     private fun longVersion(p: PackageInfo): Long = if (Build.VERSION.SDK_INT >= 28) p.longVersionCode else @Suppress("DEPRECATION") p.versionCode.toLong()

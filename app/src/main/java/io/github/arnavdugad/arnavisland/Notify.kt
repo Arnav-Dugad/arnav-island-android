@@ -16,7 +16,7 @@ import io.github.arnavdugad.arnavisland.link.LinkEvent
 
 /** The app's notifications: staying reachable, pairing, files, music from a PC, find my phone and updates. */
 object Notify {
-    const val LINK = 1; const val PAIR = 2; const val MUSIC = 3; const val RING = 4; const val UPDATE = 5
+    const val LINK = 1; const val PAIR = 2; const val MUSIC = 3; const val RING = 4; const val UPDATE = 5; const val PHOTO = 6
     const val OFFER = 1000; const val RECEIVED = 5000
     private const val CH_LINK = "link"; private const val CH_FILES = "files"; private const val CH_RING = "ring"; private const val CH_UPDATES = "updates"; private const val CH_MUSIC = "music"
 
@@ -28,6 +28,7 @@ object Notify {
             NotificationChannel(CH_MUSIC, "Music from your PC", NotificationManager.IMPORTANCE_HIGH).apply { description = "Continue what plays on your PC here" },
             NotificationChannel(CH_RING, "Find my phone", NotificationManager.IMPORTANCE_HIGH).apply { description = "When a PC rings this phone"; setSound(null, null); enableVibration(false); setBypassDnd(true) },
             NotificationChannel(CH_UPDATES, "Updates", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "New versions of Arnav Island" },
+            NotificationChannel(PcMedia.CHANNEL, "Your PC’s music", NotificationManager.IMPORTANCE_LOW).apply { description = "What plays on your PC, with its controls, on the lock screen and in quick settings"; setShowBadge(false) },
         ))
     }
     private fun allowed(context: Context) = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -76,6 +77,11 @@ object Notify {
         .addAction(0, "Found it", service(context, LinkService.STOP_RING)).setContentIntent(open(context, "ring"))
         .setFullScreenIntent(open(context, "ring"), true).build()
     fun showRing(context: Context, from: String) = post(context, RING, ring(context, from))
+
+    fun photo(context: Context, from: String) = post(context, PHOTO, NotificationCompat.Builder(context, CH_FILES)
+        .setSmallIcon(R.drawable.ic_stat_island).setContentTitle("$from would like a photo").setContentText("Tap to take it; it lands on the island’s Shelf")
+        .setCategory(NotificationCompat.CATEGORY_REMINDER).setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setContentIntent(open(context, "camera")).setAutoCancel(true).setTimeoutAfter(120_000).build())
 
     fun update(context: Context, title: String, text: String) = post(context, UPDATE, NotificationCompat.Builder(context, CH_UPDATES)
         .setSmallIcon(R.drawable.ic_stat_island).setContentTitle(title).setContentText(text).setContentIntent(open(context, "updates")).setAutoCancel(true).build())

@@ -7,6 +7,8 @@ import java.io.OutputStream
 data class PeerView(
     val id: String, val name: String, val paired: Boolean, val online: Boolean, val phone: Boolean,
     val version: Int, val revision: Int, val address: String?,
+    /** Here only through the relay (on another network). */
+    val internet: Boolean = false,
 ) {
     /** Revision 2 (Arnav Island 0.19 and later) answers remote control, notices and find-my-phone. */
     val remote get() = version >= Proto.VERSION && revision >= 2
@@ -36,6 +38,8 @@ data class PcStatus(
     val cover: ByteArray?, val coverHash: ByteArray?,
     /** When this was read (milliseconds, the phone's clock), for moving the position on while it plays. */
     val at: Long = System.currentTimeMillis(),
+    /** The island's universal clipboard is on (0.20): copies on this phone go to the PC as the app opens. */
+    val clipboard: Boolean = false,
 ) {
     fun positionNow(now: Long = System.currentTimeMillis()): Double =
         if (playing && duration > 0) (position + (now - at) / 1000.0).coerceAtMost(duration) else position
@@ -44,6 +48,11 @@ data class PcStatus(
 }
 
 class RemoteReply(val status: Int, val payload: ByteArray) { val ok get() = status == Proto.OK }
+
+/** The song's lyrics from the PC (revision 3): state 0 off there, 1 being looked for, 2 found, 3 none; key "title<TAB>artist". */
+data class Lyrics(val state: Int, val key: String, val lines: List<LyricsLine>)
+/** A line: its start (seconds), text, and each word's start (seconds, and where in the text it begins). */
+data class LyricsLine(val time: Double, val text: String, val words: List<Pair<Double, Int>>)
 
 sealed interface LinkEvent {
     data class Peers(val peers: List<PeerView>) : LinkEvent
@@ -57,6 +66,10 @@ sealed interface LinkEvent {
     data class Music(val transfer: Int, val peer: String, val name: String, val music: Handoff) : LinkEvent
     data class MusicFile(val transfer: Int, val peer: String, val name: String, val music: Handoff, val shown: String) : LinkEvent
     data class Ring(val peer: String, val name: String) : LinkEvent
+    /** A paired PC asks for a photo for its Shelf. */
+    data class PhotoRequested(val peer: String, val name: String) : LinkEvent
+    /** A pairing code this device offers (null when it couldn't be made). */
+    data class PairingCode(val code: String?) : LinkEvent
 }
 
 /** Something to send: its path as the other side will keep it ("Photos/a.jpg"), its size and how to read it. */

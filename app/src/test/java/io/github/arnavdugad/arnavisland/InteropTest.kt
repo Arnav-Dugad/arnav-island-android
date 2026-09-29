@@ -46,7 +46,7 @@ class InteropTest {
         try {
             assertTrue(phone.start())
             val ready = line("READY ").split(' '); val pcId = ready[0]
-            phone.addPeer(pcId, "Interop PC", "127.0.0.1", pcPort, 2, 2)
+            phone.addPeer(pcId, "Interop PC", "127.0.0.1", pcPort, 2, 3)
             tell("peer ${phone.identity} ${phone.port}"); line("OK peer")
 
             // Pairing: the phone and Windows show the same code.
@@ -79,7 +79,7 @@ class InteropTest {
 
             // Revision 2: the remote.
             val status = phone.status(pcId, null, null); assertNotNull(phone.lastRemoteError, status); status!!
-            assertEquals("Interop Song", status.title); assertEquals("Test Artist", status.artist); assertEquals("Spotify", status.app); assertEquals("Interop PC", status.pcName); assertEquals("14° Rain", status.weather)
+            assertEquals("Interop Song", status.title); assertEquals("Test Artist", status.artist); assertEquals("Spotify", status.app); assertEquals("Interop PC", status.pcName); assertEquals("14° Rain", status.weather); assertTrue("the island says its universal clipboard is on", status.clipboard)
             assertTrue(status.available && status.playing && status.canNext && status.canSeek && status.batteryPresent); assertEquals(42, status.volume); assertEquals(77, status.battery); assertEquals(13, status.cpu)
             assertEquals(61.5, status.position, 1e-9); assertEquals(200.0, status.duration, 1e-9); assertEquals(1500, status.cover!!.size)
             val again = phone.status(pcId, status.coverHash, status)!!; assertSame("an unchanged cover isn't sent again", status.cover, again.cover)
@@ -106,6 +106,83 @@ class InteropTest {
             // Music, phone to PC.
             assertEquals(1, phone.handoff(pcId, Handoff("Phone Song", "Phone Artist", position = 33.0, duration = 120.0)))
             assertTrue(line("HANDOFF ").startsWith("Phone Song|33"))
+
+            // Revision 3: find this PC, and the song's lyrics with word times.
+            assertTrue(phone.remote(pcId, Proto.CMD_RING_PC)!!.ok); line("RINGPC")
+            val lyrics = Link.parseLyrics(phone.remote(pcId, Proto.CMD_LYRICS)!!.payload)!!
+            assertEquals(2, lyrics.state); assertEquals("Interop Song\tTest Artist", lyrics.key); assertEquals(2, lyrics.lines.size)
+            assertEquals("Glass on the water", lyrics.lines[0].text); assertEquals(12.5, lyrics.lines[0].time, 1e-9); assertEquals(listOf(12.5 to 0, 13.1 to 6, 13.6 to 9), lyrics.lines[0].words)
+            // A notification with its key and actions, the phone's details, and a notification gone.
+            assertTrue(phone.notice(pcId, Link.notificationFrame("Messages", "Mum", "Dinner?", "Test Phone", false, null, "k1", listOf("Reply" to true, "Mark read" to false))))
+            assertEquals("Messages|Mum|Dinner?|0|0|k1|Reply*|Mark read", line("PHONENOTICE "))
+            assertTrue(phone.notice(pcId, Link.detailsFrame(listOf("Battery" to "81%", "Storage" to "40 GB free")))); assertEquals("Battery\t81%", line("DETAILS "))
+            assertTrue(phone.notice(pcId, Link.goneFrame("k1"))); assertEquals("k1", line("GONE "))
+            // The PC runs an action with a reply, sets the clipboard, asks for a photo.
+            val acted = LinkedBlockingQueue<String>(); phone.onAction = { key, index, reply -> acted.put("$key|$index|$reply"); 0 }
+            tell("action ${phone.identity} k1 0 See you at 8"); assertEquals("k1|0|See you at 8", acted.poll(20, TimeUnit.SECONDS))
+            val clipped = LinkedBlockingQueue<String>(); phone.onClipboard = { text, _ -> clipped.put(text); true }
+            tell("clip ${phone.identity} from the PC"); assertEquals("from the PC", clipped.poll(20, TimeUnit.SECONDS))
+            tell("photo ${phone.identity}"); await<LinkEvent.PhotoRequested>()
+            // The trackpad and keyboard.
+            val input = phone.openInput(pcId)!!
+            assertTrue(input.send(Link.moveFrame(5, -3))); assertEquals("600500fdff", line("INPUT "))
+            assertTrue(input.send(Link.textFrame("hi"))); assertEquals("636869", line("INPUT "))
+            input.close()
+            // Photos for the Shelf.
+            phone.send(pcId, listOf(Source("IMG_1.jpg", 5) { ByteArrayInputStream(byteArrayOf(1, 2, 3, 4, 5)) }), "IMG_1.jpg", toShelf = true)
+            line("OFFER 1 5 shelf"); await<LinkEvent.Sent>()
+        } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
+    }
+
+    /**
+     * The same two engines on no common network: neither is told where the other is, and discovery is off. They pair with a
+     * code through the public relay, then everything goes through it. Runs when ARNAV_RELAY_TEST is set (it needs the internet).
+     */
+    @Test fun phone_and_windows_island_meet_over_the_internet() {
+        val exe = System.getenv("ARNAV_SHARE_PEER"); assumeTrue("ARNAV_SHARE_PEER not set", exe != null && File(exe).exists())
+        assumeTrue("ARNAV_RELAY_TEST not set", System.getenv("ARNAV_RELAY_TEST") != null)
+        val work = Files.createTempDirectory("arnav-relay").toFile(); val phoneDir = File(work, "phone").apply { mkdirs() }
+        val process = ProcessBuilder(exe, "47931", File(work, "pc").path, "--relay").redirectErrorStream(true).start()
+        val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
+        thread(isDaemon = true) { while (true) { val l = reader.readLine() ?: break; if (!l.startsWith("REMOTE status")) println("PC: $l"); lines.put(l) } }
+        val pc = process.outputStream.bufferedWriter(Charsets.UTF_8)
+        fun tell(cmd: String) { pc.write(cmd); pc.newLine(); pc.flush() }
+        val phone = Link(MemoryStore(), "Test Phone", FolderInbox(phoneDir), { events.put(it) }, Link.Options(tcpPort = 0, discovery = false, loopback = true, relay = true))
+        try {
+            assertTrue(phone.start())
+            val pcId = line("READY ").split(' ')[0]
+            val connected = System.currentTimeMillis() + 30_000; while (!phone.internet && System.currentTimeMillis() < connected) Thread.sleep(200)
+            assertTrue("the phone reached the relay", phone.internet)
+            Thread.sleep(3_000)
+            tell("host"); val code = line("CODE ", 40); assertTrue(code, Relay.code(code) != null)
+            phone.pairWithCode(code)
+            val shown = await<LinkEvent.PairCode>(40).code
+            assertEquals("the same six digits on both", line("PAIRCODE ").toInt(), shown)
+            phone.confirmPair(true); assertTrue(await<LinkEvent.Paired>(40).ok); line("PAIRED ok")
+            // Each sees the other through the relay.
+            val seen = System.currentTimeMillis() + 40_000
+            while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
+            val view = phone.peers().first { it.id == pcId }; assertTrue(view.online && view.internet); assertEquals(3, view.revision)
+            line("PRESENCE ${phone.identity} 1 1 3 1", 40)
+
+            // Phone to PC.
+            val photo = ByteArray(700_000) { (it * 13 + 5).toByte() }
+            phone.send(pcId, listOf(Source("photo.jpg", photo.size.toLong()) { ByteArrayInputStream(photo) }), "photo.jpg")
+            line("OFFER 1 700000", 40); line("RECEIVED ", 90); await<LinkEvent.Sent>(40)
+            assertArrayEquals(photo, File(work, "pc/dl/photo.jpg").readBytes())
+            // PC to phone.
+            val fromPc = File(work, "fromPc.bin").apply { writeBytes(ByteArray(300_000) { (it % 241).toByte() }) }
+            tell("send ${phone.identity} ${fromPc.path}")
+            val offer = await<LinkEvent.Offer>(40); phone.answer(offer.transfer, true); await<LinkEvent.Received>(90); line("SENT ", 40)
+            assertArrayEquals(fromPc.readBytes(), File(phoneDir, "fromPc.bin").readBytes())
+            // The remote, notices, find my phone and music, all through the relay.
+            val status = phone.status(pcId, null, null); assertNotNull(phone.lastRemoteError, status); assertEquals(1500, status!!.cover!!.size)
+            val clip = phone.remote(pcId, Proto.CMD_CLIP_GET)!!; assertEquals("from pc ✓", Reader(clip.payload).string())
+            assertTrue(phone.notice(pcId, Link.statusFrame(64, false))); assertEquals("64 0", line("PHONESTATUS ", 30))
+            tell("ring ${phone.identity}"); await<LinkEvent.Ring>(40); line("RANG", 30)
+            val song = File(work, "song.mp3").apply { writeBytes(ByteArray(120_000) { 7 }) }
+            tell("handoff ${phone.identity} ${song.path}")
+            val music = await<LinkEvent.Music>(40); phone.answerMusic(music.transfer, 2); val file = await<LinkEvent.MusicFile>(60); assertEquals(120_000L, File(file.shown).length())
         } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
     }
 }

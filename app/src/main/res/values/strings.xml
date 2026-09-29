@@ -2,4 +2,16 @@
     <string name="app_name">Arnav Island</string>
     <string name="share_label">Send to PC</string>
     <string name="mirror_label">Arnav Island notifications on your PC</string>
+    <string name="widget_pc_label">Now playing on your PC</string>
+    <string name="widget_pc_description">What plays on your PC, with its controls, and lock, ring, send, camera and paste</string>
+    <string name="widget_actions_label">PC quick actions</string>
+    <string name="widget_actions_description">Lock your PC, ring it, send photos, take one for its Shelf, paste on it</string>
+    <string name="sc_camera">Photo to Shelf</string>
+    <string name="sc_camera_long">Take a photo for your PC’s Shelf</string>
+    <string name="sc_trackpad">Trackpad</string>
+    <string name="sc_trackpad_long">Use your phone as the PC’s trackpad</string>
+    <string name="sc_find">Find my PC</string>
+    <string name="sc_find_long">Ring your PC</string>
+    <string name="sc_paste">Paste on PC</string>
+    <string name="sc_paste_long">Put your clipboard on the PC</string>
 </resources>

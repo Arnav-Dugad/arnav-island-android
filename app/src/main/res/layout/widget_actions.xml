@@ -1,0 +1,38 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/widget_glass" android:orientation="horizontal" android:padding="9dp">
+        <LinearLayout android:id="@+id/w_lock" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+            android:layout_marginStart="3dp" android:layout_marginEnd="3dp" android:background="@drawable/widget_pill"
+            android:gravity="center" android:orientation="vertical" android:contentDescription="Lock">
+            <ImageView android:layout_width="21dp" android:layout_height="21dp" android:src="@drawable/ic_w_lock" android:importantForAccessibility="no" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="Lock"
+                android:textColor="#B3FFFFFF" android:textSize="10.5sp" android:maxLines="1" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/w_ring" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+            android:layout_marginStart="3dp" android:layout_marginEnd="3dp" android:background="@drawable/widget_pill"
+            android:gravity="center" android:orientation="vertical" android:contentDescription="Ring">
+            <ImageView android:layout_width="21dp" android:layout_height="21dp" android:src="@drawable/ic_w_ring" android:importantForAccessibility="no" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="Ring"
+                android:textColor="#B3FFFFFF" android:textSize="10.5sp" android:maxLines="1" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/w_send" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+            android:layout_marginStart="3dp" android:layout_marginEnd="3dp" android:background="@drawable/widget_pill"
+            android:gravity="center" android:orientation="vertical" android:contentDescription="Send">
+            <ImageView android:layout_width="21dp" android:layout_height="21dp" android:src="@drawable/ic_w_send" android:importantForAccessibility="no" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="Send"
+                android:textColor="#B3FFFFFF" android:textSize="10.5sp" android:maxLines="1" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/w_camera" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+            android:layout_marginStart="3dp" android:layout_marginEnd="3dp" android:background="@drawable/widget_pill"
+            android:gravity="center" android:orientation="vertical" android:contentDescription="Camera">
+            <ImageView android:layout_width="21dp" android:layout_height="21dp" android:src="@drawable/ic_w_camera" android:importantForAccessibility="no" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="Camera"
+                android:textColor="#B3FFFFFF" android:textSize="10.5sp" android:maxLines="1" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/w_paste" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+            android:layout_marginStart="3dp" android:layout_marginEnd="3dp" android:background="@drawable/widget_pill"
+            android:gravity="center" android:orientation="vertical" android:contentDescription="Paste">
+            <ImageView android:layout_width="21dp" android:layout_height="21dp" android:src="@drawable/ic_w_paste" android:importantForAccessibility="no" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="Paste"
+                android:textColor="#B3FFFFFF" android:textSize="10.5sp" android:maxLines="1" />
+        </LinearLayout>
+</LinearLayout>

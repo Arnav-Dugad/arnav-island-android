@@ -7,8 +7,8 @@ android {
         applicationId = "io.github.arnavdugad.arnavisland"
         minSdk = 28
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.0.1"
+        versionCode = 12
+        versionName = "1.1.0"
     }
     signingConfigs {
         if (System.getenv("ARNAVISLAND_KEYSTORE") != null) create("release") {

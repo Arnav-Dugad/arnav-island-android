@@ -4,4 +4,6 @@
     <external-path name="downloads" path="Download/Arnav Island/" />
     <!-- Songs handed off from a PC, kept by the app. -->
     <files-path name="handoff" path="handoff/" />
+    <!-- Photos taken for a PC's Shelf, until they have gone. -->
+    <cache-path name="camera" path="camera/" />
 </paths>
