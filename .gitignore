@@ -1,0 +1,15 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+.idea/
+# Release signing: the key and its sealed password never leave the publishing PC.
+*.jks
+*.keystore
+*.pfx
+*.dpapi
+signing.properties
+# Built releases (published on GitHub Releases, not in the repository).
+out/
+*.apk
+*.log

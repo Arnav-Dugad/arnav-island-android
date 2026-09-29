@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Android 9: received files in Downloads/Arnav Island, opened by other apps through this provider. -->
+    <external-path name="downloads" path="Download/Arnav Island/" />
+    <!-- Songs handed off from a PC, kept by the app. -->
+    <files-path name="handoff" path="handoff/" />
+</paths>

@@ -1,0 +1,32 @@
+name: Build and test
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+      # Unit tests (the Windows interop test is skipped here: it needs the island's share_peer.exe), and both builds:
+      # the debug build and the optimised one signed with the debug key.
+      - run: chmod +x gradlew && ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleSmoke --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-build
+          path: |
+            app/build/reports
+            app/build/outputs/apk/smoke/*.apk
