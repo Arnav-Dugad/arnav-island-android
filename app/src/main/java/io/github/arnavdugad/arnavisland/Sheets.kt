@@ -112,7 +112,7 @@ import kotlin.math.sin
                     0, 1 -> {
                         Text("Pair with your PC", style = Type.title, color = t.text)
                         Spacer(Modifier.height(4.dp))
-                        Text(if (stage == 1) "Asking ${peers.firstOrNull { it.id == asking }?.name ?: "your PC"}…" else "On your PC, turn on Settings › Sharing › Share with my PCs", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+                        Text(if (stage == 1) "Asking ${peers.firstOrNull { it.id == asking }?.name ?: "your PC"}…" else "On your PC, turn on Settings › Privacy & productivity › Share with my PCs", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
                         val found = peers.filter { !it.paired && it.online && !it.phone }
                         Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
                             Radar(t.accent, Modifier.size(280.dp))

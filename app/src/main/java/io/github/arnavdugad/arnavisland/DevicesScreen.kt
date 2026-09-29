@@ -121,7 +121,7 @@ data class Look(val appearance: Int, val glass: Boolean, val weather: Boolean)
                 Hairline()
                 GlassRow(Icons.Rounded.PhoneAndroid, "Your phone’s details", "Storage, memory, network, sound and more, in the island’s view of this phone") { GlassSwitch(flag("details"), { set("details", it); if (it) Hub.sendDetails(force = true) }) }
                 Hairline()
-                GlassRow(Icons.Rounded.ContentPaste, "Universal clipboard", "Copy on one, paste on the other. On the island: Settings › Sharing › Universal clipboard") {
+                GlassRow(Icons.Rounded.ContentPaste, "Universal clipboard", "Copy on one, paste on the other, with the island’s own Universal clipboard switch on too") {
                     GlassSwitch(flag("clipboard"), { set("clipboard", it) })
                 }
                 Hairline()

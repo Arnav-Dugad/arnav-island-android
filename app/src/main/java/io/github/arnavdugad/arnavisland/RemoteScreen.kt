@@ -97,7 +97,7 @@ import java.nio.ByteOrder
         GlassPanel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp)) {
                 Text("On your PC", style = Type.micro, color = t.muted); Spacer(Modifier.height(8.dp))
-                Step(1, "Open Arnav Island’s Settings › Sharing"); Step(2, "Turn on “Share with my PCs”"); Step(3, "Pair here: on the same Wi-Fi, or anywhere with the island’s code")
+                Step(1, "Open Arnav Island’s Settings › Privacy & productivity"); Step(2, "Turn on “Share with my PCs”"); Step(3, "Pair here: on the same Wi-Fi, or anywhere with the island’s code")
             }
         }
     }

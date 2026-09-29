@@ -136,7 +136,7 @@ import kotlinx.coroutines.withContext
             !pc.online -> Empty(Icons.Rounded.WifiOff, "${pc.name} is away", "Its Shelf shows here when Arnav Island runs there")
             l == null -> Empty(Icons.Rounded.Inventory2, "Looking at ${pc.name}’s Shelf…", "")
             l.error != null -> Empty(Icons.Rounded.ErrorOutline, "Couldn’t look", l.error)
-            !l.shared -> Empty(Icons.Rounded.Lock, "${pc.name} keeps its Shelf to itself", "Turn on “My PCs can take from the Shelf” in the island’s Settings › Sharing")
+            !l.shared -> Empty(Icons.Rounded.Lock, "${pc.name} keeps its Shelf to itself", "Turn on “My PCs can take from the Shelf” in the island’s Settings › Privacy & productivity")
             l.items.isEmpty() -> Empty(Icons.Rounded.Inventory2, "The Shelf is empty", "Drop files on the island’s Shelf and they show up here")
             else -> LazyVerticalGrid(GridCells.Fixed(2), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
                 items(l.items.size) { i ->

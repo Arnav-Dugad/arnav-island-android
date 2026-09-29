@@ -154,7 +154,10 @@ class InteropTest {
             val connected = System.currentTimeMillis() + 30_000; while (!phone.internet && System.currentTimeMillis() < connected) Thread.sleep(200)
             assertTrue("the phone reached the relay", phone.internet)
             Thread.sleep(3_000)
-            tell("host"); val code = line("CODE ", 40); assertTrue(code, Relay.code(code) != null)
+            // The PC offers a code once its own relay is up (it waits 8 s for it; a slow broker can take longer on its first connection).
+            var code = ""
+            for (attempt in 1..4) { tell("host"); code = line("CODE ", 40); if (Relay.code(code) != null) break; Thread.sleep(5_000) }
+            assertTrue("the PC offered a code: '$code'", Relay.code(code) != null)
             phone.pairWithCode(code)
             val shown = await<LinkEvent.PairCode>(40).code
             assertEquals("the same six digits on both", line("PAIRCODE ").toInt(), shown)

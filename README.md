@@ -86,7 +86,7 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 
 ## Getting started
 
-1. On your PC, install [Arnav Island](https://github.com/Arnav-Dugad/arnav-island/releases/latest) 0.20 or later. Turn on **Settings › Sharing › Share with my PCs**. Version 0.19 works too, without the features marked 0.20 in its notes.
+1. On your PC, install [Arnav Island](https://github.com/Arnav-Dugad/arnav-island/releases/latest) 0.20 or later. Turn on **Settings › Privacy & productivity › Share with my PCs**. Version 0.19 works too, without the features marked 0.20 in its notes.
 2. On your phone, download the APK from [Releases](https://github.com/Arnav-Dugad/arnav-island-android/releases/latest) and open it. Android asks once to allow installs from your browser.
 3. Open the app and tap **Pair with your PC**:
    - **On the same Wi-Fi:** tap your PC on the radar.
