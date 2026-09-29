@@ -93,20 +93,26 @@ import kotlin.math.sin
     }
 }
 
+/** Where the pairing sheet opens: the radar (this Wi-Fi), typing a code, the QR scanner, or finding a PC by its link. */
+const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; const val PAIR_FINDING = 6
+
 /**
  * Pairing. The radar looks for your PCs (those with sharing on, on this Wi-Fi) and each pops up around it; tapping one
  * asks it to pair, and both show the same six digits, which roll in here. A PC that starts pairing opens this too.
- * On another network, the island's own code (Shelf › Nearby › Pair with a code) pairs through the relay, the same way.
+ * On another network, the island's own code (Shelf › Nearby › Pair with a code) pairs through the relay, the same way:
+ * scanned from its QR code (which names that PC's key, so only the PC asks to confirm) or typed.
  */
-@Composable fun PairSheet(visible: Boolean, peers: List<PeerView>, code: LinkEvent.PairCode?, result: LinkEvent.Paired?, onDismiss: () -> Unit, startWithCode: Boolean = false) {
+@Composable fun PairSheet(visible: Boolean, peers: List<PeerView>, code: LinkEvent.PairCode?, result: LinkEvent.Paired?, onDismiss: () -> Unit, start: Int = PAIR_NEARBY) {
     val t = LocalTokens.current
     var asking by remember { mutableStateOf<String?>(null) }
-    var byCode by remember { mutableStateOf(false) }
-    var connecting by remember { mutableStateOf(false) }
-    LaunchedEffect(visible) { if (visible) { asking = null; connecting = false; byCode = startWithCode; Hub.pairResult.value = null } }
-    LaunchedEffect(result) { if (result?.ok == true) { delay(1600); onDismiss() } else if (result != null) { asking = null; connecting = false } }
-    GlassSheet(visible, { if (code != null) Hub.confirmPair(false); onDismiss() }) {
-        AnimatedContent(when { result?.ok == true -> 3; code != null -> 2; byCode -> 4; asking != null -> 1; else -> 0 }, transitionSpec = { (fadeIn(tween(260)) + scaleIn(initialScale = .94f)) togetherWith fadeOut(tween(160)) }, label = "Pair") { stage ->
+    var mode by remember { mutableIntStateOf(PAIR_NEARBY) }
+    val finding by Hub.codePairing.collectAsState()
+    LaunchedEffect(visible) { if (visible) { asking = null; mode = start; if (start != PAIR_FINDING) Hub.pairResult.value = null } }
+    LaunchedEffect(result) { if (result?.ok == true) { delay(1600); onDismiss() } else if (result != null) asking = null }
+    // A pairing link opened while this shows: its PC is being found.
+    LaunchedEffect(finding) { if (finding != null && mode != PAIR_TYPE) mode = PAIR_FINDING }
+    GlassSheet(visible, { if (code != null && !code.confirmed) Hub.confirmPair(false); onDismiss() }) {
+        AnimatedContent(when { result?.ok == true -> 3; code != null -> 2; mode != PAIR_NEARBY -> mode; asking != null -> 1; else -> 0 }, transitionSpec = { (fadeIn(tween(260)) + scaleIn(initialScale = .94f)) togetherWith fadeOut(tween(160)) }, label = "Pair") { stage ->
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 when (stage) {
                     0, 1 -> {
@@ -130,20 +136,31 @@ import kotlin.math.sin
                         }
                         if (result?.ok == false) Text(result.detail, style = Type.caption, color = t.danger, textAlign = TextAlign.Center)
                         else if (found.isEmpty()) Text("Looking on this Wi-Fi…", style = Type.caption, color = t.muted)
-                        Spacer(Modifier.height(16.dp))
-                        GlassButton({ Hub.pairResult.value = null; byCode = true }, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) {
-                            Icon(Icons.Rounded.Public, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("On another network? Pair with a code", style = Type.caption)
+                        Spacer(Modifier.height(14.dp))
+                        Text("On another network?", style = Type.caption, color = t.faint)
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            GlassButton({ Hub.pairResult.value = null; mode = PAIR_SCAN }, prominent = true, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp), description = "Scan the island’s QR code") {
+                                Icon(Icons.Rounded.QrCodeScanner, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Scan QR code", style = Type.caption)
+                            }
+                            GlassButton({ Hub.pairResult.value = null; mode = PAIR_TYPE }, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp), description = "Type the island’s code") {
+                                Icon(Icons.Rounded.Keyboard, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Type a code", style = Type.caption)
+                            }
                         }
                     }
-                    4 -> CodeEntry(connecting, result?.takeIf { !it.ok }?.detail, onBack = { byCode = false; Hub.pairResult.value = null }) { typed -> connecting = true; Hub.pairWithCode(typed) }
+                    PAIR_TYPE -> CodeEntry(finding != null, result?.takeIf { !it.ok }?.detail, onScan = { Hub.pairResult.value = null; mode = PAIR_SCAN }, onBack = { mode = PAIR_NEARBY; Hub.pairResult.value = null }) { typed -> Hub.pairWithCode(typed) }
+                    PAIR_SCAN -> ScanPane({ link -> Hub.pairWithCode(link.code, link.key); mode = PAIR_FINDING }, { Hub.pairResult.value = null; mode = PAIR_TYPE })
+                    PAIR_FINDING -> Finding(result?.takeIf { !it.ok }?.detail, onScan = { Hub.pairResult.value = null; mode = PAIR_SCAN }, onType = { Hub.pairResult.value = null; mode = PAIR_TYPE }, onHide = onDismiss)
                     2 -> if (code != null) {
-                        Text("Pair with ${code.name}?", style = Type.title, color = t.text, textAlign = TextAlign.Center)
+                        Text(if (code.confirmed) "Confirm on ${code.name}" else "Pair with ${code.name}?", style = Type.title, color = t.text, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(6.dp))
-                        Text("Check that ${code.name} shows the same code", style = Type.caption, color = t.muted)
+                        Text(if (code.confirmed) "It shows the same code. Choose Pair there to finish" else "Check that ${code.name} shows the same code", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(26.dp))
                         RollingDigits("%06d".format(code.code).let { it.substring(0, 3) + " " + it.substring(3) }, Type.digits.copy(fontSize = Type.digits.fontSize * 1.1f), t.text)
                         Spacer(Modifier.height(30.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (code.confirmed) Row(verticalAlignment = Alignment.CenterVertically) {
+                            Radar(t.accent, Modifier.size(28.dp)); Spacer(Modifier.width(10.dp)); Text("Waiting for ${code.name}…", style = Type.caption, color = t.muted)
+                        } else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             GlassButton({ Hub.confirmPair(false); onDismiss() }, Modifier.weight(1f)) { Text("Not now", style = Type.bodyStrong) }
                             GlassButton({ Hub.confirmPair(true) }, Modifier.weight(1f), prominent = true) { Text("Pair", style = Type.bodyStrong) }
                         }
@@ -163,10 +180,38 @@ import kotlin.math.sin
 }
 
 /**
+ * A scanned (or opened) pairing link's PC being found over the internet: a laptop in glass with the radar sweeping
+ * around it. Failing, why, and the ways to try again; the sheet may be hidden meanwhile (the answer comes as a banner).
+ */
+@Composable private fun Finding(error: String?, onScan: () -> Unit, onType: () -> Unit, onHide: () -> Unit) {
+    val t = LocalTokens.current
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(if (error == null) "Finding your PC" else "Not paired", style = Type.title, color = t.text)
+        Spacer(Modifier.height(4.dp))
+        Text(error ?: "Over the internet, end-to-end encrypted. Keep the code showing on your PC", style = Type.caption, color = if (error == null) t.muted else t.danger, textAlign = TextAlign.Center)
+        val space by animateDpAsState(if (error == null) 250.dp else 150.dp, spring(dampingRatio = .8f, stiffness = 300f), label = "Space")
+        Box(Modifier.fillMaxWidth().height(space), contentAlignment = Alignment.Center) {
+            if (error == null) Radar(t.accent, Modifier.size(230.dp))
+            Box(Modifier.size(66.dp).glass(CircleShape, GlassLevel.Control, if (error == null) t.accent else t.danger), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.Laptop, null, tint = t.text, modifier = Modifier.size(30.dp))
+            }
+        }
+        if (error != null) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            GlassButton(onScan, prominent = true, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) {
+                Icon(Icons.Rounded.QrCodeScanner, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Scan again", style = Type.caption)
+            }
+            GlassButton(onType, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) {
+                Icon(Icons.Rounded.Keyboard, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Type the code", style = Type.caption)
+            }
+        } else GlassButton(onHide, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) { Text("Hide", style = Type.caption) }
+    }
+}
+
+/**
  * The island's pairing code, typed: eight letters and digits in two groups, each landing in its own glass cell. The
  * last one pairs at once; the island and this phone then show the same six digits, as on one Wi-Fi.
  */
-@Composable private fun CodeEntry(connecting: Boolean, error: String?, onBack: () -> Unit, onCode: (String) -> Unit) {
+@Composable private fun CodeEntry(connecting: Boolean, error: String?, onScan: () -> Unit, onBack: () -> Unit, onCode: (String) -> Unit) {
     val t = LocalTokens.current; val focus = remember { FocusRequester() }
     var text by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { delay(300); runCatching { focus.requestFocus() } }
@@ -203,7 +248,12 @@ import kotlin.math.sin
             else -> Text("Encrypted end to end. The relay passes sealed bytes only.", style = Type.caption, color = t.faint, textAlign = TextAlign.Center)
         }
         Spacer(Modifier.height(16.dp))
-        GlassButton(onBack, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) { Text("Back to this Wi-Fi", style = Type.caption) }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            GlassButton(onScan, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) {
+                Icon(Icons.Rounded.QrCodeScanner, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Scan instead", style = Type.caption)
+            }
+            GlassButton(onBack, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) { Text("Back to this Wi-Fi", style = Type.caption) }
+        }
     }
 }
 

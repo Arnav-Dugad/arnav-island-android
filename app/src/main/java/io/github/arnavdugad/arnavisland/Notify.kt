@@ -48,7 +48,8 @@ object Notify {
         .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE).build()
 
     fun pairing(context: Context, e: LinkEvent.PairCode) = post(context, PAIR, NotificationCompat.Builder(context, CH_FILES)
-        .setSmallIcon(R.drawable.ic_stat_island).setContentTitle("Pair with ${e.name}?").setContentText("Code ${"%06d".format(e.code).chunked(3).joinToString(" ")}  ·  open to confirm")
+        .setSmallIcon(R.drawable.ic_stat_island).setContentTitle(if (e.confirmed) "Confirm on ${e.name}" else "Pair with ${e.name}?")
+        .setContentText("Code ${"%06d".format(e.code).chunked(3).joinToString(" ")}  ·  ${if (e.confirmed) "choose Pair there" else "open to confirm"}")
         .setCategory(NotificationCompat.CATEGORY_STATUS).setAutoCancel(true).setContentIntent(open(context, "pair")).setTimeoutAfter(60_000).build())
 
     fun offer(context: Context, e: LinkEvent.Offer) = post(context, OFFER + e.transfer, NotificationCompat.Builder(context, CH_FILES)

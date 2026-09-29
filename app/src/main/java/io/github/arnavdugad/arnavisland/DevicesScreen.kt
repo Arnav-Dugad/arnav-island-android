@@ -85,14 +85,14 @@ data class Look(val appearance: Int, val glass: Boolean, val weather: Boolean)
                 if (paired.isNotEmpty()) Hairline()
                 GlassRow(Icons.Rounded.Add, "Pair a PC", "On this Wi-Fi: both show the same six digits", onClick = onPair)
                 Hairline()
-                GlassRow(Icons.Rounded.Public, "Pair with a code", "From anywhere: type the code the island shows (Shelf › Nearby)", onClick = onPairCode)
+                GlassRow(Icons.Rounded.QrCodeScanner, "Scan the QR code", "From anywhere: the island’s Shelf › Nearby › Pair with a code. Or type the code", onClick = onPairCode)
             }
         }
         SectionLabel("Anywhere")
         GlassPanel(Modifier.fillMaxWidth()) {
             Column {
                 GlassRow(Icons.Rounded.Public, "Reach my PCs anywhere",
-                    if (!anywhere) "Off: only on the same Wi-Fi" else if (internet) "Connected${Hub.link?.relayBroker?.let { " through $it" } ?: ""}. Any Wi-Fi or mobile data, end-to-end encrypted" else "Connecting… Any Wi-Fi or mobile data, end-to-end encrypted") {
+                    if (!anywhere) "Off: only on the same Wi-Fi" else if (internet) "Connected${(Hub.link?.relayBrokersUp ?: 0).let { n -> if (n > 1) " through $n free relays" else if (n == 1) " through a free relay" else "" }}. Any Wi-Fi or mobile data, end-to-end encrypted" else "Connecting… Any Wi-Fi or mobile data, end-to-end encrypted") {
                     GlassSwitch(anywhere, { on -> set("internet", on); Hub.restart() })
                 }
                 if (!unrestricted && Build.VERSION.SDK_INT >= 23) {

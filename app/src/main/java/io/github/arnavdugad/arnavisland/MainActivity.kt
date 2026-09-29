@@ -59,6 +59,7 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
     private val share = mutableStateOf<ShareRequest?>(null)
     private val opened = mutableStateOf<String?>(null)
+    private val pairLink = mutableStateOf<io.github.arnavdugad.arnavisland.link.PairLink?>(null)
     private var pasteOnFocus = false
     private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -73,7 +74,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT < 29 && ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED)
             registerForActivityResult(ActivityResultContracts.RequestPermission()) { }.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         handle(intent)
-        setContent { App(share.value, { share.value = null }, opened.value, { opened.value = null }, ::bars) }
+        setContent { App(share.value, { share.value = null }, opened.value, { opened.value = null }, pairLink.value, { pairLink.value = null }, ::bars) }
     }
     /** The status and navigation bars' icons follow the app's theme (which may differ from the system's). */
     private fun bars(dark: Boolean) = runCatching {
@@ -104,6 +105,12 @@ class MainActivity : ComponentActivity() {
 
     private fun handle(intent: Intent?) {
         intent ?: return
+        // An island's pairing link (its QR code, read by a camera or a scanner app): pairs at once.
+        if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme.equals("arnavisland", ignoreCase = true)) {
+            val link = io.github.arnavdugad.arnavisland.link.Relay.pairLink(intent.dataString.orEmpty())
+            if (link != null) pairLink.value = link else Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "That link can’t pair", "Scan the QR code on your PC’s island again"))
+            intent.data = null
+        }
         when (intent.action) {
             Intent.ACTION_SEND -> {
                 val uri = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java) else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
@@ -149,7 +156,7 @@ private fun newPhoto(context: Context): Uri {
     return FileProvider.getUriForFile(context, "${context.packageName}.files", file)
 }
 
-@Composable private fun App(share: ShareRequest?, onShareDone: () -> Unit, opened: String?, onOpened: () -> Unit, onDark: (Boolean) -> Unit) {
+@Composable private fun App(share: ShareRequest?, onShareDone: () -> Unit, opened: String?, onOpened: () -> Unit, link: io.github.arnavdugad.arnavisland.link.PairLink?, onLinkDone: () -> Unit, onDark: (Boolean) -> Unit) {
     val context = LocalContext.current
     var look by remember { mutableStateOf(Look(Hub.prefs.getInt("appearance", 0), Hub.prefs.getBoolean("glass", true), Hub.prefs.getBoolean("weatherGlass", true))) }
     val dark = when (look.appearance) { 1 -> true; 2 -> false; else -> isSystemInDarkTheme() }
@@ -194,26 +201,32 @@ private fun newPhoto(context: Context): Uri {
     }
 
     var pairing by remember { mutableStateOf(false) }
-    var pairByCode by remember { mutableStateOf(false) }
+    var pairStart by remember { mutableIntStateOf(PAIR_NEARBY) }
     var linkOpen by remember { mutableStateOf(false) }
     var updatesOpen by remember { mutableStateOf(false) }
     var trackpadOpen by remember { mutableStateOf(false) }
     var islandOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(pairCode) { if (pairCode != null) pairing = true }
+    LaunchedEffect(link) { if (link != null) { Hub.pairWithCode(link.code, link.key); pairStart = PAIR_FINDING; pairing = true; onLinkDone() } }
     LaunchedEffect(status?.available) { if (status?.available != true) islandOpen = false }
 
     // A photo for a PC's Shelf: the camera app takes it, then it goes.
     var photo by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Uri?>(null) }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken -> val uri = photo; photo = null; if (taken && uri != null) Hub.sendPhoto(uri) else Hub.photoFor = null }
+    fun shoot() = runCatching { val uri = newPhoto(context); photo = uri; camera.launch(uri) }.onFailure { Hub.photoFor = null; Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "No camera app", "Install one to take photos for your PC")) }
+    // The app may use the camera itself (to scan pairing codes), so Android opens the camera app only once that is allowed.
+    val cameraAllowed = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) shoot() else { Hub.photoFor = null; Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "The camera isn’t allowed", "Allow it in Settings › Apps › Arnav Island › Permissions")) }
+    }
     fun takePhoto() {
         if (pc == null && Hub.photoFor == null) { pairing = true; return }
-        runCatching { val uri = newPhoto(context); photo = uri; camera.launch(uri) }.onFailure { Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "No camera app", "Install one to take photos for your PC")) }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) cameraAllowed.launch(Manifest.permission.CAMERA) else shoot()
     }
     val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { uris -> pc?.let { Hub.send(it.id, uris) } }
     fun open(what: String) {
         when (what) {
-            "pair" -> { pairByCode = false; pairing = true }; "pair_code" -> { pairByCode = true; pairing = true }
+            "pair" -> { pairStart = PAIR_NEARBY; pairing = true }; "pair_code" -> { pairStart = PAIR_TYPE; pairing = true }; "pair_scan" -> { pairStart = PAIR_SCAN; pairing = true }
             "updates" -> updatesOpen = true; "music_play" -> Hub.music.value?.let { Hub.answerMusic(it, true, context) }
             "camera" -> takePhoto(); "trackpad" -> if (pc != null) trackpadOpen = true else pairing = true
             "findpc" -> scope.launch { Hub.ringPc() }
@@ -247,7 +260,7 @@ private fun newPhoto(context: Context): Uri {
                                 2 -> ShelfScreen(pc, transfers, pager.currentPage == 2, { pairing = true }, padding)
                                 else -> DevicesScreen(peers, pc, running, failure, internet, look, { next ->
                                     look = next; Hub.prefs.edit().putInt("appearance", next.appearance).putBoolean("glass", next.glass).putBoolean("weatherGlass", next.weather).apply()
-                                }, { pairByCode = false; pairing = true }, { pairByCode = true; pairing = true }, { updatesOpen = true }, padding)
+                                }, { pairStart = PAIR_NEARBY; pairing = true }, { pairStart = PAIR_SCAN; pairing = true }, { updatesOpen = true }, padding)
                             }
                         }
                     }
@@ -274,7 +287,7 @@ private fun newPhoto(context: Context): Uri {
                         enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut()) {
                         playingHere?.let { PlayingHere(it, Modifier.navigationBarsPadding().padding(start = 22.dp, end = 22.dp, bottom = 92.dp).widthIn(max = 460.dp).fillMaxWidth()) }
                     }
-                    PairSheet(pairing, peers, pairCode, pairResult, { pairing = false }, startWithCode = pairByCode)
+                    PairSheet(pairing, peers, pairCode, pairResult, { pairing = false }, start = pairStart)
                     OfferSheet(offers.firstOrNull())
                     MusicSheet(music, transfers)
                     LinkSheet(linkOpen, pc) { linkOpen = false }

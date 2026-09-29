@@ -36,7 +36,7 @@ class Link(
     private val options: Options = Options(),
 ) {
     class Options(val tcpPort: Int = Proto.TCP_PORT, val udpPort: Int = Proto.UDP_PORT, val discovery: Boolean = true, val loopback: Boolean = false, val phone: Boolean = true,
-                  val relay: Boolean = false, val relayBrokers: List<Pair<String, Int>> = Relay.DEFAULT_BROKERS)
+                  val relay: Boolean = false, val relayBrokers: List<Pair<String, Int>> = Relay.DEFAULT_BROKERS, val relayLoseEvery: Int = 0)
 
     private class Peer(var name: String = "", var address: String? = null, var port: Int = 0, var version: Int = 1, var revision: Int = 0,
                        var online: Boolean = false, var seen: Long = 0, var key: ByteArray? = null, var phone: Boolean = false)
@@ -74,6 +74,8 @@ class Link(
     @Volatile var onAction: ((key: String, index: Int, reply: String) -> Int)? = null
     @Volatile var onClipboard: ((text: String, sensitive: Boolean) -> Boolean)? = null
     val relayBroker get() = relay?.broker
+    /** How many of the public brokers this device is on (it stays on all it can reach). */
+    val relayBrokersUp get() = relay?.brokersUp ?: 0
     var failure: String? = null; private set
     val identity get() = id.hex()
     /** The port actually listened on (for tests that ask for any free port). */
@@ -94,7 +96,7 @@ class Link(
         if (options.relay) {
             relay = Relay(id, { displayName }, options.phone, Proto.REVISION,
                 incoming = { s, _ -> val c = Conn(s); try { incoming(c) } catch (_: Exception) {} finally { c.close() } },
-                changed = { postPeers() }, brokers = options.relayBrokers).also { it.start() }
+                changed = { postPeers() }, brokerList = options.relayBrokers, loseEvery = options.relayLoseEvery).also { it.start() }
             syncRelay()
         }
         return true
@@ -301,8 +303,8 @@ class Link(
 
     // ---- pairing ----
     /** Both devices show the code; each person's answer goes to the other, sealed. Paired only when both said yes. */
-    private fun pairSession(c: Conn, ss: Session, d: CompletableFuture<Int>) {
-        val peer = ss.peerId.hex(); onEvent(LinkEvent.PairCode(peer, ss.peerName, ss.code))
+    private fun pairSession(c: Conn, ss: Session, d: CompletableFuture<Int>, confirmed: Boolean = false) {
+        val peer = ss.peerId.hex(); onEvent(LinkEvent.PairCode(peer, ss.peerName, ss.code, confirmed))
         c.timeout(90_000)
         val mine = runCatching { d.get(60, TimeUnit.SECONDS) }.getOrDefault(0)
         val theirs = if (sealed(c, ss, byteArrayOf(if (mine == 1) 1 else 0))) opened(c, ss) else null
@@ -314,9 +316,9 @@ class Link(
         onEvent(LinkEvent.Paired(peer, ss.peerName, both, when { both -> "Paired"; !talked -> "The other device stopped answering"; mine != 1 -> "Not paired"; else -> "Not confirmed on the other device" }))
         postPeers()
     }
-    fun pair(peer: String) {
-        val d: CompletableFuture<Int>
-        synchronized(lock) { if (pairing != null) return; d = CompletableFuture(); pairing = d }
+    /** Asks a PC on this network to pair (PairCode, then Paired); false when another pairing is under way. */
+    fun pair(peer: String): Boolean {
+        val d = synchronized(lock) { if (pairing != null) return false; CompletableFuture<Int>().also { pairing = it } }
         thread(name = "link-pair", isDaemon = true) {
             val target = synchronized(lock) { peers[peer]?.let { Peer(it.name, it.address, it.port, it.version, it.revision, it.online) } }
             val name = target?.name ?: "that PC"
@@ -331,6 +333,7 @@ class Link(
                 else pairSession(c, ss, d)
             } finally { c.close() }
         }
+        return true
     }
     fun confirmPair(yes: Boolean) { pairing?.complete(if (yes) 1 else 0) }
     fun forget(peer: String) { synchronized(lock) { peers[peer]?.key = null; savePeers() }; syncRelay(); postPeers() }
@@ -353,20 +356,36 @@ class Link(
     fun hostPairing(): String? = relay?.host()
     fun stopHosting() { relay?.stopHosting() }
     val hostingCode get() = relay?.hosting
-    /** Pairs with the device showing this code, through the relay: PairCode, then Paired, as on one network. */
-    fun pairWithCode(code: String) {
-        val d: CompletableFuture<Int>
-        synchronized(lock) { if (pairing != null) return; d = CompletableFuture(); pairing = d }
+    /**
+     * Pairs with the device showing this code, through the relay: PairCode, then Paired, as on one network. [key], from its
+     * QR code: the start of that device's key fingerprint ([keyPrint]). A device with another key is refused, and this
+     * phone's yes is given at once (the device itself still asks). False when another pairing is under way.
+     */
+    fun pairWithCode(code: String, key: ByteArray? = null): Boolean {
+        val d = synchronized(lock) { if (pairing != null) return false; CompletableFuture<Int>().also { pairing = it } }
         thread(name = "link-pair-code", isDaemon = true) {
-            val (s, why) = relay?.openCode(code) ?: (null to "Connecting over the internet is off")
-            if (s == null) { release(d); onEvent(LinkEvent.Paired("", "", false, why)); return@thread }
-            val c = Conn(s)
-            try {
-                c.timeout(20_000); val ss = Session()
-                if (!runCatching { greet(c, Proto.MODE_PAIR, ss) }.getOrDefault(false)) { release(d); onEvent(LinkEvent.Paired("", "", false, if (ss.rejected) "That device is busy pairing" else "No device is showing that code")) }
-                else pairSession(c, ss, d)
-            } finally { c.close() }
+            // Just started (a pairing link opened the app): the relay gets a few seconds to connect.
+            val until = System.currentTimeMillis() + 15_000
+            while (relay?.connected == false && System.currentTimeMillis() < until) Thread.sleep(200)
+            // Asked up to three times: the other device may join a broker a moment after this one asked on it (a message
+            // there before it arrived is lost), so a question nobody answered is asked again.
+            for (attempt in 1..3) {
+                val (s, why) = relay?.openCode(code) ?: (null to "Connecting over the internet is off")
+                if (s == null) { release(d); onEvent(LinkEvent.Paired("", "", false, why)); return@thread }
+                val c = Conn(s)
+                try {
+                    c.timeout(8_000); val ss = Session()
+                    if (runCatching { greet(c, Proto.MODE_PAIR, ss) }.getOrDefault(false)) {
+                        if (key == null) { c.timeout(20_000); pairSession(c, ss, d); return@thread }
+                        if (keyPrint(ss.peerPub).contentEquals(key)) { d.complete(1); c.timeout(20_000); pairSession(c, ss, d, confirmed = true); return@thread }
+                        // Not the PC whose code was scanned: someone else is answering it. Nothing more is said to them.
+                        release(d); onEvent(LinkEvent.Paired("", "", false, "Another device answered that code, so nothing was paired. Make a new code on your PC")); return@thread
+                    }
+                    if (ss.rejected || attempt == 3) { release(d); onEvent(LinkEvent.Paired("", "", false, if (ss.rejected) "That device is busy pairing" else "No device is showing that code. Check it, or make a new one")); return@thread }
+                } finally { c.close() }
+            }
         }
+        return true
     }
 
     // ---- connecting to a paired device ----
@@ -714,6 +733,8 @@ class Link(
                 if (cpu == 255) -1 else cpu, lines[0], lines[1], lines[2], lines[3], lines[4], cover, hash, clipboard = bit(9))
         }
         fun statusFrame(battery: Int, charging: Boolean) = Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_STATUS).u8(battery).u8(if (charging) 1 else 0).build()
+        /** A device's key fingerprint as its pairing QR code carries it: the first ten bytes of the SHA-256 of its public key. */
+        fun keyPrint(pub: ByteArray): ByteArray = Crypto.sha256(pub).copyOf(10)
         /**
          * A notification for the island: app, title and text (each trimmed), the phone's name, an optional small PNG icon;
          * with revision 3 its key and up to three actions (a title each, and whether it takes a reply).

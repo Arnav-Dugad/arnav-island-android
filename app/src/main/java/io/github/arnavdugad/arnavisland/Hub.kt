@@ -22,6 +22,7 @@ import io.github.arnavdugad.arnavisland.link.safeName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
@@ -56,6 +57,8 @@ object Hub {
     val peers = MutableStateFlow<List<PeerView>>(emptyList())
     val pairCode = MutableStateFlow<LinkEvent.PairCode?>(null)
     val pairResult = MutableStateFlow<LinkEvent.Paired?>(null)
+    /** The code this phone is pairing with through the relay (typed, scanned or opened as a link), until its digits or an answer come. */
+    val codePairing = MutableStateFlow<String?>(null)
     val offers = MutableStateFlow<List<LinkEvent.Offer>>(emptyList())
     val music = MutableStateFlow<LinkEvent.Music?>(null)
     val transfers = MutableStateFlow<Map<Int, Transfer>>(emptyMap())
@@ -121,9 +124,9 @@ object Hub {
                 val arrived = synchronized(lastOnline) { val a = online - lastOnline; lastOnline.clear(); lastOnline.addAll(online); a }
                 if (arrived.isNotEmpty()) { sendBattery(force = true); sendDetails(force = true) }
             }
-            is LinkEvent.PairCode -> { pairCode.value = e; if (!visible) Notify.pairing(app, e) }
+            is LinkEvent.PairCode -> { codePairing.value = null; pairCode.value = e; if (!visible) Notify.pairing(app, e) }
             is LinkEvent.Paired -> {
-                pairCode.value = null; pairResult.value = e; Notify.cancel(app, Notify.PAIR)
+                codePairing.value = null; pairCode.value = null; pairResult.value = e; Notify.cancel(app, Notify.PAIR)
                 if (e.ok) { if (pc()?.id == null || selected.value == null) choose(e.peer); banners.tryEmit(Banner(Banner.Kind.Paired, "Paired with ${e.name}", "Files, music and the remote are ready, on any network")); sendBattery(force = true); sendDetails(force = true) }
                 else banners.tryEmit(Banner(Banner.Kind.Failed, if (e.name.isEmpty()) "Not paired" else "Not paired with ${e.name}", e.detail))
             }
@@ -195,13 +198,23 @@ object Hub {
     }
 
     // ---- pairing ----
-    fun pair(peer: String) { pairResult.value = null; scope.launch { link?.pair(peer) } }
-    /** Pairs with the PC showing this code on its island (any network): its six digits then show here, as on one Wi-Fi. */
-    fun pairWithCode(code: String) {
+    private const val BUSY = "Another pairing is under way. Finish it first"
+    fun pair(peer: String) { pairResult.value = null; scope.launch { if (link?.pair(peer) == false) pairResult.value = LinkEvent.Paired(peer, "", false, BUSY) } }
+    /**
+     * Pairs with the PC showing this code on its island (any network): its six digits then show here, as on one Wi-Fi.
+     * [key], from the island's QR code: that PC is then known for sure, and only it asks to confirm.
+     */
+    fun pairWithCode(code: String, key: ByteArray? = null) {
         pairResult.value = null
-        val l = link ?: run { pairResult.value = LinkEvent.Paired("", "", false, "Starting… try again in a moment"); return }
         if (!prefs.getBoolean("internet", true)) { pairResult.value = LinkEvent.Paired("", "", false, "Turn on Devices › Reach my PCs anywhere first"); return }
-        scope.launch { l.pairWithCode(code) }
+        codePairing.value = code
+        scope.launch {
+            // Opened from a pairing link, the app may still be starting.
+            var l = link; var waited = 0
+            while (l == null && waited < 50) { delay(100); waited++; l = link }
+            val why = when { l == null -> "Starting… try again in a moment"; !l.pairWithCode(code, key) -> BUSY; else -> null }
+            if (why != null) { codePairing.value = null; pairResult.value = LinkEvent.Paired("", "", false, why) }
+        }
     }
     fun confirmPair(yes: Boolean) { link?.confirmPair(yes); if (!yes) pairCode.value = null }
     fun forget(peer: String) { link?.forget(peer); if (selected.value == peer) { selected.value = null; prefs.edit().remove("pc").apply(); pickDefault() } }

@@ -188,4 +188,77 @@ class InteropTest {
             val music = await<LinkEvent.Music>(40); phone.answerMusic(music.transfer, 2); val file = await<LinkEvent.MusicFile>(60); assertEquals(120_000L, File(file.shown).length())
         } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
     }
+
+    /**
+     * 1.2: the phone can reach only one broker (Eclipse Mosquitto), the PC all three. Before, each kept to a single broker,
+     * so a phone that had fallen back to another than the PC's never saw its code. Now the PC is on every broker, and they meet.
+     */
+    @Test fun a_phone_on_one_broker_still_finds_the_pc() =
+        meetOnSplitBrokers(pcArgs = listOf("--relay"), phoneBrokers = listOf("test.mosquitto.org" to 8886), port = 47932)
+
+    /**
+     * 1.2: a broker drops a message now and then (QoS 0), and a tunnel used to end at the first gap. Here each side leaves
+     * out every few data messages on purpose (the PC every 5th, the phone every 4th): each is sent again, and everything
+     * still arrives, both ways.
+     */
+    @Test fun what_a_broker_drops_is_sent_again() =
+        meetOnSplitBrokers(pcArgs = listOf("--relay", "--relay-lose=5"), phoneBrokers = Relay.DEFAULT_BROKERS, port = 47934, phoneLoseEvery = 4)
+
+    /** The other way round: the PC can reach only EMQX, the phone all three. A scanned link with another PC's key is refused first. */
+    @Test fun a_pc_on_one_broker_is_still_found_by_the_phone() =
+        meetOnSplitBrokers(pcArgs = listOf("--relay-only=1"), phoneBrokers = Relay.DEFAULT_BROKERS, port = 47933, wrongKeyFirst = true)
+
+    /**
+     * Pairs across a broker split by the island's QR code (its link carries the PC's key fingerprint, which the phone
+     * checks, so only the PC confirms), then a remote status, a file each way and presence, all through the one broker both share.
+     */
+    private fun meetOnSplitBrokers(pcArgs: List<String>, phoneBrokers: List<Pair<String, Int>>, port: Int, wrongKeyFirst: Boolean = false, phoneLoseEvery: Int = 0) {
+        val exe = System.getenv("ARNAV_SHARE_PEER"); assumeTrue("ARNAV_SHARE_PEER not set", exe != null && File(exe).exists())
+        assumeTrue("ARNAV_RELAY_TEST not set", System.getenv("ARNAV_RELAY_TEST") != null)
+        val work = Files.createTempDirectory("arnav-split").toFile(); val phoneDir = File(work, "phone").apply { mkdirs() }
+        val process = ProcessBuilder(listOf(exe, port.toString(), File(work, "pc").path) + pcArgs).redirectErrorStream(true).start()
+        val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
+        thread(isDaemon = true) { while (true) { val l = reader.readLine() ?: break; if (!l.startsWith("REMOTE status")) println("PC: $l"); lines.put(l) } }
+        val pc = process.outputStream.bufferedWriter(Charsets.UTF_8)
+        fun tell(cmd: String) { pc.write(cmd); pc.newLine(); pc.flush() }
+        val phone = Link(MemoryStore(), "Test Phone", FolderInbox(phoneDir), { events.put(it) }, Link.Options(tcpPort = 0, discovery = false, loopback = true, relay = true, relayBrokers = phoneBrokers, relayLoseEvery = phoneLoseEvery))
+        try {
+            assertTrue(phone.start())
+            val pcId = line("READY ").split(' ')[0]
+            val connected = System.currentTimeMillis() + 30_000; while (!phone.internet && System.currentTimeMillis() < connected) Thread.sleep(200)
+            assertTrue("the phone reached a broker", phone.internet)
+            Thread.sleep(3_000)
+            var code = ""
+            for (attempt in 1..4) { tell("host"); code = line("CODE ", 40); if (Relay.code(code) != null) break; Thread.sleep(5_000) }
+            assertTrue("the PC offered a code: '$code'", Relay.code(code) != null)
+            // The link the island's QR code carries: the code, and the PC's key fingerprint.
+            val link = Relay.pairLink(line("LINK ", 10)); assertNotNull(link); assertEquals(Relay.code(code), link!!.code); assertEquals(10, link.key?.size)
+            if (wrongKeyFirst) {
+                // Another PC's fingerprint: whoever answers the code isn't it, so nothing is paired (and nothing more is said).
+                val other = link.key!!.copyOf().also { it[0] = (it[0] + 1).toByte() }
+                assertTrue(phone.pairWithCode(link.code, other))
+                val refused = await<LinkEvent.Paired>(60); assertFalse(refused.ok); assertTrue(refused.detail, refused.detail.startsWith("Another device answered"))
+                assertTrue(phone.peers().none { it.id == pcId && it.paired })
+                Thread.sleep(3_000); lines.clear()
+            }
+            assertTrue(phone.pairWithCode(link.code, link.key))
+            // The phone said yes by itself; only the PC confirms (share_peer does at once).
+            val shown = await<LinkEvent.PairCode>(40); assertTrue(shown.confirmed)
+            assertEquals("the same six digits on both", line("PAIRCODE ").toInt(), shown.code)
+            assertTrue(await<LinkEvent.Paired>(40).ok); line("PAIRED ok")
+            val seen = System.currentTimeMillis() + 40_000
+            while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
+            assertTrue("the phone sees the PC through the broker they share", phone.peers().any { it.id == pcId && it.online && it.internet })
+            line("PRESENCE ${phone.identity} 1 1 3 1", 40)
+            val status = phone.status(pcId, null, null); assertNotNull(phone.lastRemoteError, status); assertEquals("Interop Song", status!!.title)
+            val photo = ByteArray(200_000) { (it * 7 + 3).toByte() }
+            phone.send(pcId, listOf(Source("split.jpg", photo.size.toLong()) { ByteArrayInputStream(photo) }), "split.jpg")
+            line("OFFER 1 200000", 40); line("RECEIVED ", 90); await<LinkEvent.Sent>(40)
+            assertArrayEquals(photo, File(work, "pc/dl/split.jpg").readBytes())
+            val fromPc = File(work, "back.bin").apply { writeBytes(ByteArray(90_000) { (it % 199).toByte() }) }
+            tell("send ${phone.identity} ${fromPc.path}")
+            val offer = await<LinkEvent.Offer>(40); phone.answer(offer.transfer, true); await<LinkEvent.Received>(90); line("SENT ", 40)
+            assertArrayEquals(fromPc.readBytes(), File(phoneDir, "back.bin").readBytes())
+        } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
+    }
 }

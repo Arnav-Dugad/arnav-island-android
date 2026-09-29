@@ -15,7 +15,7 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 <img src="docs/screens/sound.jpg" width="200" alt="The PC's volume on a dial">
 </p>
 <p>
-<img src="docs/screens/pair-code.jpg" width="200" alt="Pairing from another network with the island's code">
+<img src="docs/screens/pair-scan.jpg" width="200" alt="Scanning the island's QR code to pair from another network">
 <img src="docs/screens/trackpad.jpg" width="200" alt="The phone as the PC's trackpad and keyboard">
 <img src="docs/screens/widgets.jpg" width="200" alt="Home-screen widgets: the PC's music and quick actions">
 <img src="docs/screens/rain.jpg" width="200" alt="Rain on the app's glass when it rains where the PC is">
@@ -25,7 +25,7 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 
 **Anywhere**
 - On the same Wi-Fi, devices talk directly. On different networks (another Wi-Fi, mobile data) they reach each other through a free public relay, end-to-end encrypted. It works on its own once you have paired.
-- To pair from anywhere, the island shows a code (**Shelf › Nearby › Pair with a code**). Type it on the phone, then check both show the same six digits.
+- To pair from anywhere, the island shows a QR code (**Shelf › Nearby › Pair with a code**). Scan it with **Devices › Scan the QR code**, then choose Pair on the PC. The code names the PC's key, so the phone pairs with that PC only. You can also type the code, and check both show the same six digits.
 
 **The remote**
 - See what plays on your PC: its cover, title, artist and app.
@@ -86,22 +86,21 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 
 ## Getting started
 
-1. On your PC, install [Arnav Island](https://github.com/Arnav-Dugad/arnav-island/releases/latest) 0.20 or later. Turn on **Settings › Privacy & productivity › Share with my PCs**. Version 0.19 works too, without the features marked 0.20 in its notes.
+1. On your PC, install [Arnav Island](https://github.com/Arnav-Dugad/arnav-island/releases/latest) 0.20.1 or later. Turn on **Settings › Privacy & productivity › Share with my PCs**. Versions 0.19 and 0.20 work too, without the features marked later in these notes.
 2. On your phone, download the APK from [Releases](https://github.com/Arnav-Dugad/arnav-island-android/releases/latest) and open it. Android asks once to allow installs from your browser.
-3. Open the app and tap **Pair with your PC**:
-   - **On the same Wi-Fi:** tap your PC on the radar.
-   - **Anywhere:** on the PC, open the island's **Shelf › Nearby › Pair with a code**, then type the code on the phone.
-
-   Check that both show the same six digits, then confirm on both.
+3. Pair:
+   - **On the same Wi-Fi:** tap **Devices › Pair a PC**, then your PC on the radar. Check that both show the same six digits, and confirm on both.
+   - **Anywhere:** on the PC, open the island's **Shelf › Nearby › Pair with a code**. On the phone, tap **Devices › Scan the QR code** and point it at the island, then choose **Pair** on the PC. Or tap **Type the code instead**.
 
 To see your notifications and calls on the island, turn on **Devices › Your notifications**. Android asks you to allow notification access. For the phone to stay reachable everywhere, tap **Devices › Always reachable › Allow**.
 
 ## Privacy and security
 
 - **On the same Wi-Fi**, everything goes directly between your devices.
-- **On different networks**, it passes through a free public MQTT broker over TLS (broker.hivemq.com, broker.emqx.io or test.mosquitto.org). Everything is sealed end to end before it leaves your device. The broker sees only random-looking topic names and encrypted bytes. It can't read or change what they carry. Turn this off with **Devices › Reach my PCs anywhere**.
+- **On different networks**, it passes through free public MQTT brokers over TLS. The app stays on all three (broker.hivemq.com, broker.emqx.io and test.mosquitto.org), so it always shares one with your PC. Everything is sealed end to end before it leaves your device. The broker sees only random-looking topic names and encrypted bytes. It can't read or change what they carry. Turn this off with **Devices › Reach my PCs anywhere**.
 - There are no accounts, analytics or ads, and nothing is stored in a cloud.
-- Devices pair once with a code.
+- Devices pair once, with the island's QR code or its typed code. The QR code also names the PC's key, and the phone refuses any other device that answers it.
+- The camera is used only while the QR scanner is open. Nothing it sees is kept or sent.
 - Every connection is end-to-end encrypted:
   - keys: ECDH P-256, checked against the pairing
   - encryption: AES-256-GCM, with fresh keys for each connection

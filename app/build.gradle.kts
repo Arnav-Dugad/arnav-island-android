@@ -7,8 +7,8 @@ android {
         applicationId = "io.github.arnavdugad.arnavisland"
         minSdk = 28
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.1.0"
+        versionCode = 13
+        versionName = "1.2.0"
     }
     signingConfigs {
         if (System.getenv("ARNAVISLAND_KEYSTORE") != null) create("release") {
@@ -51,6 +51,11 @@ dependencies {
     // Liquid glass: backdrop refraction (Android 13+), blur and vibrancy (Android 12+) and continuous-corner shapes.
     implementation("io.github.kyant0:backdrop:1.0.6")
     implementation("io.github.kyant0:shapes:1.2.0")
+    // Pairing by the island's QR code: the camera's frames (CameraX), read by ZXing, all on the phone.
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
+    implementation("com.google.zxing:core:3.5.3")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250107")

@@ -56,7 +56,8 @@ data class LyricsLine(val time: Double, val text: String, val words: List<Pair<D
 
 sealed interface LinkEvent {
     data class Peers(val peers: List<PeerView>) : LinkEvent
-    data class PairCode(val peer: String, val name: String, val code: Int) : LinkEvent
+    /** The six digits both show. [confirmed]: this phone already said yes (it scanned that PC's QR code); only the PC asks. */
+    data class PairCode(val peer: String, val name: String, val code: Int, val confirmed: Boolean = false) : LinkEvent
     data class Paired(val peer: String, val name: String, val ok: Boolean, val detail: String) : LinkEvent
     data class Offer(val transfer: Int, val peer: String, val name: String, val title: String, val count: Int, val size: Long, val folder: Boolean) : LinkEvent
     data class Progress(val transfer: Int, val peer: String, val name: String, val title: String, val done: Long, val total: Long, val outgoing: Boolean) : LinkEvent
