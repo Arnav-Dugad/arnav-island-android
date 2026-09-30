@@ -14,6 +14,7 @@ import io.github.arnavdugad.arnavisland.link.Link
 import io.github.arnavdugad.arnavisland.link.LinkEvent
 import io.github.arnavdugad.arnavisland.link.Lyrics
 import io.github.arnavdugad.arnavisland.link.PcStatus
+import io.github.arnavdugad.arnavisland.link.Reader
 import io.github.arnavdugad.arnavisland.link.PeerView
 import io.github.arnavdugad.arnavisland.link.Proto
 import io.github.arnavdugad.arnavisland.link.RemoteReply
@@ -72,6 +73,8 @@ object Hub {
     val offers = MutableStateFlow<List<LinkEvent.Offer>>(emptyList())
     val music = MutableStateFlow<LinkEvent.Music?>(null)
     val transfers = MutableStateFlow<Map<Int, Transfer>>(emptyMap())
+    /** 1.7: how each send ended (its transfer, and whether it arrived), for the share sheet's rings. */
+    val outcomes = kotlinx.coroutines.flow.MutableSharedFlow<Pair<Int, Boolean>>(extraBufferCapacity = 32)
     val moments = MutableStateFlow<List<Moment>>(emptyList())
     val banners = MutableSharedFlow<Banner>(extraBufferCapacity = 16)
     val ringing = MutableStateFlow<String?>(null)
@@ -161,11 +164,12 @@ object Hub {
                 Notify.received(app, e)
             }
             is LinkEvent.Sent -> {
-                transfers.update { it - e.transfer }
+                transfers.update { it - e.transfer }; outcomes.tryEmit(e.transfer to true)
                 remember(Moment(1, e.title, e.name, e.count, e.size, System.currentTimeMillis(), emptyList()))
                 banners.tryEmit(Banner(Banner.Kind.Sent, "Sent ${e.title}", "To ${e.name}  ·  ${sizeText(e.size)}"))
             }
             is LinkEvent.Failed -> {
+                if (e.outgoing) outcomes.tryEmit(e.transfer to false)
                 transfers.update { it - e.transfer }; offers.update { list -> list.filterNot { it.transfer == e.transfer } }; Notify.cancel(app, Notify.OFFER + e.transfer)
                 if (music.value?.transfer == e.transfer) music.value = null
                 if (e.detail != "You stopped it") banners.tryEmit(Banner(Banner.Kind.Failed, if (e.title.isEmpty()) "Couldn't share" else "Couldn't share ${e.title}", e.detail))
@@ -235,7 +239,7 @@ object Hub {
     fun cancel(transfer: Int) { link?.cancel(transfer) }
 
     /** Files from other apps (content URIs) to a PC, in one transfer; [toShelf]: onto its island's Shelf (a photo taken for it). */
-    fun send(peer: String, uris: List<Uri>, toShelf: Boolean = false) {
+    fun send(peer: String, uris: List<Uri>, toShelf: Boolean = false, ask: Int = 0, onStarted: (Int) -> Unit = {}) {
         if (uris.isEmpty()) return
         scope.launch {
             val l = link ?: run { banners.tryEmit(Banner(Banner.Kind.Failed, "Not connected", "Open Arnav Island and try again")); return@launch }
@@ -244,8 +248,11 @@ object Hub {
             val names = sources.map { it.rel }
             val title = if (names.size == 1) names[0] else "${names[0]} and ${names.size - 1} more"
             val target = peers.value.firstOrNull { it.id == peer }
-            val id = l.send(peer, sources, title, toShelf = toShelf)
+            // 1.7: a picture of the first one, for the island to show as it arrives.
+            val preview = Previews.of(app, uris[0])
+            val id = l.send(peer, sources, title, toShelf = toShelf, preview = preview, ask = ask)
             transfers.update { it + (id to Transfer(id, peer, target?.name ?: "your PC", title, 0, sources.sumOf { s -> s.size }, true, sampledAt = System.currentTimeMillis())) }
+            onStarted(id)
         }
     }
     private fun sourceOf(uri: Uri): Source? = runCatching {
@@ -383,6 +390,18 @@ object Hub {
             Bytes().u32(text.size).raw(text).u32(cover.size).raw(cover).build()
         }
         Proto.QUERY_FOCUS -> IslandWire.focus(payload)?.let { f -> focus.value = f; saveFocus(f); FocusLive.show(app, f); ByteArray(0) }
+        // 1.7: a photo just taken, sent over (only one this phone told that PC about, a few minutes ago at most).
+        Proto.QUERY_PHOTO -> {
+            val r = Reader(payload); val id = r.u64(); val purpose = r.u8() ?: 1; val ask = (r.u32() ?: 0L).toInt()
+            val uri = id?.let { RecentPhotos.uriOf(app, peer, it) }
+            if (uri == null) null else { send(peer, listOf(uri), toShelf = purpose == 2, ask = ask); ByteArray(0) }
+        }
+        // 1.7: a web page from the PC, where it was scrolled to.
+        Proto.QUERY_PAGE -> {
+            val r = Reader(payload); val scroll = java.lang.Float.intBitsToFloat((r.u32() ?: 0L).toInt()); val url = r.string(4096); val title = r.string(400).orEmpty()
+            if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) null
+            else { Pages.arrived(app, peers.value.firstOrNull { it.id == peer }?.name ?: "your PC", url, title, scroll); ByteArray(0) }
+        }
         else -> null
     }
     /** Changes a control at once here ([seen]: what it looks like meanwhile), then on the PC; what the PC says wins. */

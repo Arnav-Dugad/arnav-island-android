@@ -36,6 +36,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -84,8 +85,14 @@ class MainActivity : ComponentActivity() {
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); handle(intent) }
     override fun onStart() { super.onStart(); LinkService.start(this) }
-    override fun onResume() { super.onResume(); Hub.visible = true; Hub.sendBattery() }
-    override fun onPause() { Hub.visible = false; super.onPause() }
+    // 1.7: the ambient light's pace follows how long frames take to draw here.
+    private val frameMetrics = android.view.Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
+        val interval = if (Build.VERSION.SDK_INT >= 31) metrics.getMetric(android.view.FrameMetrics.DEADLINE) / 1e6 else 1000.0 / 60
+        if (metrics.getMetric(android.view.FrameMetrics.FIRST_DRAW_FRAME) == 0L) AmbientPace.frame(metrics.getMetric(android.view.FrameMetrics.TOTAL_DURATION) / 1e6, interval.coerceIn(4.0, 50.0))
+    }
+    private val metricsThread by lazy { android.os.HandlerThread("frame-metrics").apply { start() } }
+    override fun onResume() { super.onResume(); Hub.visible = true; Hub.sendBattery(); runCatching { window.addOnFrameMetricsAvailableListener(frameMetrics, android.os.Handler(metricsThread.looper)) } }
+    override fun onPause() { Hub.visible = false; runCatching { window.removeOnFrameMetricsAvailableListener(frameMetrics) }; super.onPause() }
     override fun onStop() { super.onStop(); if (!Hub.prefs.getBoolean("reachable", true) && !isChangingConfigurations) LinkService.stop(this) }
     /** Android lets the app read the clipboard only while it has the focus: a new copy goes to the PC now (universal clipboard, or Paste on PC). */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -114,11 +121,12 @@ class MainActivity : ComponentActivity() {
         when (intent.action) {
             Intent.ACTION_SEND -> {
                 val uri = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java) else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
-                share.value = ShareRequest(listOfNotNull(uri), intent.getStringExtra(Intent.EXTRA_TEXT))
+                // 1.7: a PC chosen in Android's share sheet (one of this app's share targets): sent there at once.
+                share.value = ShareRequest(listOfNotNull(uri), intent.getStringExtra(Intent.EXTRA_TEXT), intent.getStringExtra(Intent.EXTRA_SHORTCUT_ID)?.removePrefix("pc:"))
             }
             Intent.ACTION_SEND_MULTIPLE -> {
                 val uris = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java) else @Suppress("DEPRECATION") intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
-                share.value = ShareRequest(uris.orEmpty().toList(), null)
+                share.value = ShareRequest(uris.orEmpty().toList(), null, intent.getStringExtra(Intent.EXTRA_SHORTCUT_ID)?.removePrefix("pc:"))
             }
         }
         when (val what = intent.getStringExtra("open")) {
@@ -128,6 +136,8 @@ class MainActivity : ComponentActivity() {
         }
         intent.removeExtra("open")
         // Test builds only: a PC at a known address (an emulator can't hear discovery broadcasts).
+        // Test builds only: glass parts off, to measure each one's cost ("qa_glass_off": comma-separated names).
+        if (BuildConfig.DEBUG) intent.getStringExtra("qa_glass_off")?.let { GlassTuning.off = it.split(',').map { s -> s.trim() }.filter { s -> s.isNotEmpty() }.toSet(); intent.removeExtra("qa_glass_off") }
         if (BuildConfig.DEBUG) intent.getStringExtra("qa_peer")?.let { spec ->
             val id = spec.substringBefore('@'); val host = spec.substringAfter('@').substringBeforeLast(':'); val port = spec.substringAfterLast(':').toIntOrNull() ?: return@let
             Hub.scope.launch { repeat(50) { Hub.link?.let { it.addPeer(id, intent.getStringExtra("qa_name") ?: "Studio PC", host, port, 2, intent.getIntExtra("qa_revision", 3)); return@launch }; delay(100) } }
@@ -164,6 +174,9 @@ private fun newPhoto(context: Context): Uri {
     val reduced = remember { runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false) }
     val saver = rememberPowerSave()
     val peers by Hub.peers.collectAsState(); val selected by Hub.selected.collectAsState()
+    // 1.7: your PCs in Android's share sheet, kept to the paired ones and their names.
+    val targets = peers.filter { it.paired && !it.phone }.map { it.id to it.name }
+    LaunchedEffect(targets) { ShareTargets.publish(context, peers) }
     val status by Hub.status.collectAsState(); val statusError by Hub.statusError.collectAsState()
     val running by Hub.running.collectAsState(); val failure by Hub.failure.collectAsState(); val internet by Hub.internet.collectAsState()
     val transfers by Hub.transfers.collectAsState(); val moments by Hub.moments.collectAsState()
@@ -249,7 +262,17 @@ private fun newPhoto(context: Context): Uri {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val density = LocalDensity.current
                 val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding(); val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-                Box(Modifier.fillMaxSize().layerBackdrop(screen)) {
+                // 1.7: a finger on the screen (and a fling's settling after) holds the ambient light still.
+                val touchScope = rememberCoroutineScope(); var release by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+                Box(Modifier.fillMaxSize().layerBackdrop(screen).pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                            if (e.changes.any { it.pressed }) { release?.cancel(); Scene.touching = true }
+                            else if (Scene.touching) { release?.cancel(); release = touchScope.launch { kotlinx.coroutines.delay(700); Scene.touching = false } }
+                        }
+                    }
+                }) {
                     AmbientBackground(tokens.accent, tokens.accent2, tokens.deep, status?.playing == true, Modifier.layerBackdrop(ambient), still = saver)
                     CompositionLocalProvider(LocalGlass provides content) {
                         val insets = WindowInsets.systemBars.asPaddingValues()

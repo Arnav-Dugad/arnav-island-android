@@ -12,8 +12,9 @@ import java.io.OutputStream
  */
 object Proto {
     const val VERSION = 2
-    /** Revision 4 (1.3, island 0.21): remote and notices connections stay open for more; the relay has a direct path. Revision 5 (1.4, island 0.22): the whole island. Revision 6 (1.5, island 0.23): the PC's battery, each core, and the PC asking this phone. Revision 7 (1.6, island 0.24): screens either way. */
-    const val REVISION = 7
+    /** Revision 4 (1.3, island 0.21): remote and notices connections stay open for more; the relay has a direct path. Revision 5 (1.4, island 0.22): the whole island. Revision 6 (1.5, island 0.23): the PC's battery, each core, and the PC asking this phone. Revision 7 (1.6, island 0.24): screens either way. Revision 8 (1.7, island 0.25): offers with a picture,
+     * photos just taken, pages handed over where they were scrolled to. */
+    const val REVISION = 8
     const val TCP_PORT = 47820
     const val UDP_PORT = 47821
     val MAGIC = byteArrayOf('A'.code.toByte(), 'R'.code.toByte(), 'N'.code.toByte(), 'V'.code.toByte())
@@ -63,6 +64,15 @@ object Proto {
     const val NOTICE_DETAILS = 3; const val NOTICE_GONE = 4
     /** Revision 5 (island 0.22): this phone's hotspot, [on] and when on its name and password (the island offers to join it). */
     const val NOTICE_HOTSPOT = 5
+    /** Revision 8: a photo just taken here: u64 its id, its name, u64 its size, u16 width, u16 height, its picture (a JPEG). */
+    const val NOTICE_PHOTO = 6
+    /** Revision 8, the PC asking: 3 a photo just taken (u64 its id, u8 1 to paste / 2 for the Shelf, u32 the ask its offer
+     * carries); 4 a web page to open here (f32 how far down, 0..1, below 0 unknown; its address; its title). */
+    const val QUERY_PHOTO = 3; const val QUERY_PAGE = 4
+    /** Revision 8: a web page to open on the PC where it was scrolled to (f32 how far down, its address, its title). */
+    const val CMD_PAGE = 19
+    /** An offer's flags: 1 a folder, 2 for the Shelf; revision 8: 4 with a picture, 8 a photo the PC asked for. */
+    const val OFFER_FOLDER = 1; const val OFFER_SHELF = 2; const val OFFER_PICTURE = 4; const val OFFER_ASKED = 8
     // Remote answers.
     const val OK = 0; const val NOT_ALLOWED = 1; const val UNSUPPORTED = 2; const val FAILED = 3
     // Notices.

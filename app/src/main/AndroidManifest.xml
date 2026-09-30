@@ -23,7 +23,10 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Android 9 keeps received files in Downloads through the file system. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <!-- Android 10-12: reading photos just taken (Devices › Photos you take), as 13+ does below. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- 1.7: photos you just took shown on your PCs' islands, only with Devices › Photos you take on. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <!-- Scanning the island's pairing QR code, only while the scanner shows; nothing it sees is kept. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -90,12 +93,34 @@
             android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode" />
+        <!-- 1.7: pages handed over from your PC, and on to it, where they were scrolled to. -->
+        <activity
+            android:name=".ReaderActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode" />
         <activity
             android:name=".ScreenConsentActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <!-- 1.7: Quick Settings tiles for screens, either way. -->
+        <service
+            android:name=".PcScreenTile"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_screen"
+            android:label="@string/tile_pc_screen"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service
+            android:name=".PhoneScreenTile"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_cast"
+            android:label="@string/tile_phone_screen"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
         <service
             android:name=".PhoneScreenService"
             android:exported="false"

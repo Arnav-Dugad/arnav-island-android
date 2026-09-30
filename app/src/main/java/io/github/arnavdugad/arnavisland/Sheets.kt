@@ -454,37 +454,6 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
     }
 }
 
-/** What another app shared, on its way to a PC: files go as a transfer; text goes to the clipboard, a link can open there. */
-data class ShareRequest(val uris: List<Uri>, val text: String?)
-@Composable fun ShareSheet(request: ShareRequest?, peers: List<PeerView>, pc: PeerView?, onDone: () -> Unit) {
-    val t = LocalTokens.current; val scope = rememberCoroutineScope()
-    GlassSheet(request != null, onDone) {
-        if (request == null) return@GlassSheet
-        Text("Send to your PC", style = Type.title, color = t.text)
-        Spacer(Modifier.height(4.dp))
-        Text(if (request.uris.isNotEmpty()) "${request.uris.size} ${if (request.uris.size == 1) "item" else "items"}" else request.text?.lineSequence()?.firstOrNull()?.take(80).orEmpty(), style = Type.caption, color = t.muted, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(18.dp))
-        val paired = peers.filter { it.paired && !it.phone }
-        if (paired.isEmpty()) { Text("Pair with your PC first (Devices › Pair a PC)", style = Type.body, color = t.muted); return@GlassSheet }
-        paired.forEach { p ->
-            GlassButton({ Hub.choose(p.id) }, Modifier.fillMaxWidth().padding(vertical = 4.dp), prominent = p.id == pc?.id) {
-                Icon(Icons.Rounded.Laptop, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(p.name, style = Type.bodyStrong, modifier = Modifier.weight(1f)); LiveDot(p.online, size = 7.dp)
-            }
-        }
-        Spacer(Modifier.height(14.dp))
-        val target = pc
-        if (request.uris.isNotEmpty()) GlassButton({ if (target != null) { Hub.send(target.id, request.uris); onDone() } }, Modifier.fillMaxWidth(), prominent = true, enabled = target?.online == true) {
-            Icon(Icons.AutoMirrored.Rounded.Send, null); Spacer(Modifier.width(8.dp)); Text("Send", style = Type.bodyStrong)
-        } else {
-            val text = request.text.orEmpty(); val link = text.trim().takeIf { (it.startsWith("http://") || it.startsWith("https://")) && !it.contains(' ') }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                GlassButton({ scope.launch { if (Hub.command(Proto.CMD_CLIP_SET, text.toByteArray())?.ok == true) Hub.banners.tryEmit(Banner(Banner.Kind.Clipboard, "On ${target?.name}’s clipboard")); onDone() } }, Modifier.weight(1f), prominent = link == null, enabled = target?.online == true) { Text("Paste on PC", style = Type.bodyStrong) }
-                if (link != null) GlassButton({ scope.launch { if (Hub.command(Proto.CMD_OPEN, link.toByteArray())?.ok == true) Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Opened on ${target?.name}")); onDone() } }, Modifier.weight(1f), prominent = true, enabled = target?.online == true) { Text("Open on PC", style = Type.bodyStrong) }
-            }
-        }
-    }
-}
-
 /** A link to open in the PC's browser: typed, or already on the clipboard. */
 @Composable fun LinkSheet(visible: Boolean, pc: PeerView?, onDismiss: () -> Unit) {
     val t = LocalTokens.current; val context = LocalContext.current; val scope = rememberCoroutineScope()

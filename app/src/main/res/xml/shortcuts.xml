@@ -23,4 +23,13 @@
             <extra android:name="open" android:value="paste" />
         </intent>
     </shortcut>
+    <!-- 1.7: your PCs in Android's share sheet (published by the app for each paired PC). -->
+    <share-target android:targetClass="io.github.arnavdugad.arnavisland.MainActivity">
+        <data android:mimeType="image/*" />
+        <data android:mimeType="video/*" />
+        <data android:mimeType="application/*" />
+        <data android:mimeType="text/*" />
+        <data android:mimeType="audio/*" />
+        <category android:name="io.github.arnavdugad.arnavisland.category.SHARE_TARGET" />
+    </share-target>
 </shortcuts>

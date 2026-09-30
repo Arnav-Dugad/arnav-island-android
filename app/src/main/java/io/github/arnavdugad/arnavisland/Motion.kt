@@ -50,7 +50,9 @@ import kotlin.math.sin
                 // Gravity along the screen, relative to holding the phone a little tipped back.
                 val tx = (-e.values[0] / 5.5f).coerceIn(-1f, 1f); val ty = ((e.values[1] - 6.5f) / 4.5f).coerceIn(-1f, 1f)
                 x += (tx - x) * .12f; y += (ty - y) * .12f
-                if (kotlin.math.abs(tilt.value.x - x) > .004f || kotlin.math.abs(tilt.value.y - y) > .004f) tilt.value = Offset(x, y)
+                // 1.7: moves smaller than about half a degree of the light aren't drawn (a phone lying still no longer
+                // repaints every rim of light for its sensor's noise).
+                if (kotlin.math.abs(tilt.value.x - x) > .009f || kotlin.math.abs(tilt.value.y - y) > .009f) tilt.value = Offset(x, y)
             }
             override fun onAccuracyChanged(s: Sensor?, a: Int) = Unit
         }

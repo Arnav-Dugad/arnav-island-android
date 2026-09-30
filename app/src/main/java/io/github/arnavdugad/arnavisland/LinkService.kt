@@ -43,6 +43,8 @@ class LinkService : Service() {
         // Discovery broadcasts reach apps only while a multicast lock is held.
         multicast = runCatching { getSystemService(WifiManager::class.java).createMulticastLock("arnav-island").apply { setReferenceCounted(false); acquire() } }.getOrNull()
         Hub.start()
+        // 1.7: photos you take, on your PCs (when that's on).
+        RecentPhotos.sync(this)
         ContextCompat.registerReceiver(this, battery, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
         // 1.4: the hotspot turning on or off (Android's own broadcast); read once now too.
         runCatching { ContextCompat.registerReceiver(this, hotspot, IntentFilter(Hub.HOTSPOT_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED) }; Hub.hotspotChanged(null)

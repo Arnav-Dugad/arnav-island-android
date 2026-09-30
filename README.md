@@ -37,6 +37,12 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 - **Your PC's screen, here:** up to 1440p at 60 frames a second on the same Wi-Fi, still smooth over the internet. Tap to click, drag, scroll with two fingers, pinch to zoom, and type.
 - **This phone's screen on your PC,** in a floating window there. With **Settings › Accessibility › Control from your PC** on, the PC's clicks and typing work here too.
 
+**Handed over (1.7)**
+- **Share to your PC's Shelf in one tap:** your PCs are glass bubbles in the app's sheet, and they appear in Android's share sheet too. The island shows the picture while it arrives.
+- **The photo you just took** shows on your PC's island, ready to paste there (Devices › Photos you take).
+- **Pages, where you were:** from your PC to the app's reader, and back, at the same scroll position.
+- **Quick Settings tiles** for your PC's screen and this phone on your PC. The liquid glass takes about half the work to draw.
+
 **The remote**
 - See what plays on your PC: its cover, title, artist and app.
 - Scrub through the song (with a soft click at each lyric line), play and pause, skip.
@@ -123,6 +129,7 @@ To see your notifications and calls on the island, turn on **Devices › Your no
 - Your PC shows your notifications only while its *My phone's notifications* setting is on. It keeps them in memory only.
 - Notifications you hide on the lock screen are never sent. Replies and actions run on the phone; only the words you typed travel.
 - Copies marked sensitive (passwords) are never sent by the universal clipboard.
+- **Photos you take** is off until you turn it on (Android asks for photo access). Then only a small picture of each new camera photo or screenshot goes to your PCs; the photo itself goes only when you choose Paste or Shelf there, within ten minutes.
 - **Screens** are shown only while you've asked: the PC's screen only while its *My phone can control this PC* is on; this phone's screen only after Android asks, each time, with a notification to stop it. Neither is recorded or kept. The accessibility service acts only while this phone's screen is shown, and reads only the field it types into.
 
 ## Checking a download

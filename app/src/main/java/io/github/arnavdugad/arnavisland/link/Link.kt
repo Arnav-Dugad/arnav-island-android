@@ -479,23 +479,29 @@ class Link(
     // ---- sending files ----
     /** Sends these items to a paired PC in one transfer; returns its id (for [cancel]). */
     /** toShelf (revision 3): photos this phone took for the PC's Shelf. */
-    fun send(peer: String, items: List<Source>, title: String, folder: Boolean = false, toShelf: Boolean = false): Int {
+    /** [preview]: a small JPEG the PC shows as it arrives (revision 8); [ask]: the PC's ask this answers (revision 8). */
+    fun send(peer: String, items: List<Source>, title: String, folder: Boolean = false, toShelf: Boolean = false, preview: ByteArray? = null, ask: Int = 0): Int {
         val transfer = newTransfer()
         thread(name = "link-send", isDaemon = true) {
             val total = items.sumOf { it.size }
             val (c, ss, why0) = reach(peer, Proto.MODE_SEND, transfer)
             var why = why0; var sent = false; val name = nameOf(peer, "")
-            val flags = (if (folder) 1 else 0) or (if (toShelf && (target(peer).first?.revision ?: 0) >= 3) 2 else 0)
-            if (c != null) { try { val failed = offerBatch(c, ss, items, total, flags, title, peer, name, transfer); sent = failed == null; if (failed != null) why = failed } finally { c.close() } }
+            val revision = target(peer).first?.revision ?: 0
+            val picture = preview?.takeIf { revision >= 8 && it.isNotEmpty() && it.size <= 96 * 1024 }
+            val flags = (if (folder) Proto.OFFER_FOLDER else 0) or (if (toShelf && revision >= 3) Proto.OFFER_SHELF else 0) or (if (picture != null) Proto.OFFER_PICTURE else 0) or (if (ask != 0 && revision >= 8) Proto.OFFER_ASKED else 0)
+            if (c != null) { try { val failed = offerBatch(c, ss, items, total, flags, title, peer, name, transfer, picture, ask); sent = failed == null; if (failed != null) why = failed } finally { c.close() } }
             finish(transfer)
             onEvent(if (sent) LinkEvent.Sent(transfer, peer, name, title, items.size, total) else LinkEvent.Failed(transfer, peer, name, title, why.ifEmpty { "It didn't go" }, true))
         }
         return transfer
     }
     /** An offer of these files, then (answered yes) the files and the batch's end: null when all arrived, else why not. */
-    private fun offerBatch(c: Conn, ss: Session, items: List<Source>, total: Long, flags: Int, title: String, peer: String, name: String, transfer: Int): String? {
+    private fun offerBatch(c: Conn, ss: Session, items: List<Source>, total: Long, flags: Int, title: String, peer: String, name: String, transfer: Int, picture: ByteArray? = null, ask: Int = 0): String? {
         c.timeout(90_000)
-        val offered = sealed(c, ss, Bytes().u8(Proto.FRAME_OFFER).u32(items.size).u64(total).u8(flags).text(title).build())
+        // Revision 8: with a picture or an ask, each part carries its length (before, the title ran to the end).
+        val offer = Bytes().u8(Proto.FRAME_OFFER).u32(items.size).u64(total).u8(flags)
+        if (flags and (Proto.OFFER_PICTURE or Proto.OFFER_ASKED) != 0) { offer.string(title.take(1000)); if (flags and Proto.OFFER_PICTURE != 0) offer.blob(picture ?: ByteArray(0)); if (flags and Proto.OFFER_ASKED != 0) offer.u32(ask) } else offer.text(title)
+        val offered = sealed(c, ss, offer.build())
         val reply = if (offered) opened(c, ss) else null
         if (reply == null || reply.size != 1) return if (stopped(transfer)) "You stopped it" else "$name didn't answer"
         if (reply[0].toInt() == 2) return "There isn't room on $name"
@@ -873,6 +879,11 @@ class Link(
             Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_DETAILS).string(details.joinToString("\n") { (k, v) -> k.replace('\t', ' ').replace('\n', ' ') + "\t" + v.replace('\t', ' ').replace('\n', ' ') }.take(12_000)).build()
         /** A notification the phone no longer shows. */
         fun goneFrame(key: String) = Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_GONE).string(key.take(200)).build()
+        /** Revision 8: a photo just taken here, with its picture. */
+        fun photoFrame(id: Long, name: String, size: Long, width: Int, height: Int, picture: ByteArray) =
+            Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_PHOTO).u64(id).string(name.take(200)).u64(size).u16(width.coerceIn(0, 65535)).u16(height.coerceIn(0, 65535)).blob(picture).build()
+        /** Revision 8: a web page where it was scrolled to ([scroll] 0..1, below 0 unknown). */
+        fun pagePayload(url: String, title: String, scroll: Float) = Bytes().u32(java.lang.Float.floatToRawIntBits(scroll)).string(url.take(4000)).string(title.take(300)).build()
         fun hotspotFrame(on: Boolean, name: String, password: String) =
             Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_HOTSPOT).u8(if (on) 1 else 0).apply { if (on) { string(name); string(password) } }.build()
         // Trackpad and keyboard frames.

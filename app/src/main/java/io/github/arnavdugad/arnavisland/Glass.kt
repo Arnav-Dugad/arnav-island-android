@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -68,10 +69,16 @@ val LocalGlass = staticCompositionLocalOf<GlassBackdrops?> { null }
 /** Liquid glass on (the default), or off: solid surfaces, calmer and lighter on the battery (Devices › Appearance). */
 val LocalGlassOn = staticCompositionLocalOf { true }
 
-/** What covers the screen: while a sheet is open, the light behind it stands still. */
-object Scene { var sheets by mutableIntStateOf(0) }
+/**
+ * What covers the screen: while a sheet is open, the light behind it stands still. 1.7: while a finger is on the screen
+ * (and a moment after, as a fling settles) it holds still too, so scrolling has all the phone's drawing to itself.
+ */
+object Scene { var sheets by mutableIntStateOf(0); var touching by mutableStateOf(false) }
 
 enum class GlassLevel { Card, Bar, Control, Sheet, Island }
+
+/** Test builds only: parts of the glass switched off one at a time, to measure what each costs (set from an intent). */
+object GlassTuning { var off by mutableStateOf(emptySet<String>()) }
 
 object GlassShapes {
     val card = RoundedRectangle(30.dp)
@@ -102,22 +109,29 @@ private val effectsSupported = Build.VERSION.SDK_INT >= 31 && Build.FINGERPRINT 
     }
     val rimAlpha = if (t.dark) .6f else .95f
     val shadowColor = Color.Black.copy(alpha = if (t.dark) .34f else .12f)
-    return this.drawBackdrop(
+    val off = GlassTuning.off
+    // Its shadow is drawn once and kept (a cached image, as Compose's drop shadow does): the backdrop library's own shadow
+    // was blurred again on every frame the glass redrew (all of them while the light behind moves), the glass's largest
+    // cost. Same radius, colour and offset (a sixth of the radius, down).
+    val shadowRadius = when (level) { GlassLevel.Control -> 12.dp; GlassLevel.Sheet -> 40.dp; else -> 28.dp }
+    val shadowed = if ("shadow" in off || "oldshadow" in off) this else this.dropShadow(shape, androidx.compose.ui.graphics.shadow.Shadow(radius = shadowRadius, color = shadowColor, offset = DpOffset(0.dp, shadowRadius / 6)))
+    return shadowed.drawBackdrop(
         backdrop = backdrop,
         shape = { shape },
         effects = {
             if (effectsSupported) {
-                vibrancy()
-                if (blurDp > 0.dp) blur(with(density) { blurDp.toPx() })
-                lens(with(density) { lensHeight.toPx() }, with(density) { lensAmount.toPx() }, depthEffect = level != GlassLevel.Card, chromaticAberration = level == GlassLevel.Bar || level == GlassLevel.Island)
+                if ("vibrancy" !in off) vibrancy()
+                if (blurDp > 0.dp && "blur" !in off) blur(with(density) { blurDp.toPx() })
+                if (!(level == GlassLevel.Card && "cardlens" in off) && "lens" !in off)
+                    lens(with(density) { lensHeight.toPx() }, with(density) { lensAmount.toPx() }, depthEffect = level != GlassLevel.Card && "depth" !in off, chromaticAberration = (level == GlassLevel.Bar || level == GlassLevel.Island) && "chroma" !in off)
             }
         },
         highlight = null,
-        shadow = { Shadow(radius = when (level) { GlassLevel.Control -> 12.dp; GlassLevel.Sheet -> 40.dp; else -> 28.dp }, color = shadowColor) },
+        shadow = if ("oldshadow" in off) ({ Shadow(radius = shadowRadius, color = shadowColor) }) else null,
         onDrawSurface = { drawRect(if (effectsSupported) surface else fallbackSurface(t, level, tint)); sheen(t.dark) },
     )
         // The rim follows the tilt in a layer of its own, so the refraction beneath isn't drawn again as the phone moves.
-        .graphicsLayer { }.drawBehind { specularRim(shape, rimAlpha, if (level == GlassLevel.Card) .9.dp.toPx() else 1.2.dp.toPx(), tilt()) }
+        .then(if ("rim" in off) Modifier else Modifier.graphicsLayer { }.drawBehind { specularRim(shape, rimAlpha, if (level == GlassLevel.Card) .9.dp.toPx() else 1.2.dp.toPx(), tilt()) })
 }
 
 /** A soft sheen across the glass's upper part, as light falls on a curved surface. */
@@ -167,18 +181,26 @@ private fun fallbackSurface(t: Tokens, level: GlassLevel, tint: Color): Color {
 
 /**
  * The ambient light behind the glass: a deep field lit by slow-drifting colour from what plays on your PC. It breathes
- * gently while music plays. Updated about 20 times a second, smooth for motion this slow and light on the battery; it
- * stands still while the app is hidden, a sheet covers it, or [still] (the battery saver).
+ * gently while music plays. Updated up to 20 times a second, smooth for motion this slow and light on the battery; it
+ * stands still while the app is hidden, a sheet covers it, a finger is on the screen, or [still] (the battery saver).
+ *
+ * 1.7: its pace follows what the phone draws smoothly. Every step redraws each glass surface over it, so on a phone that
+ * starts to drop frames it eases to 15, 10, then 7 steps a second (the drift is too slow to look any different), and
+ * back up after a few smooth seconds.
  */
 @Composable fun AmbientBackground(accent: Color, accent2: Color, deep: Color, playing: Boolean, modifier: Modifier = Modifier, still: Boolean = false) {
     val t = LocalTokens.current; val reduced = LocalReduced.current; val owner = LocalLifecycleOwner.current
     var phase by remember { mutableFloatStateOf(0f) }
-    val paused = reduced || still || Scene.sheets > 0
+    val paused = reduced || still || Scene.sheets > 0 || (Scene.touching && "notouchpause" !in GlassTuning.off) || "ambient" in GlassTuning.off
     LaunchedEffect(paused, owner) {
         if (paused) return@LaunchedEffect
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            // Carries on from where it stood (a pause never makes it jump).
             val start = System.nanoTime() - (phase * 1e9).toLong()
-            while (isActive) { phase = ((System.nanoTime() - start) / 1e9).toFloat(); delay(50) }
+            while (isActive) {
+                phase = ((System.nanoTime() - start) / 1e9).toFloat()
+                delay(if ("fixedpace" in GlassTuning.off) 50L else AmbientPace.step)
+            }
         }
     }
     val breath by animateFloatAsState(if (playing && !reduced) 1f else 0f, tween(1400), label = "Breath")
@@ -197,6 +219,22 @@ private fun fallbackSurface(t: Tokens, level: GlassLevel, tint: Color): Color {
         }
         // A vignette keeps the edges calm and the glass readable.
         drawRect(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = if (t.dark) .45f else .08f)), Offset(w / 2, h * .42f), maxOf(w, h) * .8f))
+    }
+}
+
+/**
+ * How often the ambient light steps (ms), from how long the phone takes to draw its frames (Android's frame metrics):
+ * frames that miss their display interval ease it down, a smooth run brings it back up.
+ */
+object AmbientPace {
+    private val steps = longArrayOf(50, 66, 100, 140)
+    @Volatile private var level = 0; private var slow = 0; private var smooth = 0
+    val step get() = steps[level]
+    /** One drawn frame: how long it took, and the display's frame interval (both ms). */
+    fun frame(tookMs: Double, intervalMs: Double) {
+        if (tookMs > intervalMs * 1.5) { slow++; smooth = 0 } else { smooth++; if (smooth % 4 == 0) slow = (slow - 1).coerceAtLeast(0) }
+        if (slow >= 8 && level < steps.size - 1) { level++; slow = 0 }
+        if (smooth >= 240 && level > 0) { level--; smooth = 0 }
     }
 }
 

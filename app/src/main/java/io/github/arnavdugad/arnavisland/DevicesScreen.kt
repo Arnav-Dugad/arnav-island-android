@@ -136,6 +136,12 @@ data class Look(val appearance: Int, val glass: Boolean, val weather: Boolean)
                 Hairline()
                 GlassRow(Icons.Rounded.PhoneAndroid, "Your phone’s details", "Storage, memory, network, sound and more, in the island’s view of this phone") { GlassSwitch(flag("details"), { set("details", it); if (it) Hub.sendDetails(force = true) }) }
                 Hairline()
+                // 1.7: a photo or screenshot just taken shows on the island (only its picture, until the PC asks for it).
+                val photoAccess = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted -> set("recent_photos", granted); RecentPhotos.sync(context) }
+                GlassRow(Icons.Rounded.PhotoCamera, "Photos you take", if (flag("recent_photos", false) && !RecentPhotos.permitted(context)) "Allow photo access for this" else "A photo or screenshot you just took shows on your PC’s island, to paste there or put on its Shelf") {
+                    GlassSwitch(flag("recent_photos", false) && RecentPhotos.permitted(context), { on -> if (on && !RecentPhotos.permitted(context)) photoAccess.launch(RecentPhotos.permission()) else { set("recent_photos", on); RecentPhotos.sync(context) } })
+                }
+                Hairline()
                 GlassRow(Icons.Rounded.ContentPaste, "Universal clipboard", "Copy on one, paste on the other, with the island’s own Universal clipboard switch on too") {
                     GlassSwitch(flag("clipboard"), { set("clipboard", it) })
                 }

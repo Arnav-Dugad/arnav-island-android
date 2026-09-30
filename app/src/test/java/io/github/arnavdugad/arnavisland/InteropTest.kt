@@ -187,6 +187,56 @@ class InteropTest {
         } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
     }
 
+    /**
+     * Revision 8 (island 0.25): an offer with its picture; a photo just taken, told to the PC, then asked for by it (to
+     * paste) and sent with the PC's ask; pages both ways, where they were scrolled to.
+     */
+    @Test fun photos_and_pages() {
+        val exe = System.getenv("ARNAV_SHARE_PEER"); assumeTrue("ARNAV_SHARE_PEER not set", exe != null && File(exe).exists())
+        val work = Files.createTempDirectory("arnav-r8").toFile(); val phoneDir = File(work, "phone").apply { mkdirs() }
+        val pcPort = 47938
+        val process = ProcessBuilder(exe, pcPort.toString(), File(work, "pc").path).redirectErrorStream(true).start()
+        val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
+        thread(isDaemon = true) { while (true) { val l = reader.readLine() ?: break; println("PC: $l"); lines.put(l) } }
+        val pc = process.outputStream.bufferedWriter(Charsets.UTF_8)
+        fun tell(cmd: String) { pc.write(cmd); pc.newLine(); pc.flush() }
+        val phone = Link(MemoryStore(), "Test Phone", FolderInbox(phoneDir), { events.put(it) }, Link.Options(tcpPort = 0, discovery = false, loopback = true))
+        try {
+            assertTrue(phone.start())
+            val pcId = line("READY ").split(' ')[0]
+            phone.addPeer(pcId, "Interop PC", "127.0.0.1", pcPort, 2, 8)
+            tell("peer ${phone.identity} ${phone.port}"); line("OK peer")
+            phone.pair(pcId); await<LinkEvent.PairCode>(); phone.confirmPair(true); assertTrue(await<LinkEvent.Paired>().ok); line("PAIRED ok")
+            val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte()) + ByteArray(2000) { (it % 251).toByte() } + byteArrayOf(0xFF.toByte(), 0xD9.toByte())
+            val photo = ByteArray(250_000) { (it * 7 + 3).toByte() }
+
+            // To the Shelf with its picture: the PC sees the picture with the offer, then the file.
+            phone.send(pcId, listOf(Source("beach.jpg", photo.size.toLong()) { ByteArrayInputStream(photo) }), "beach.jpg", toShelf = true, preview = jpeg)
+            assertEquals("1 250000 shelf", line("OFFER ")); assertEquals("${jpeg.size} 1 0 beach.jpg", line("OFFERPIC ")); line("RECEIVED "); await<LinkEvent.Sent>()
+            assertArrayEquals(photo, File(work, "pc/dl/beach.jpg").readBytes())
+
+            // A photo just taken, told to the PC: its id, name, size, shape and picture.
+            assertTrue(phone.notice(pcId, Link.photoFrame(4_000_000_042L, "PXL_20260930.jpg", photo.size.toLong(), 4032, 3024, jpeg)))
+            assertEquals("4000000042 PXL_20260930.jpg 250000 4032x3024 ${jpeg.size}", line("PHONEPHOTO "))
+            // The PC asks for it, to paste; it comes with the PC's ask (and without asking there).
+            val asked = LinkedBlockingQueue<Pair<Int, ByteArray>>()
+            phone.onQuery = { peer, command, payload -> assertEquals(pcId, peer); asked.put(command to payload); ByteArray(0) }
+            tell("photo-ask ${phone.identity} 4000000042 1 77"); line("OK photo-ask")
+            val (command, payload) = asked.poll(15, TimeUnit.SECONDS)!!; assertEquals(Proto.QUERY_PHOTO, command)
+            val r = Reader(payload); assertEquals(4_000_000_042L, r.u64()); assertEquals(1, r.u8()); assertEquals(77L, r.u32())
+            phone.send(pcId, listOf(Source("PXL_20260930.jpg", photo.size.toLong()) { ByteArrayInputStream(photo) }), "PXL_20260930.jpg", preview = jpeg, ask = 77)
+            assertEquals("${jpeg.size} 1 77 PXL_20260930.jpg", line("OFFERPIC ")); assertTrue(line("RECEIVED ").endsWith("|ask 77")); await<LinkEvent.Sent>()
+
+            // A page from the PC, where it was scrolled to.
+            tell("page ${phone.identity} 0.42 https://example.com/long/read The long read"); line("OK page")
+            val (pageCommand, page) = generateSequence { asked.poll(15, TimeUnit.SECONDS) }.first { it.first == Proto.QUERY_PAGE }; assertEquals(Proto.QUERY_PAGE, pageCommand)
+            val pr = Reader(page); assertEquals(.42f, java.lang.Float.intBitsToFloat(pr.u32()!!.toInt()), 1e-6f); assertEquals("https://example.com/long/read", pr.string(4096)); assertEquals("The long read", pr.string(400))
+            // And one to the PC.
+            val reply = phone.remote(pcId, Proto.CMD_PAGE, Link.pagePayload("https://example.com/b?x=1", "B", .7f))!!; assertTrue(reply.ok)
+            assertEquals("0.700 https://example.com/b?x=1", line("PAGE "))
+        } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
+    }
+
     @Test fun phone_and_windows_island_speak_the_same_protocol() {
         val exe = System.getenv("ARNAV_SHARE_PEER"); assumeTrue("ARNAV_SHARE_PEER not set", exe != null && File(exe).exists())
         val work = Files.createTempDirectory("arnav-interop").toFile(); val phoneDir = File(work, "phone").apply { mkdirs() }
@@ -322,8 +372,8 @@ class InteropTest {
             // Each sees the other through the relay.
             val seen = System.currentTimeMillis() + 40_000
             while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
-            val view = phone.peers().first { it.id == pcId }; assertTrue(view.online && view.internet); assertEquals(7, view.revision)
-            line("PRESENCE ${phone.identity} 1 1 7 1", 40)
+            val view = phone.peers().first { it.id == pcId }; assertTrue(view.online && view.internet); assertEquals(8, view.revision)
+            line("PRESENCE ${phone.identity} 1 1 8 1", 40)
 
             // Revision 7: the PC's screen (its made-up picture) through the relay, light and paced for it.
             run {
@@ -424,7 +474,7 @@ class InteropTest {
             val seen = System.currentTimeMillis() + 40_000
             while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
             assertTrue("the phone sees the PC through the broker they share", phone.peers().any { it.id == pcId && it.online && it.internet })
-            line("PRESENCE ${phone.identity} 1 1 7 1", 40)
+            line("PRESENCE ${phone.identity} 1 1 8 1", 40)
             if (direct) {
                 val until = System.currentTimeMillis() + 20_000
                 while (System.currentTimeMillis() < until && phone.peers().none { it.id == pcId && it.path == 2 }) Thread.sleep(100)
