@@ -30,6 +30,7 @@ class LinkService : Service() {
     private var multicast: WifiManager.MulticastLock? = null
     private val jobs = ArrayList<Job>()
     private val battery = object : BroadcastReceiver() { override fun onReceive(c: Context, i: Intent) = Hub.sendBattery() }
+    private val hotspot = object : BroadcastReceiver() { override fun onReceive(c: Context, i: Intent) = Hub.hotspotChanged(i) }
     private var network: ConnectivityManager.NetworkCallback? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -43,6 +44,8 @@ class LinkService : Service() {
         multicast = runCatching { getSystemService(WifiManager::class.java).createMulticastLock("arnav-island").apply { setReferenceCounted(false); acquire() } }.getOrNull()
         Hub.start()
         ContextCompat.registerReceiver(this, battery, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+        // 1.4: the hotspot turning on or off (Android's own broadcast); read once now too.
+        runCatching { ContextCompat.registerReceiver(this, hotspot, IntentFilter(Hub.HOTSPOT_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED) }; Hub.hotspotChanged(null)
         // Another network (Wi-Fi to mobile data, another Wi-Fi): the relay and discovery start over at once.
         network = object : ConnectivityManager.NetworkCallback() {
             private var current: Network? = null
@@ -101,7 +104,7 @@ class LinkService : Service() {
     }
     override fun onDestroy() {
         jobs.forEach { it.cancel() }; jobs.clear()
-        runCatching { unregisterReceiver(battery) }; runCatching { multicast?.release() }
+        runCatching { unregisterReceiver(battery) }; runCatching { unregisterReceiver(hotspot) }; runCatching { multicast?.release() }
         network?.let { cb -> runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(cb) } }
         PcMedia.clear(this)
         Hub.stop(); super.onDestroy()

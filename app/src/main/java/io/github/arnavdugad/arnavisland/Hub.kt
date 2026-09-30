@@ -18,6 +18,12 @@ import io.github.arnavdugad.arnavisland.link.PeerView
 import io.github.arnavdugad.arnavisland.link.Proto
 import io.github.arnavdugad.arnavisland.link.RemoteReply
 import io.github.arnavdugad.arnavisland.link.Source
+import io.github.arnavdugad.arnavisland.link.AudioOutput
+import io.github.arnavdugad.arnavisland.link.CommandOutcome
+import io.github.arnavdugad.arnavisland.link.CommandResults
+import io.github.arnavdugad.arnavisland.link.IslandSettings
+import io.github.arnavdugad.arnavisland.link.PcControls
+import io.github.arnavdugad.arnavisland.link.PcStats
 import io.github.arnavdugad.arnavisland.link.safeName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -122,7 +128,7 @@ object Hub {
                 // A PC that just came online hears this phone's battery and details at once.
                 val online = e.peers.filter { it.paired && it.online && it.remote }.map { it.id }.toSet()
                 val arrived = synchronized(lastOnline) { val a = online - lastOnline; lastOnline.clear(); lastOnline.addAll(online); a }
-                if (arrived.isNotEmpty()) { sendBattery(force = true); sendDetails(force = true) }
+                if (arrived.isNotEmpty()) { sendBattery(force = true); sendDetails(force = true); sendHotspot(arrived = true) }
             }
             is LinkEvent.PairCode -> { codePairing.value = null; pairCode.value = e; if (!visible) Notify.pairing(app, e) }
             is LinkEvent.Paired -> {
@@ -289,6 +295,116 @@ object Hub {
         s
     }
 
+    // ---- 1.4: this phone's hotspot on the PC's island ----
+    /** Its name and password (typed once in Devices: Android doesn't tell apps) and whether the PCs hear about it. */
+    data class HotspotSetup(val name: String, val password: String, val enabled: Boolean)
+    val hotspot by lazy { MutableStateFlow(HotspotSetup(prefs.getString("hotspotName", "").orEmpty(), prefs.getString("hotspotPassword", "").orEmpty(), prefs.getBoolean("hotspot", false))) }
+    val hotspotOn = MutableStateFlow(false)
+    /** What the PCs last heard: the name and password while on, "" once off (null: nothing yet). */
+    @Volatile private var sentHotspot: String? = null
+    const val HOTSPOT_CHANGED = "android.net.wifi.WIFI_AP_STATE_CHANGED"
+    fun setHotspot(name: String? = null, password: String? = null, enabled: Boolean? = null) {
+        val now = hotspot.value.let { HotspotSetup(name ?: it.name, password ?: it.password, enabled ?: it.enabled) }
+        prefs.edit().putString("hotspotName", now.name).putString("hotspotPassword", now.password).putBoolean("hotspot", now.enabled).apply()
+        hotspot.value = now; sendHotspot()
+    }
+    /** Android's word on the hotspot (its broadcast, which it keeps for late listeners; else WifiManager's own getter). */
+    fun hotspotChanged(intent: Intent?) {
+        val state = (intent ?: runCatching { app.registerReceiver(null, IntentFilter(HOTSPOT_CHANGED)) }.getOrNull())?.getIntExtra("wifi_state", -1) ?: -1
+        hotspotOn.value = if (state >= 0) state == 13 else runCatching {
+            android.net.wifi.WifiManager::class.java.getMethod("isWifiApEnabled").invoke(app.getSystemService(android.net.wifi.WifiManager::class.java)) as Boolean
+        }.getOrDefault(false)
+        sendHotspot()
+    }
+    /** Tells the PCs (island 0.22 or later) when it changed; [arrived]: a PC just came, so it hears the hotspot if it's on. */
+    fun sendHotspot(arrived: Boolean = false) {
+        val setup = hotspot.value; val on = hotspotOn.value && setup.enabled && setup.name.isNotEmpty()
+        val said = if (on) setup.name + "\u0000" + setup.password else ""
+        if (arrived) { if (!on) return } else if (said == (sentHotspot ?: "")) return
+        val l = link ?: return
+        val targets = peers.value.filter { it.paired && it.online && it.revision >= 5 && !it.phone }; if (targets.isEmpty()) return
+        sentHotspot = said
+        val frame = Link.hotspotFrame(on, setup.name, setup.password)
+        scope.launch { targets.forEach { l.notice(it.id, frame) } }
+    }
+
+    // ---- the whole island (revision 5, island 0.22) ----
+    val pcStats = MutableStateFlow<PcStats?>(null)
+    val pcControls = MutableStateFlow<PcControls?>(null)
+    /** When [pcControls] was read (the focus clock runs on from there here). */
+    @Volatile var controlsAt = 0L; private set
+    val islandSettings = MutableStateFlow<IslandSettings?>(null)
+    val outputs = MutableStateFlow<List<AudioOutput>>(emptyList())
+    /** Whether the chosen PC can be controlled whole (island 0.22 or later) right now. */
+    fun islandReady(p: PeerView? = pc()) = p != null && p.online && p.revision >= 5
+    /** The PC's controls (and, while its numbers show, its stats): asked once a second while the Island screen shows. */
+    suspend fun refreshIsland(withStats: Boolean) = withContext(Dispatchers.IO) {
+        val l = link ?: return@withContext; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext
+        if (withStats) l.stats(p.id)?.let { pcStats.value = it }
+        l.controls(p.id)?.let { pcControls.value = it; controlsAt = System.currentTimeMillis() }
+    }
+    /** Changes a control at once here ([seen]: what it looks like meanwhile), then on the PC; what the PC says wins. */
+    fun setControl(control: Int, value: Int, seen: (PcControls) -> PcControls = { it }) {
+        pcControls.value = pcControls.value?.let(seen)
+        scope.launch {
+            val l = link ?: return@launch; val p = pc()?.takeIf { islandReady(it) } ?: return@launch
+            val c = l.setControl(p.id, control, value)
+            if (c != null) { pcControls.value = c; controlsAt = System.currentTimeMillis() }
+            else { banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't do that", l.lastRemoteError.ifEmpty { "Try again in a moment" })); l.controls(p.id)?.let { pcControls.value = it } }
+        }
+    }
+    suspend fun loadIslandSettings(): IslandSettings? = withContext(Dispatchers.IO) {
+        val l = link ?: return@withContext null; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext null
+        l.islandSettings(p.id)?.also { islandSettings.value = it }
+    }
+    /** Changes one of the island's settings: shown at once, then set on the PC (which may keep it within its range). */
+    fun setIslandSetting(key: String, value: Int) {
+        fun show(v: Int) = islandSettings.update { s -> s?.copy(items = s.items.map { if (it.key == key) it.copy(value = v) else it }) }
+        val before = islandSettings.value?.items?.firstOrNull { it.key == key }?.value; show(value)
+        scope.launch {
+            val l = link ?: return@launch; val p = pc()?.takeIf { islandReady(it) } ?: return@launch
+            val now = l.setIslandSetting(p.id, key, value)
+            if (now != null) show(now) else { if (before != null) show(before); banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't change that", l.lastRemoteError.ifEmpty { "Try again in a moment" })) }
+        }
+    }
+    fun islandSettingAction(action: Int, done: String) {
+        scope.launch {
+            val l = link ?: return@launch; val p = pc()?.takeIf { islandReady(it) } ?: return@launch
+            banners.tryEmit(if (l.islandSettingAction(p.id, action)) Banner(Banner.Kind.Info, done, "On ${p.name}") else Banner(Banner.Kind.Failed, "${p.name} couldn't do that"))
+        }
+    }
+    /** The PC's command bar, asked again (briefly) until its results answer this text. */
+    suspend fun queryCommands(text: String): CommandResults? = withContext(Dispatchers.IO) {
+        val l = link ?: return@withContext null; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext null
+        var r = l.queryCommands(p.id, text); var tries = 0
+        while (r != null && !r.final && tries++ < 12) { kotlinx.coroutines.delay(120); r = l.queryCommands(p.id, text) }
+        r
+    }
+    suspend fun runCommand(text: String, index: Int, title: String, confirmed: Boolean): CommandOutcome? = withContext(Dispatchers.IO) {
+        val l = link ?: return@withContext null; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext null
+        l.runCommand(p.id, text, index, title, confirmed)
+    }
+    suspend fun loadOutputs() = withContext(Dispatchers.IO) {
+        val l = link ?: return@withContext; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext
+        l.outputs(p.id)?.let { outputs.value = it }
+    }
+    /** Makes an output the PC's default; when the island's direct switching is off, says how to turn it on. */
+    fun selectOutput(id: String) {
+        outputs.update { list -> list.map { it.copy(current = it.id == id) } }
+        scope.launch {
+            val l = link ?: return@launch; val p = pc()?.takeIf { islandReady(it) } ?: return@launch
+            when (l.selectOutput(p.id, id)) {
+                Proto.OK -> Unit
+                Proto.NOT_ALLOWED -> banners.tryEmit(Banner(Banner.Kind.Info, "Direct output switching is off", "Turn it on below, in Media & sound"))
+                else -> banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't switch the sound"))
+            }
+            kotlinx.coroutines.delay(600); l.outputs(p.id)?.let { outputs.value = it }
+        }
+    }
+    fun openIslandPage(page: Int) { scope.launch { val l = link ?: return@launch; val p = pc()?.takeIf { islandReady(it) } ?: return@launch
+        if (!l.openIslandPage(p.id, page)) banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't open that")) } }
+    fun closeIsland() { scope.launch { val l = link ?: return@launch; val p = pc()?.takeIf { islandReady(it) } ?: return@launch; l.closeIsland(p.id) } }
+
     // ---- lyrics, find my PC ----
     private var lyricsKey: String? = null; private var lyricsAsked = 0L; private var lyricsTries = 0
     /** The lyrics follow the song: asked when it changes, and again (a few times) while the PC is still looking. */
@@ -348,12 +464,14 @@ object Hub {
     private var sentBattery = -2; private var sentCharging = false
     /** The battery level (and whether it charges) to every paired PC that is here, when it changed. */
     fun sendBattery(force: Boolean = false) {
-        if (!prefs.getBoolean("battery", true)) return
         val intent = app.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return
         val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1); val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
         val percent = if (level >= 0 && scale > 0) level * 100 / scale else -1
         val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
         val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+        // The forecast's history is kept whether or not the PCs hear the battery.
+        BatteryForecast.record(app, percent, charging)
+        if (!prefs.getBoolean("battery", true)) return
         if (!force && percent == sentBattery && charging == sentCharging) return
         sentBattery = percent; sentCharging = charging
         val l = link ?: return; val frame = Link.statusFrame(percent, charging)

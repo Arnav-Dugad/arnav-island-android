@@ -12,8 +12,8 @@ import java.io.OutputStream
  */
 object Proto {
     const val VERSION = 2
-    /** Revision 4 (1.3, island 0.21): remote and notices connections stay open for more; the relay has a direct path. */
-    const val REVISION = 4
+    /** Revision 4 (1.3, island 0.21): remote and notices connections stay open for more; the relay has a direct path. Revision 5 (1.4, island 0.22): the whole island. */
+    const val REVISION = 5
     const val TCP_PORT = 47820
     const val UDP_PORT = 47821
     val MAGIC = byteArrayOf('A'.code.toByte(), 'R'.code.toByte(), 'N'.code.toByte(), 'V'.code.toByte())
@@ -38,10 +38,14 @@ object Proto {
     const val CMD_CLIP_GET = 6; const val CMD_CLIP_SET = 7; const val CMD_SEEK = 8; const val CMD_OPEN = 9
     // Revision 3.
     const val CMD_RING_PC = 10; const val CMD_LYRICS = 11
+    /** Revision 5 (island 0.22): the whole island (see [IslandWire]). */
+    const val CMD_STATS = 12; const val CMD_SETTINGS = 13; const val CMD_CONTROLS = 14; const val CMD_COMMAND = 15; const val CMD_AUDIO = 16; const val CMD_ISLAND = 17
     const val MODE_INPUT = 'I'.code; const val MODE_ACTION = 'A'.code; const val MODE_CLIP = 'C'.code; const val MODE_CAMERA = 'K'.code
     const val FRAME_ACTION = 0x70; const val FRAME_ACTION_ACK = 0x71; const val FRAME_CLIP = 0x50; const val FRAME_CLIP_ACK = 0x51; const val FRAME_CAMERA = 0x42; const val FRAME_CAMERA_ACK = 0x43
     const val INPUT_MOVE = 0x60; const val INPUT_BUTTON = 0x61; const val INPUT_SCROLL = 0x62; const val INPUT_TEXT = 0x63; const val INPUT_KEY = 0x64
     const val NOTICE_DETAILS = 3; const val NOTICE_GONE = 4
+    /** Revision 5 (island 0.22): this phone's hotspot, [on] and when on its name and password (the island offers to join it). */
+    const val NOTICE_HOTSPOT = 5
     // Remote answers.
     const val OK = 0; const val NOT_ALLOWED = 1; const val UNSUPPORTED = 2; const val FAILED = 3
     // Notices.

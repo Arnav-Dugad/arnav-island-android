@@ -32,6 +32,8 @@ object DeviceInfo {
             if (level >= 0 && scale > 0) out += "Battery" to "${level * 100 / scale}%"
             val status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
             out += "Charging" to if (status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL) "Yes" else "No"
+            // 1.4: from this phone's own history (the island says "until 11 pm" by its battery).
+            BatteryForecast.forecast(context)?.let { f -> out += (if (f.charging) "Full by" else "Lasts until") to BatteryForecast.time(context, f.at) }
             val tenths = battery.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
             if (tenths != Int.MIN_VALUE && tenths in -200..900) out += "Temperature" to "%.1f°C".format(tenths / 10.0)
             val health = when (battery.getIntExtra(BatteryManager.EXTRA_HEALTH, -1)) {

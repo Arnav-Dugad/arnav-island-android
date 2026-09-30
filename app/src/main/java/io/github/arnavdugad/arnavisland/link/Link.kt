@@ -700,6 +700,26 @@ class Link(
             return RemoteReply(status, r.rest())
         } finally { c.close() }
     }
+    // ---- revision 5: the whole island (island 0.22) ----
+    private fun ask(peer: String, command: Int, payload: ByteArray = ByteArray(0)): ByteArray? = remote(peer, command, payload)?.takeIf { it.ok }?.payload
+    /** The PC's numbers, live (the PC keeps measuring them while this phone asks, and for 12 s after). */
+    fun stats(peer: String): PcStats? = ask(peer, Proto.CMD_STATS)?.let { IslandWire.stats(it) }
+    fun islandSettings(peer: String): IslandSettings? = ask(peer, Proto.CMD_SETTINGS, byteArrayOf(0))?.let { IslandWire.settings(it) }
+    /** Changes one of the island's settings; the value it has now (the island may keep it within its range), or null. */
+    fun setIslandSetting(peer: String, key: String, value: Int): Int? = ask(peer, Proto.CMD_SETTINGS, Bytes().u8(1).string(key).u32(value).build())?.let { IslandWire.value(it) }
+    fun islandSettingAction(peer: String, action: Int): Boolean = ask(peer, Proto.CMD_SETTINGS, Bytes().u8(2).u8(action).build()) != null
+    fun controls(peer: String): PcControls? = ask(peer, Proto.CMD_CONTROLS, byteArrayOf(0))?.let { IslandWire.controls(it) }
+    /** Changes one control ([IslandWire]); the controls as they are then (a radio changing shows in [PcControls.busy]). */
+    fun setControl(peer: String, control: Int, value: Int): PcControls? = ask(peer, Proto.CMD_CONTROLS, Bytes().u8(1).u8(control).u32(value).build())?.let { IslandWire.controls(it) }
+    fun queryCommands(peer: String, text: String): CommandResults? = ask(peer, Proto.CMD_COMMAND, Bytes().u8(0).string(text).build())?.let { IslandWire.commands(it) }
+    fun runCommand(peer: String, text: String, index: Int, title: String, confirmed: Boolean): CommandOutcome? =
+        ask(peer, Proto.CMD_COMMAND, Bytes().u8(1).string(text).u8(index).string(title).u8(if (confirmed) 1 else 0).build())?.let { IslandWire.outcome(it) }
+    fun outputs(peer: String): List<AudioOutput>? = ask(peer, Proto.CMD_AUDIO, byteArrayOf(0))?.let { IslandWire.outputs(it) }
+    /** Makes an output the PC's default: the status (NOT_ALLOWED when the island's direct output switching is off). */
+    fun selectOutput(peer: String, id: String): Int = remote(peer, Proto.CMD_AUDIO, Bytes().u8(1).string(id).build())?.status ?: Proto.FAILED
+    fun openIslandPage(peer: String, page: Int): Boolean = ask(peer, Proto.CMD_ISLAND, byteArrayOf(0, page.toByte())) != null
+    fun closeIsland(peer: String): Boolean = ask(peer, Proto.CMD_ISLAND, byteArrayOf(1)) != null
+
     // ---- revision 4: connections kept for more ----
     /** A remote (or notices) connection kept open, the path it went by (3 this network, 2 direct, 1 relay) and when last used. */
     private class Kept(val c: Conn, val ss: Session, val path: Int, @Volatile var used: Long)
@@ -812,6 +832,8 @@ class Link(
             Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_DETAILS).string(details.joinToString("\n") { (k, v) -> k.replace('\t', ' ').replace('\n', ' ') + "\t" + v.replace('\t', ' ').replace('\n', ' ') }.take(12_000)).build()
         /** A notification the phone no longer shows. */
         fun goneFrame(key: String) = Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_GONE).string(key.take(200)).build()
+        fun hotspotFrame(on: Boolean, name: String, password: String) =
+            Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_HOTSPOT).u8(if (on) 1 else 0).apply { if (on) { string(name); string(password) } }.build()
         // Trackpad and keyboard frames.
         fun moveFrame(dx: Int, dy: Int) = Bytes().u8(Proto.INPUT_MOVE).u16(dx.coerceIn(-32768, 32767) and 0xFFFF).u16(dy.coerceIn(-32768, 32767) and 0xFFFF).build()
         /** button: 0 left, 1 right, 2 middle; state: 0 up, 1 down, 2 a click. */

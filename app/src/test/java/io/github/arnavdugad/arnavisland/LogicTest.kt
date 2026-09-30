@@ -10,6 +10,35 @@ import org.junit.Test
 
 /** The small pieces of 1.1's logic that decide what reaches the PC, and when. */
 class LogicTest {
+    /**
+     * 1.4: the battery forecast. Five days of the same routine (off the charger at 8, 5% an hour, on it at 8 pm): at 2 pm
+     * today at 70% it lasts 14 hours more, until 4 am; a day that runs faster than usual is caught by its last stretch.
+     */
+    @Test fun the_battery_forecast_follows_its_own_history() {
+        val zone = java.time.ZoneOffset.UTC; val day0 = java.time.LocalDate.of(2026, 9, 20)
+        fun minute(day: Int, h: Int, m: Int = 0) = (day0.plusDays(day.toLong()).atTime(h, m).toEpochSecond(zone) / 60).toInt()
+        val history = ArrayList<BatteryForecast.Sample>()
+        fun routine(day: Int, until: Int, pace: Int = 12) {
+            // One percent every [pace] minutes from 8 am.
+            var level = 100; var at = minute(day, 8); history += BatteryForecast.Sample(at, 100, false)
+            while (at + pace <= until) { at += pace; level -= 1; history += BatteryForecast.Sample(at, level, false) }
+        }
+        for (d in 0 until 5) { routine(d, minute(d, 20)); history += BatteryForecast.Sample(minute(d, 20), 40, true); history += BatteryForecast.Sample(minute(d, 21), 100, true) }
+        routine(5, minute(5, 14))
+        assertEquals(70, history.last().level)
+        val now = minute(5, 14).toLong() * 60_000
+        val until = BatteryForecast.lastsUntil(history, 70, now, zone)!!
+        assertEquals(minute(6, 4).toLong() * 60_000.0, until.toDouble(), 20 * 60_000.0)
+        // Today twice as fast (a percent every 6 minutes since 11 am): sooner than the routine says, and later than the fast pace alone.
+        val fast = history.filter { it.minute <= minute(5, 11) }.toMutableList(); var level = fast.last().level; var at = minute(5, 11)
+        while (at + 6 <= minute(5, 14)) { at += 6; level -= 1; fast += BatteryForecast.Sample(at, level, false) }
+        val soon = BatteryForecast.lastsUntil(fast, level, now, zone)!!
+        assertTrue(soon < minute(5, 14).toLong() * 60_000 + level / 5.0 * 3_600_000)
+        assertTrue(soon > minute(5, 14).toLong() * 60_000 + level / 10.0 * 3_600_000)
+        // Nothing to go on yet: no forecast.
+        assertEquals(null, BatteryForecast.lastsUntil(listOf(BatteryForecast.Sample(minute(5, 13, 59), 70, false)), 70, now, zone))
+    }
+
     @Test fun typing_sends_what_changed() {
         assertEquals(0 to "a", typedDiff("", "a"))
         assertEquals(0 to "lo", typedDiff("hel", "hello"))

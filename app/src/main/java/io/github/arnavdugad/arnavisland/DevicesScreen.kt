@@ -37,7 +37,7 @@ data class Look(val appearance: Int, val glass: Boolean, val weather: Boolean)
 
 /** This phone, your PCs (here, anywhere), what the island may show of the phone, this phone's own extras, updates and the app's look. */
 @Composable fun DevicesScreen(peers: List<PeerView>, pc: PeerView?, running: Boolean, failure: String?, internet: Boolean, look: Look, onLook: (Look) -> Unit,
-                              onPair: () -> Unit, onPairCode: () -> Unit, onUpdates: () -> Unit, padding: PaddingValues) {
+                              onPair: () -> Unit, onPairCode: () -> Unit, onUpdates: () -> Unit, onHotspot: () -> Unit, padding: PaddingValues) {
     val t = LocalTokens.current; val context = LocalContext.current
     var prefsVersion by remember { mutableIntStateOf(0) }
     // Reading prefsVersion here recomposes the switches when one changes.
@@ -52,6 +52,9 @@ data class Look(val appearance: Int, val glass: Boolean, val weather: Boolean)
         onPauseOrDispose { }
     }
     val anywhere = flag("internet")
+    // 1.4: the battery's forecast, from this phone's own history, read again each minute while this shows.
+    var battery by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { while (true) { battery = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { BatteryForecast.line(context) }; kotlinx.coroutines.delay(60_000) } }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(horizontal = 20.dp)) {
         ScreenTitle("Devices", over = "Arnav Island")
@@ -119,7 +122,17 @@ data class Look(val appearance: Int, val glass: Boolean, val weather: Boolean)
                 Hairline()
                 GlassRow(Icons.Rounded.Call, "Calls", "See who’s calling on the island, and decline from the PC") { GlassSwitch(mirrorAllowed && flag("calls"), { on -> if (on && !mirrorAllowed) runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }; set("calls", on) }) }
                 Hairline()
-                GlassRow(Icons.Rounded.BatteryChargingFull, "Your battery", "The island shows it by this phone, and says when it runs low") { GlassSwitch(flag("battery"), { set("battery", it); if (it) Hub.sendBattery(force = true) }) }
+                GlassRow(Icons.Rounded.BatteryChargingFull, "Your battery", (battery?.let { "${it.replaceFirstChar { c -> c.uppercase() }}\n" } ?: "") + "On the island by this phone, and a word when it runs low") { GlassSwitch(flag("battery"), { set("battery", it); if (it) Hub.sendBattery(force = true) }) }
+                Hairline()
+                // 1.4: this phone's hotspot on the PC's island, one tap to join (its name and password typed once: Android doesn't tell apps).
+                val hotspot by Hub.hotspot.collectAsState(); val hotspotOn by Hub.hotspotOn.collectAsState()
+                GlassRow(Icons.Rounded.WifiTethering, "Your hotspot", when {
+                    hotspot.name.isEmpty() -> "Show it on your PC’s island while it’s on, to join in one tap"
+                    hotspotOn && hotspot.enabled -> "“${hotspot.name}” is on: your PC’s island offers to join it"
+                    else -> "“${hotspot.name}” shows on your PC’s island while it’s on, to join in one tap"
+                }, onClick = onHotspot) {
+                    GlassSwitch(hotspot.enabled && hotspot.name.isNotEmpty(), { on -> if (on && hotspot.name.isEmpty()) onHotspot() else Hub.setHotspot(enabled = on) })
+                }
                 Hairline()
                 GlassRow(Icons.Rounded.PhoneAndroid, "Your phone’s details", "Storage, memory, network, sound and more, in the island’s view of this phone") { GlassSwitch(flag("details"), { set("details", it); if (it) Hub.sendDetails(force = true) }) }
                 Hairline()

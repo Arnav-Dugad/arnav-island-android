@@ -33,6 +33,69 @@ class InteropTest {
         fail("the PC never said $prefix"); throw IllegalStateException()
     }
 
+    /**
+     * Revision 5 (island 0.22): the whole island from the phone, against the Windows engine's encoders (share_peer answers
+     * as a made-up PC that remembers what it's set to): its live numbers, every setting, the controls, the command bar
+     * (a yes asked first where it's needed), the audio outputs and its pages.
+     */
+    @Test fun the_whole_island_from_the_phone() {
+        val exe = System.getenv("ARNAV_SHARE_PEER"); assumeTrue("ARNAV_SHARE_PEER not set", exe != null && File(exe).exists())
+        val work = Files.createTempDirectory("arnav-island").toFile(); val phoneDir = File(work, "phone").apply { mkdirs() }
+        val pcPort = 47936
+        val process = ProcessBuilder(exe, pcPort.toString(), File(work, "pc").path).redirectErrorStream(true).start()
+        val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
+        thread(isDaemon = true) { while (true) { val l = reader.readLine() ?: break; println("PC: $l"); lines.put(l) } }
+        val pc = process.outputStream.bufferedWriter(Charsets.UTF_8)
+        fun tell(cmd: String) { pc.write(cmd); pc.newLine(); pc.flush() }
+        val phone = Link(MemoryStore(), "Test Phone", FolderInbox(phoneDir), { events.put(it) }, Link.Options(tcpPort = 0, discovery = false, loopback = true))
+        try {
+            assertTrue(phone.start())
+            val pcId = line("READY ").split(' ')[0]
+            phone.addPeer(pcId, "Interop PC", "127.0.0.1", pcPort, 2, 5)
+            tell("peer ${phone.identity} ${phone.port}"); line("OK peer")
+            phone.pair(pcId); await<LinkEvent.PairCode>(); phone.confirmPair(true); assertTrue(await<LinkEvent.Paired>().ok); line("PAIRED ok")
+
+            // The PC's numbers, live, and what it is.
+            val stats = phone.stats(pcId); assertNotNull(phone.lastRemoteError, stats); stats!!
+            assertTrue(stats.cpu in 0.0..100.0 && stats.gpu in 0.0..100.0); assertEquals(15.7, stats.ramTotalGiB, 1e-9); assertEquals(16, stats.logical); assertEquals(82, stats.battery); assertTrue(stats.charging)
+            assertEquals(40, stats.cpuHistory.size); assertEquals(40, stats.downloadHistory.size); assertTrue(stats.cpuHistory.all { it in 0f..100f })
+            assertEquals("ASUS ROG Zephyrus G14", stats.model); assertEquals("Windows 11 Home 24H2", stats.os); assertTrue(stats.gpuName.startsWith("NVIDIA")); assertTrue(stats.uptime > 3 * 86400)
+
+            // Every setting, then one changed (kept within its range) and a switch turned off.
+            val settings = phone.islandSettings(pcId)!!
+            assertEquals(10, settings.sections.size); assertEquals("Privacy & productivity", settings.sections[8])
+            val delay = settings.items.first { it.key == "hoverDelay" }; assertEquals(1, delay.control); assertEquals(100, delay.lo); assertEquals(700, delay.hi); assertEquals(" ms", delay.unit); assertEquals(180, delay.value)
+            val accent = settings.items.first { it.key == "accent" }; assertEquals(4, accent.control); assertEquals(5, accent.colours.size); assertEquals("Lilac", accent.options[2])
+            assertEquals(5, settings.items.first { it.control == 5 }.control)
+            assertEquals(700, phone.setIslandSetting(pcId, "hoverDelay", 999)); line("SETTING hoverDelay 700")
+            assertEquals(0, phone.setIslandSetting(pcId, "hoverOpen", 0)); line("SETTING hoverOpen 0")
+            assertEquals(0, phone.islandSettings(pcId)!!.items.first { it.key == "hoverOpen" }.value)
+            assertNull(phone.setIslandSetting(pcId, "noSuchSetting", 1))
+
+            // The controls: Wi-Fi off, the brightness, a 10-minute focus.
+            val controls = phone.controls(pcId)!!; assertEquals(1, controls.wifi); assertEquals(64, controls.brightness); assertTrue(controls.micAvailable)
+            assertEquals(0, phone.setControl(pcId, IslandWire.WIFI, 0)!!.wifi); line("CONTROL 1 0")
+            assertEquals(35, phone.setControl(pcId, IslandWire.BRIGHTNESS, 35)!!.brightness)
+            val focus = phone.setControl(pcId, IslandWire.FOCUS, 10)!!; assertTrue(focus.focusRunning); assertEquals(600.0, focus.focusDuration, 1e-9); assertEquals(0, focus.focusMode)
+            assertTrue(phone.setControl(pcId, IslandWire.AIRPLANE, 1)!!.airplane)
+
+            // The command bar: found as typed, run; one that needs a yes asks first.
+            val found = phone.queryCommands(pcId, "spot")!!; assertTrue(found.final); assertEquals("Open Spotify", found.rows.single().title); assertEquals(12, found.rows.single().kind)
+            assertEquals(CommandOutcome(0, "Opened Spotify"), phone.runCommand(pcId, "spot", 0, "Open Spotify", false)); line("COMMAND Open Spotify")
+            val restart = phone.queryCommands(pcId, "restart")!!.rows.single(); assertTrue(restart.confirm)
+            assertEquals(1, phone.runCommand(pcId, "restart", 0, restart.title, false)!!.outcome)
+            assertEquals(0, phone.runCommand(pcId, "restart", 0, restart.title, true)!!.outcome); line("COMMAND Restart")
+            assertEquals(3, phone.runCommand(pcId, "restart", 0, "Something else", true)!!.outcome)
+            assertEquals("85.12 EUR", phone.queryCommands(pcId, "100 usd to eur")!!.rows.first().answer)
+
+            // The audio outputs, one chosen; and a page opened on the PC.
+            val outputs = phone.outputs(pcId)!!; assertEquals(2, outputs.size); assertTrue(outputs[0].current)
+            assertEquals(Proto.OK, phone.selectOutput(pcId, "buds")); line("OUTPUT buds"); assertTrue(phone.outputs(pcId)!!.first { it.id == "buds" }.current)
+            assertTrue(phone.openIslandPage(pcId, 2)); line("ISLAND page 2")
+            assertTrue(phone.closeIsland(pcId)); line("ISLAND close")
+        } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
+    }
+
     @Test fun phone_and_windows_island_speak_the_same_protocol() {
         val exe = System.getenv("ARNAV_SHARE_PEER"); assumeTrue("ARNAV_SHARE_PEER not set", exe != null && File(exe).exists())
         val work = Files.createTempDirectory("arnav-interop").toFile(); val phoneDir = File(work, "phone").apply { mkdirs() }
@@ -117,6 +180,9 @@ class InteropTest {
             assertEquals("Messages|Mum|Dinner?|0|0|k1|Reply*|Mark read", line("PHONENOTICE "))
             assertTrue(phone.notice(pcId, Link.detailsFrame(listOf("Battery" to "81%", "Storage" to "40 GB free")))); assertEquals("Battery\t81%", line("DETAILS "))
             assertTrue(phone.notice(pcId, Link.goneFrame("k1"))); assertEquals("k1", line("GONE "))
+            // Revision 5: the hotspot, on (its name and password) and off.
+            assertTrue(phone.notice(pcId, Link.hotspotFrame(true, "Pixel hotspot", "correct horse"))); assertEquals("on Pixel hotspot 13", line("HOTSPOT "))
+            assertTrue(phone.notice(pcId, Link.hotspotFrame(false, "", ""))); assertEquals("off  0", line("HOTSPOT "))
             // The PC runs an action with a reply, sets the clipboard, asks for a photo.
             val acted = LinkedBlockingQueue<String>(); phone.onAction = { key, index, reply -> acted.put("$key|$index|$reply"); 0 }
             tell("action ${phone.identity} k1 0 See you at 8"); assertEquals("k1|0|See you at 8", acted.poll(20, TimeUnit.SECONDS))
@@ -165,8 +231,8 @@ class InteropTest {
             // Each sees the other through the relay.
             val seen = System.currentTimeMillis() + 40_000
             while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
-            val view = phone.peers().first { it.id == pcId }; assertTrue(view.online && view.internet); assertEquals(4, view.revision)
-            line("PRESENCE ${phone.identity} 1 1 4 1", 40)
+            val view = phone.peers().first { it.id == pcId }; assertTrue(view.online && view.internet); assertEquals(5, view.revision)
+            line("PRESENCE ${phone.identity} 1 1 5 1", 40)
 
             // Phone to PC.
             val photo = ByteArray(700_000) { (it * 13 + 5).toByte() }
@@ -257,7 +323,7 @@ class InteropTest {
             val seen = System.currentTimeMillis() + 40_000
             while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
             assertTrue("the phone sees the PC through the broker they share", phone.peers().any { it.id == pcId && it.online && it.internet })
-            line("PRESENCE ${phone.identity} 1 1 4 1", 40)
+            line("PRESENCE ${phone.identity} 1 1 5 1", 40)
             if (direct) {
                 val until = System.currentTimeMillis() + 20_000
                 while (System.currentTimeMillis() < until && phone.peers().none { it.id == pcId && it.path == 2 }) Thread.sleep(100)

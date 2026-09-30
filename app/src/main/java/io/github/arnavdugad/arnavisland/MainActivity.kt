@@ -206,7 +206,10 @@ private fun newPhoto(context: Context): Uri {
     var updatesOpen by remember { mutableStateOf(false) }
     var trackpadOpen by remember { mutableStateOf(false) }
     var islandOpen by remember { mutableStateOf(false) }
+    var hotspotOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val tabs = listOf(TabItem("Remote", Icons.Rounded.Laptop), TabItem("Island", Icons.Rounded.Dashboard), TabItem("Send", Icons.AutoMirrored.Rounded.Send), TabItem("Shelf", Icons.Rounded.Inventory2), TabItem("Devices", Icons.Rounded.Devices))
+    val pager = rememberPagerState { tabs.size }
     LaunchedEffect(pairCode) { if (pairCode != null) pairing = true }
     LaunchedEffect(link) { if (link != null) { Hub.pairWithCode(link.code, link.key); pairStart = PAIR_FINDING; pairing = true; onLinkDone() } }
     LaunchedEffect(status?.available) { if (status?.available != true) islandOpen = false }
@@ -229,7 +232,7 @@ private fun newPhoto(context: Context): Uri {
             "pair" -> { pairStart = PAIR_NEARBY; pairing = true }; "pair_code" -> { pairStart = PAIR_TYPE; pairing = true }; "pair_scan" -> { pairStart = PAIR_SCAN; pairing = true }
             "updates" -> updatesOpen = true; "music_play" -> Hub.music.value?.let { Hub.answerMusic(it, true, context) }
             "camera" -> takePhoto(); "trackpad" -> if (pc != null) trackpadOpen = true else pairing = true
-            "findpc" -> scope.launch { Hub.ringPc() }
+            "findpc" -> scope.launch { Hub.ringPc() }; "island" -> scope.launch { pager.animateScrollToPage(PAGE_ISLAND) }
             "send_photos" -> if (pc != null) pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) else pairing = true
         }
     }
@@ -243,8 +246,6 @@ private fun newPhoto(context: Context): Uri {
             val ambient = rememberLayerBackdrop(); val screen = rememberLayerBackdrop()
             val floating = remember(ambient, screen) { GlassBackdrops(ambient, screen) }
             val content = remember(ambient) { GlassBackdrops(ambient, ambient) }
-            val tabs = listOf(TabItem("Remote", Icons.Rounded.Laptop), TabItem("Send", Icons.AutoMirrored.Rounded.Send), TabItem("Shelf", Icons.Rounded.Inventory2), TabItem("Devices", Icons.Rounded.Devices))
-            val pager = rememberPagerState { tabs.size }
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val density = LocalDensity.current
                 val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding(); val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -256,11 +257,12 @@ private fun newPhoto(context: Context): Uri {
                         HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
                             when (page) {
                                 0 -> RemoteScreen(pc, status, statusError, cover, lyrics, { pairing = true }, { linkOpen = true }, { trackpadOpen = true }, padding)
-                                1 -> SendScreen(pc, peers, transfers, moments, { takePhoto() }, { pairing = true }, padding)
-                                2 -> ShelfScreen(pc, transfers, pager.currentPage == 2, { pairing = true }, padding)
+                                PAGE_ISLAND -> IslandScreen(pc, pager.currentPage == PAGE_ISLAND, { pairing = true }, padding)
+                                PAGE_SEND -> SendScreen(pc, peers, transfers, moments, { takePhoto() }, { pairing = true }, padding)
+                                PAGE_SHELF -> ShelfScreen(pc, transfers, pager.currentPage == PAGE_SHELF, { pairing = true }, padding)
                                 else -> DevicesScreen(peers, pc, running, failure, internet, look, { next ->
                                     look = next; Hub.prefs.edit().putInt("appearance", next.appearance).putBoolean("glass", next.glass).putBoolean("weatherGlass", next.weather).apply()
-                                }, { pairStart = PAIR_NEARBY; pairing = true }, { pairStart = PAIR_SCAN; pairing = true }, { updatesOpen = true }, padding)
+                                }, { pairStart = PAIR_NEARBY; pairing = true }, { pairStart = PAIR_SCAN; pairing = true }, { updatesOpen = true }, { hotspotOpen = true }, padding)
                             }
                         }
                     }
@@ -279,7 +281,7 @@ private fun newPhoto(context: Context): Uri {
                         BackHandler { islandOpen = false }
                     }
                     MiniIsland(status, cover, pc?.name, pc?.online == true, banner, transfers.values.maxByOrNull { it.id },
-                        { if (islandOpen) islandOpen = false else if (status?.available == true && banner == null) islandOpen = true else scope.launch { pager.animateScrollToPage(if (transfers.isNotEmpty()) 1 else 0) } },
+                        { if (islandOpen) islandOpen = false else if (status?.available == true && banner == null) islandOpen = true else scope.launch { pager.animateScrollToPage(if (transfers.isNotEmpty()) PAGE_SEND else 0) } },
                         Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp, start = 16.dp, end = 16.dp), expanded = islandOpen, internet = pc?.internet == true, quality = pc?.let { quality(it) })
                     GlassTabBar(tabs, pager.currentPage + pager.currentPageOffsetFraction, { scope.launch { pager.animateScrollToPage(it) } },
                         Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 22.dp, vertical = 14.dp).widthIn(max = 460.dp).fillMaxWidth())
@@ -292,6 +294,8 @@ private fun newPhoto(context: Context): Uri {
                     MusicSheet(music, transfers)
                     LinkSheet(linkOpen, pc) { linkOpen = false }
                     TrackpadSheet(trackpadOpen, pc) { trackpadOpen = false }
+                    IslandSheets()
+                    HotspotSheet(hotspotOpen) { hotspotOpen = false }
                     UpdatesSheet(updatesOpen) { updatesOpen = false }
                     ShareSheet(share, peers, pc, onShareDone)
                     WhatsNewSheet(whatsNew) { whatsNew = null }
@@ -301,6 +305,9 @@ private fun newPhoto(context: Context): Uri {
         }
     }
 }
+
+/** The pager's pages (Remote is 0, Devices last). */
+private const val PAGE_ISLAND = 1; private const val PAGE_SEND = 2; private const val PAGE_SHELF = 3
 
 /** The top fade's colour: the deep ambient colour, darkened for the dark theme. */
 private fun Color.compositeOverBlack(dark: Boolean): Color = if (dark) androidx.compose.ui.graphics.lerp(this, Color.Black, .55f).copy(alpha = alpha) else this

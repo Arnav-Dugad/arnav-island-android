@@ -46,6 +46,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -508,6 +512,63 @@ data class ShareRequest(val uris: List<Uri>, val text: String?)
         }
         Spacer(Modifier.height(16.dp))
         GlassButton({ go() }, Modifier.fillMaxWidth(), prominent = true, enabled = text.isNotBlank()) { Icon(Icons.Rounded.Language, null); Spacer(Modifier.width(8.dp)); Text("Open", style = Type.bodyStrong) }
+    }
+}
+
+/**
+ * 1.4: this phone's hotspot, for the PC's island: its name and password, typed once (Android doesn't tell apps). They go
+ * only to your paired PCs, sealed end to end, and only while the hotspot is on.
+ */
+@Composable fun HotspotSheet(visible: Boolean, onDismiss: () -> Unit) {
+    val t = LocalTokens.current; val context = LocalContext.current
+    val setup by Hub.hotspot.collectAsState()
+    var name by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }; var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) {
+        if (!visible) return@LaunchedEffect
+        name = setup.name.ifEmpty { runCatching { android.provider.Settings.Global.getString(context.contentResolver, "device_name") }.getOrNull() ?: android.os.Build.MODEL }
+        password = setup.password; shown = false
+    }
+    val nameOk = name.isNotBlank() && name.toByteArray().size <= 32
+    val passwordOk = password.isEmpty() || password.length in 8..63 || (password.length == 64 && password.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' })
+    GlassSheet(visible, onDismiss) {
+        Box(Modifier.size(58.dp).clip(CircleShape).background(t.accent.copy(alpha = .16f)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.WifiTethering, null, tint = t.accent, modifier = Modifier.size(28.dp)) }
+        Spacer(Modifier.height(12.dp))
+        Text("Your hotspot", style = Type.title, color = t.text)
+        Spacer(Modifier.height(6.dp))
+        Text("While it’s on, your PC’s island offers to join it in one tap. Android doesn’t tell apps its name and password, so type them once, as your hotspot settings show them.",
+            style = Type.body, color = t.muted, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(18.dp))
+        Box(Modifier.fillMaxWidth().glass(GlassShapes.capsule, GlassLevel.Control).padding(horizontal = 18.dp, vertical = 15.dp)) {
+            if (name.isEmpty()) Text("Hotspot name", style = Type.body, color = t.faint)
+            BasicTextField(name, { name = it.take(32) }, singleLine = true, textStyle = Type.body.copy(color = t.text), cursorBrush = SolidColor(t.accent),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Hotspot name" })
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth().glass(GlassShapes.capsule, GlassLevel.Control).padding(start = 18.dp, end = 6.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f).padding(vertical = 11.dp)) {
+                if (password.isEmpty()) Text("Password (none for an open hotspot)", style = Type.body, color = t.faint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                BasicTextField(password, { password = it.take(64) }, singleLine = true, textStyle = Type.body.copy(color = t.text), cursorBrush = SolidColor(t.accent),
+                    visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Hotspot password" })
+            }
+            GlassIconButton(if (shown) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility, if (shown) "Hide the password" else "Show the password", { shown = !shown }, size = 38.dp, iconSize = 18.dp)
+        }
+        if (!passwordOk) { Spacer(Modifier.height(8.dp)); Text("A hotspot password has 8 to 63 characters", style = Type.caption, color = t.danger) }
+        Spacer(Modifier.height(10.dp))
+        Text("Only your paired PCs get them, sealed end to end, and only while the hotspot is on.", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(16.dp))
+        GlassButton({ Hub.setHotspot(name.trim(), password, true); Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Your hotspot is ready for your PC", "Its island offers to join while it’s on")); onDismiss() },
+            Modifier.fillMaxWidth(), prominent = true, enabled = nameOk && passwordOk) { Icon(Icons.Rounded.Check, null); Spacer(Modifier.width(8.dp)); Text("Save", style = Type.bodyStrong) }
+        Spacer(Modifier.height(8.dp))
+        GlassButton({
+            // The hotspot's own settings page where Android has one; else the network settings.
+            val tether = android.content.Intent().setClassName("com.android.settings", "com.android.settings.TetherSettings").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(tether) }.onFailure { runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+        }, Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Settings, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Open hotspot settings", style = Type.caption) }
+        if (setup.name.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            GlassButton({ Hub.setHotspot("", "", false); onDismiss() }, Modifier.fillMaxWidth()) { Text("Forget it", style = Type.caption, color = t.danger) }
+        }
     }
 }
 

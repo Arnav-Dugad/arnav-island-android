@@ -28,6 +28,10 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 - **Straight there (1.3):** on different networks they try a direct path first (IPv6, or UDP hole punching through your router), and fall back to the relay. The remote then answers in milliseconds instead of about a third of a second. A ring round your PC shows how it's reached: green directly, amber through the relay, red when it's slow.
 - To pair from anywhere, the island shows a QR code (**Shelf › Nearby › Pair with a code**). Scan it with **Devices › Scan the QR code**, then choose Pair on the PC. The code names the PC's key, so the phone pairs with that PC only. You can also type the code, and check both show the same six digits.
 
+**The whole island (1.4)**
+- **The Island tab** controls everything on your PC's island: its controls, the focus clock, the command bar, power, where the sound goes, its pages and every setting.
+- **Your PC's numbers, live:** processor, graphics, memory, network, disk and battery, with graphs, and the processor and graphics card by name.
+
 **The remote**
 - See what plays on your PC: its cover, title, artist and app.
 - Scrub through the song (with a soft click at each lyric line), play and pause, skip.
@@ -56,12 +60,14 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 - Your phone's notifications, with each app's icon. **Reply** from the PC's keyboard, or mark as read. The card goes when the notification does.
 - **Calls:** see who's calling, and decline from the PC.
 - **Your phone's details:** battery, charging, temperature, storage, memory, network, sound mode, Android version, uptime, and what plays on the phone.
+- **Your battery's forecast** ("lasts until 11 pm"), from this phone's own history.
+- **Your hotspot:** while it's on, the island offers to join it in one tap.
 - **Universal clipboard:** copy on one, paste on the other (with the island's *Universal clipboard* on).
 - **Find my phone:** the island rings this phone loudly, even on silent. The ring screen pulses with the vibration and warms as you pick the phone up.
 
 **On this phone**
 - **Your PC's music player** on the lock screen and in quick settings, with the cover, the controls and a seek bar.
-- **Widgets:** the PC's music with its controls, and quick actions (lock, ring, send, camera, paste).
+- **Widgets:** the PC's music with its controls, and quick actions (lock, ring, send, camera, paste), in the colours of what plays.
 - **Shortcuts** (touch and hold the app icon): Photo to Shelf, Trackpad, Find my PC, Paste on PC.
 - **Music handoff:** a song continues here from where the PC was, and one tap sends it back.
 

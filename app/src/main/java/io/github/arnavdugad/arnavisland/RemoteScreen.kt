@@ -61,7 +61,7 @@ import java.nio.ByteOrder
         // What the PC reports: its battery, how busy it is, and the weather where it is.
         if (status != null) Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (status.batteryPresent && status.battery >= 0) GlassChip("${status.battery}%", icon = if (status.charging) Icons.Rounded.BatteryChargingFull else Icons.Rounded.BatteryFull, iconTint = if (status.charging) t.good else if (status.battery <= 20) t.danger else Color.Unspecified)
-            if (status.cpu in 0..100) GlassChip("CPU ${status.cpu}%", icon = Icons.Rounded.Memory)
+            if (status.cpu in 0..100) GlassChip("CPU ${status.cpu}%", icon = Icons.Rounded.Memory, onClick = { Hub.requests.tryEmit("island") })
             if (status.weather.isNotBlank()) GlassChip(status.weather, icon = when (skyOf(status.weather)) {
                 Sky.Storm -> Icons.Rounded.Thunderstorm; Sky.Rain, Sky.Drizzle -> Icons.Rounded.Umbrella; Sky.Snow -> Icons.Rounded.AcUnit
                 else -> if (status.weather.contains("Clear", true)) Icons.Rounded.WbSunny else Icons.Rounded.Cloud })
