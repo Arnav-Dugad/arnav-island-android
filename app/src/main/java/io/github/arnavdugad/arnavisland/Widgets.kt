@@ -24,6 +24,7 @@ import io.github.arnavdugad.arnavisland.link.Proto
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 /** The now-playing widget: what plays on your PC with its controls, and the quick actions beneath. */
 class PcWidget : AppWidgetProvider() {
@@ -36,6 +37,80 @@ class ActionsWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) { Hub.init(context); PcWidgets.refresh(context, force = true) }
     override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) { Hub.init(context); PcWidgets.refresh(context, force = true) }
     override fun onEnabled(context: Context) { Hub.init(context); LinkService.start(context) }
+}
+
+/** 1.5: your PC's numbers: processor, graphics and memory in rings, kept live while the screen is on. */
+class StatsWidget : AppWidgetProvider() {
+    override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) { Hub.init(context); StatsWidgets.refresh(context, force = true) }
+    override fun onEnabled(context: Context) { Hub.init(context); LinkService.start(context) }
+}
+/** 1.5: your PC's focus clock, counting down here too (on the lock screen where the phone allows widgets there). */
+class FocusWidget : AppWidgetProvider() {
+    override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) { Hub.init(context); FocusWidgets.refresh(context) }
+    override fun onEnabled(context: Context) { Hub.init(context); LinkService.start(context) }
+}
+
+/** 1.5: the widgets' style: the glass (in the cover's colours), or Material You (the wallpaper's palette, Android 12 and later). */
+object WidgetStyle {
+    fun you(context: Context) = android.os.Build.VERSION.SDK_INT >= 31 && Hub.prefs.getBoolean("widgetsYou", false)
+    fun set(context: Context, you: Boolean) { Hub.prefs.edit().putBoolean("widgetsYou", you).apply(); PcWidgets.refresh(context, force = true); StatsWidgets.refresh(context, force = true); FocusWidgets.refresh(context) }
+    fun open(context: Context, code: Int, what: String? = "island") = PendingIntent.getActivity(context, code,
+        Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP).apply { what?.let { putExtra("open", it) } },
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+}
+
+object StatsWidgets {
+    private var drawn = ""
+    fun ids(context: Context): IntArray = runCatching { AppWidgetManager.getInstance(context).getAppWidgetIds(ComponentName(context, StatsWidget::class.java)) }.getOrDefault(IntArray(0))
+    /** Draws the rings from the PC's numbers as the app last read them. */
+    @Synchronized fun refresh(context: Context, force: Boolean = false) {
+        val app = context.applicationContext; val ids = ids(app); if (ids.isEmpty()) return
+        val pc = Hub.pc(); val s = Hub.pcStats.value.takeIf { pc != null && pc.online }
+        fun pct(v: Double) = if (v < 0) -1 else v.roundToInt().coerceIn(0, 100)
+        val you = WidgetStyle.you(app)
+        val look = listOf(pc?.id, pc?.name, pc?.online, s?.let { pct(it.cpu) }, s?.let { pct(it.gpu) }, s?.let { pct(it.ramPercent) }, s?.download?.let { (it / 1e5).roundToInt() }, you).joinToString("|")
+        if (!force && look == drawn) return
+        drawn = look
+        val v = RemoteViews(app.packageName, if (you) R.layout.widget_stats_you else R.layout.widget_stats)
+        v.setTextViewText(R.id.w_where, when { pc == null -> "PAIR WITH YOUR PC"; !pc.online -> "${pc.name.uppercase()} IS AWAY"; else -> pc.name.uppercase() })
+        v.setTextViewText(R.id.w_net, if (s != null) "↓ ${rateText(s.download)}" else "")
+        for ((ring, text, value) in listOf(Triple(R.id.w_cpu_ring, R.id.w_cpu, s?.cpu ?: -1.0), Triple(R.id.w_gpu_ring, R.id.w_gpu, s?.gpu ?: -1.0), Triple(R.id.w_ram_ring, R.id.w_ram, s?.ramPercent ?: -1.0))) {
+            v.setProgressBar(ring, 100, pct(value).coerceAtLeast(0), false); v.setTextViewText(text, if (value < 0) "—" else "${pct(value)}%")
+        }
+        v.setOnClickPendingIntent(R.id.w_open, WidgetStyle.open(app, 94))
+        runCatching { AppWidgetManager.getInstance(app).updateAppWidget(ids, v) }
+    }
+}
+
+object FocusWidgets {
+    fun ids(context: Context): IntArray = runCatching { AppWidgetManager.getInstance(context).getAppWidgetIds(ComponentName(context, FocusWidget::class.java)) }.getOrDefault(IntArray(0))
+    /** The clock as the PC last told it: a Chronometer counts on its own, so the widget needn't be redrawn each second. */
+    fun refresh(context: Context) {
+        val app = context.applicationContext; val ids = ids(app); if (ids.isEmpty()) return
+        val f = Hub.focus.value; val you = WidgetStyle.you(app)
+        val v = RemoteViews(app.packageName, if (you) R.layout.widget_focus_you else R.layout.widget_focus)
+        val running = f != null && f.running && (f.mode == 2 || FocusLive.end(f) > System.currentTimeMillis())
+        v.setTextViewText(R.id.w_where, if (f == null) "FOCUS ON YOUR PC" else "${FocusLive.kind(f).uppercase()}  ·  ${f.pcName.uppercase()}")
+        if (running) {
+            // The Chronometer's base is on the elapsed-time clock.
+            val base = android.os.SystemClock.elapsedRealtime() + (FocusLive.end(f!!) - System.currentTimeMillis())
+            v.setViewVisibility(R.id.w_clock, View.VISIBLE); v.setViewVisibility(R.id.w_still, View.GONE)
+            v.setChronometer(R.id.w_clock, base, null, true); v.setChronometerCountDown(R.id.w_clock, f.mode != 2)
+            v.setTextViewText(R.id.w_state, if (f.mode == 2) "Counting up" else "Ends at ${BatteryForecast.time(app, FocusLive.end(f))}")
+        } else {
+            v.setChronometer(R.id.w_clock, android.os.SystemClock.elapsedRealtime(), null, false)
+            v.setViewVisibility(R.id.w_clock, View.GONE); v.setViewVisibility(R.id.w_still, View.VISIBLE)
+            val shown = f?.shown ?: 1500.0; val n = shown.toInt().coerceAtLeast(0)
+            v.setTextViewText(R.id.w_still, if (n >= 3600) "%d:%02d:%02d".format(n / 3600, n / 60 % 60, n % 60) else "%02d:%02d".format(n / 60, n % 60))
+            v.setTextViewText(R.id.w_state, when { f == null -> "Start one on your PC or here"; f.finished -> "Done. A moment well spent"; f.shown > .5 && f.shown < f.duration - .5 || f.mode == 2 && f.shown > .5 -> "Paused"; else -> "Ready" })
+        }
+        v.setImageViewResource(R.id.w_toggle, if (running) R.drawable.ic_w_pause_dark else R.drawable.ic_w_play_dark)
+        v.setContentDescription(R.id.w_toggle, if (running) "Pause" else if (f != null && !f.finished && f.shown > .5) "Resume" else "Start")
+        v.setOnClickPendingIntent(R.id.w_toggle, PendingIntent.getBroadcast(app, 95, Intent(app, WidgetActions::class.java).setAction("focus_toggle"), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+        v.setOnClickPendingIntent(R.id.w_start, PendingIntent.getBroadcast(app, 96, Intent(app, WidgetActions::class.java).setAction("focus_25"), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+        v.setOnClickPendingIntent(R.id.w_open, WidgetStyle.open(app, 97))
+        runCatching { AppWidgetManager.getInstance(app).updateAppWidget(ids, v) }
+    }
 }
 
 object PcWidgets {
@@ -54,7 +129,8 @@ object PcWidgets {
         if (pcIds.isEmpty() && actionIds.isEmpty()) return
         val pc = Hub.pc(); val s = if (pc != null) Hub.status.value else null
         val hash = s?.coverHash?.contentHashCode() ?: 0
-        val look = listOf(pc?.id, pc?.name, pc?.online, s?.available, s?.title, s?.artist, s?.playing, hash).joinToString("|")
+        val you = WidgetStyle.you(app)
+        val look = listOf(pc?.id, pc?.name, pc?.online, s?.available, s?.title, s?.artist, s?.playing, hash, you).joinToString("|")
         if (!force && look == drawn) return
         drawn = look
         if (hash != coverKey) {
@@ -63,9 +139,10 @@ object PcWidgets {
         }
         // 1.4: like the app, the widgets take the colours of what plays on the PC (each drawn at its own size, as a widget
         // can't round or tint a picture itself on every Android).
-        val tint = colours.takeIf { s?.available == true && pc?.online == true }
-        for (id in pcIds) runCatching { m.updateAppWidget(id, nowPlaying(app, pc, s).also { backdrop(app, m, id, it, tint, 110) }) }
-        for (id in actionIds) runCatching { m.updateAppWidget(id, actions(app).also { backdrop(app, m, id, it, tint, 50) }) }
+        // 1.5: Material You takes the wallpaper's palette instead (its layouts say so; nothing to draw).
+        val tint = colours.takeIf { s?.available == true && pc?.online == true && !you }
+        for (id in pcIds) runCatching { m.updateAppWidget(id, nowPlaying(app, pc, s, you).also { if (!you) backdrop(app, m, id, it, tint, 110) }) }
+        for (id in actionIds) runCatching { m.updateAppWidget(id, actions(app, you).also { if (!you) backdrop(app, m, id, it, tint, 50) }) }
     }
 
     /** The widget's glass: the app's own when nothing plays, else deep in the cover's colour, lit by its two brightest. */
@@ -100,7 +177,7 @@ object PcWidgets {
         if (tallDp > 60) v.setTextColor(R.id.w_where, alpha(tint.vivid, .85f))
     }
 
-    private fun nowPlaying(context: Context, pc: PeerView?, s: PcStatus?): RemoteViews = RemoteViews(context.packageName, R.layout.widget_pc).apply {
+    private fun nowPlaying(context: Context, pc: PeerView?, s: PcStatus?, you: Boolean): RemoteViews = RemoteViews(context.packageName, if (you) R.layout.widget_pc_you else R.layout.widget_pc).apply {
         val playing = s?.available == true
         setTextViewText(R.id.w_title, when { pc == null -> "Pair with your PC"; !pc.online -> "${pc.name} is away"; playing -> s!!.title; else -> "Nothing playing" })
         setTextViewText(R.id.w_artist, when { pc == null -> "Open Arnav Island"; playing -> s!!.artist.ifBlank { s.app }; else -> "Play something on ${pc.name}" })
@@ -115,7 +192,7 @@ object PcWidgets {
         setOnClickPendingIntent(R.id.w_prev, act(context, "prev")); setOnClickPendingIntent(R.id.w_play, act(context, "toggle")); setOnClickPendingIntent(R.id.w_next, act(context, "next"))
         quick(context, this)
     }
-    private fun actions(context: Context): RemoteViews = RemoteViews(context.packageName, R.layout.widget_actions).apply { quick(context, this) }
+    private fun actions(context: Context, you: Boolean): RemoteViews = RemoteViews(context.packageName, if (you) R.layout.widget_actions_you else R.layout.widget_actions).apply { quick(context, this) }
     private fun quick(context: Context, v: RemoteViews) {
         v.setOnClickPendingIntent(R.id.w_lock, act(context, "lock"))
         v.setOnClickPendingIntent(R.id.w_ring, act(context, "ring"))
@@ -157,6 +234,12 @@ class WidgetActions : BroadcastReceiver() {
                     "toggle" -> Hub.command(Proto.CMD_MEDIA, byteArrayOf(1), quiet = true)
                     "lock" -> Hub.command(Proto.CMD_LOCK, quiet = true)
                     "ring" -> Hub.command(Proto.CMD_RING_PC, quiet = true)
+                    // 1.5: the focus clock from its widget and notification (island 0.22 or later).
+                    "focus_toggle", "focus_25" -> {
+                        val ok = if (Hub.islandReady()) { if (what == "focus_toggle") Hub.setControlNow(io.github.arnavdugad.arnavisland.link.IslandWire.FOCUS_TOGGLE, 0) else Hub.setControlNow(io.github.arnavdugad.arnavisland.link.IslandWire.FOCUS, 25) } else false
+                        if (!ok) withContext(kotlinx.coroutines.Dispatchers.Main) { Toast.makeText(context.applicationContext, if (pc == null) "Pair with your PC first" else "${pc.name} didn’t answer", Toast.LENGTH_SHORT).show() }
+                        return@launch
+                    }
                     else -> return@launch
                 }
                 val said = when {

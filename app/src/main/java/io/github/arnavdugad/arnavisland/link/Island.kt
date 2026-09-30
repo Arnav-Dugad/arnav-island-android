@@ -12,7 +12,19 @@ data class PcStats(
     val uptime: Long, val logical: Int, val battery: Int, val charging: Boolean, val batteryMinutes: Double,
     val cpuHistory: List<Float>, val gpuHistory: List<Float>, val downloadHistory: List<Float>,
     val name: String, val model: String, val os: String, val cpuName: String, val gpuName: String,
+    /** Revision 6: each core's load (percent, -1 unknown); empty from older islands. */
+    val cores: List<Float> = emptyList(),
 )
+/** Revision 6: the PC's battery in full. Capacities in mWh (0 unknown); rate in mW (negative draining); health 0..1 (-1 unknown). */
+data class PcBattery(
+    val percent: Int, val present: Boolean, val online: Boolean, val charging: Boolean, val saver: Boolean, val critical: Boolean,
+    val minutesLeft: Int, val minutesToFull: Int, val designMwh: Long, val fullMwh: Long, val remainingMwh: Long, val rateMw: Long, val voltageMv: Long,
+    val cycles: Long, val temperatureDeciK: Int, val health: Double, val healthBefore: Double, val chemistry: String, val manufacturer: String, val name: String,
+    /** The last day: seconds since 1970, percent, charging. */
+    val day: List<Triple<Long, Int, Boolean>>,
+)
+/** Revision 6: what a PC tells this phone about its focus clock. mode 0 focus, 1 break, 2 stopwatch. */
+data class FocusState(val mode: Int, val running: Boolean, val finished: Boolean, val shown: Double, val duration: Double, val pcName: String, val at: Long)
 /** One of the island's settings, as its Settings window has it. [control]: 0 switch, 1 slider, 2 choice, 3 stepper, 4 swatch, 5 button. */
 data class IslandSetting(
     val section: Int, val control: Int, val key: String, val title: String, val detail: String,
@@ -40,7 +52,7 @@ object IslandWire {
     const val MUTE = 7; const val MIC = 8; const val LOCK = 9; const val SLEEP = 10; const val RESTART = 11; const val SHUT_DOWN = 12; const val EMPTY_BIN = 13
     const val FOCUS = 15; const val BREAK = 16; const val FOCUS_TOGGLE = 17; const val FOCUS_RESET = 18; const val STOPWATCH = 19
     /** The island's pages, in its order. */
-    val PAGES = listOf("Home", "Media", "Stats", "Focus", "Settings", "Shelf", "Audio", "Controls")
+    val PAGES = listOf("Home", "Media", "Stats", "Focus", "Settings", "Shelf", "Audio", "Controls", "Phone")
 
     private fun Reader.i32(): Int? = u32()?.toInt()
     private fun Reader.i8(): Int? = u8()?.toByte()?.toInt()
@@ -53,7 +65,24 @@ object IslandWire {
         fun pct(b: Int) = if (b == 255) -1f else b.toFloat()
         val cpu = List(n) { pct(r.u8() ?: return null) }; val gpu = List(n) { pct(r.u8() ?: return null) }; val down = List(n) { (r.u32() ?: return null).toFloat() }
         val texts = List(5) { r.string(4096) ?: return null }
-        return PcStats(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], uptime, logical, battery, charging, minutes, cpu, gpu, down, texts[0], texts[1], texts[2], texts[3], texts[4])
+        // Revision 6: the cores, when the island sends them.
+        val cores = r.u8()?.let { c -> List(c) { pct(r.u8() ?: return@let emptyList()) } } ?: emptyList()
+        return PcStats(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], uptime, logical, battery, charging, minutes, cpu, gpu, down, texts[0], texts[1], texts[2], texts[3], texts[4], cores)
+    }
+    fun battery(p: ByteArray): PcBattery? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        val percent = r.i8() ?: return null; val flags = r.u8() ?: return null; val left = r.i32() ?: return null; val toFull = r.i32() ?: return null
+        val caps = LongArray(5) { r.u64() ?: return null }; val cycles = r.u32() ?: return null; val temp = r.i32() ?: return null
+        val health = r.f64() ?: return null; val before = r.f64() ?: return null; val texts = List(3) { r.string(1024) ?: return null }
+        val n = r.u16() ?: return null
+        val day = List(n) { Triple(r.u64() ?: return null, r.u8() ?: return null, (r.u8() ?: return null) != 0) }
+        return PcBattery(percent, flags and 1 != 0, flags and 2 != 0, flags and 4 != 0, flags and 8 != 0, flags and 16 != 0, left, toFull,
+            caps[0], caps[1], caps[2], caps[3], caps[4], cycles, temp, health, before, texts[0], texts[1], texts[2], day)
+    }
+    /** A PC's focus clock ([QUERY_FOCUS]'s payload). */
+    fun focus(p: ByteArray, at: Long = System.currentTimeMillis()): FocusState? {
+        val r = Reader(p); val mode = r.u8() ?: return null; val running = (r.u8() ?: return null) != 0; val finished = (r.u8() ?: return null) != 0
+        return FocusState(mode, running, finished, r.f64() ?: return null, r.f64() ?: return null, r.string(512) ?: return null, at)
     }
     fun settings(p: ByteArray): IslandSettings? {
         val r = Reader(p); if (r.u8() != 1) return null

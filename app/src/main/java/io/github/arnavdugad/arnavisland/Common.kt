@@ -1,5 +1,9 @@
 package io.github.arnavdugad.arnavisland
 
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -125,6 +129,27 @@ fun quality(p: PeerView): Quality {
     }
 }
 @Composable fun Hairline() { Box(Modifier.fillMaxWidth().padding(start = 65.dp).height(.6.dp).background(LocalTokens.current.hairline)) }
+
+/**
+ * 1.5: a round glass button that steps once when tapped and keeps stepping while held (faster after a moment), with a
+ * tick each step: volume up and down.
+ */
+@Composable fun StepButton(icon: ImageVector, description: String, onStep: () -> Unit, modifier: Modifier = Modifier, size: Dp = 44.dp, enabled: Boolean = true) {
+    val t = LocalTokens.current; val haptics = LocalHapticFeedback.current; val step by rememberUpdatedState(onStep)
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (pressed) .9f else 1f, spring(dampingRatio = .5f, stiffness = 650f), label = "Step")
+    val scope = rememberCoroutineScope()
+    Box(modifier.size(size).graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (enabled) 1f else .42f }.glass(GlassShapes.capsule, GlassLevel.Control)
+        .semantics { contentDescription = description; role = Role.Button; onClick { step(); true } }
+        .pointerInput(enabled) {
+            if (!enabled) return@pointerInput
+            detectTapGestures(onPress = {
+                pressed = true; haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); step()
+                val repeat = scope.launch { delay(420); var gap = 140L; while (true) { haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick); step(); delay(gap); gap = (gap - 12).coerceAtLeast(70) } }
+                tryAwaitRelease(); repeat.cancel(); pressed = false
+            })
+        }, contentAlignment = Alignment.Center) { Icon(icon, null, tint = t.text, modifier = Modifier.size(size * .46f)) }
+}
 
 /** A small dot that glows and breathes while something is here. */
 @Composable fun LiveDot(on: Boolean, modifier: Modifier = Modifier, size: Dp = 9.dp) {

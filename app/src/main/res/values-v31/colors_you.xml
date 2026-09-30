@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material You widgets in the light: the wallpaper's palette, as Android's own widgets use it. -->
+<resources>
+    <color name="widget_you_bg">@android:color/system_neutral1_50</color>
+    <color name="widget_you_text">@android:color/system_neutral1_900</color>
+    <color name="widget_you_muted">@android:color/system_neutral2_700</color>
+    <color name="widget_you_accent">@android:color/system_accent1_600</color>
+    <color name="widget_you_pill">@android:color/system_accent1_100</color>
+    <color name="widget_you_play">@android:color/system_accent1_600</color>
+    <color name="widget_you_on_play">@android:color/system_accent1_0</color>
+    <color name="widget_you_track">@android:color/system_accent1_100</color>
+    <color name="widget_you_ring_cpu">@android:color/system_accent1_600</color>
+    <color name="widget_you_ring_gpu">@android:color/system_accent2_600</color>
+    <color name="widget_you_ring_ram">@android:color/system_accent3_600</color>
+</resources>

@@ -1,4 +1,20 @@
 <resources>
     <color name="window">#05070B</color>
     <color name="launcher_background">#070A12</color>
+    <!-- Widgets: the glass rings' colours, and Material You's (the wallpaper's palette on Android 12 and later). -->
+    <color name="widget_ring_track">#33FFFFFF</color>
+    <color name="widget_ring_cpu">#FFA5D8C5</color>
+    <color name="widget_ring_gpu">#FF8FA8FF</color>
+    <color name="widget_ring_ram">#FF5FD98A</color>
+    <color name="widget_you_bg">#F21A2130</color>
+    <color name="widget_you_text">#FFFFFFFF</color>
+    <color name="widget_you_muted">#B3FFFFFF</color>
+    <color name="widget_you_accent">#FFA5D8C5</color>
+    <color name="widget_you_pill">#1FFFFFFF</color>
+    <color name="widget_you_play">#FFFFFFFF</color>
+    <color name="widget_you_on_play">#FF10131A</color>
+    <color name="widget_you_track">#33FFFFFF</color>
+    <color name="widget_you_ring_cpu">#FFA5D8C5</color>
+    <color name="widget_you_ring_gpu">#FF8FA8FF</color>
+    <color name="widget_you_ring_ram">#FF5FD98A</color>
 </resources>

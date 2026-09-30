@@ -233,8 +233,14 @@ import java.nio.ByteOrder
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(if (status.muted) "Muted" else "${(volume * 100 + .5f).toInt()}%", style = Type.headline, color = t.text)
-                Text("Twist the dial; tap its middle to mute", style = Type.caption, color = t.muted)
-                Spacer(Modifier.height(12.dp))
+                Text("Twist the dial, or step it; tap its middle to mute", style = Type.caption, color = t.muted)
+                Spacer(Modifier.height(10.dp))
+                // 1.5: a step down and up (5% each; held, they keep going).
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    StepButton(Icons.Rounded.Remove, "Volume down on ${pc.name}", { send(((volume * 100 + .5f).toInt() - 5).coerceIn(0, 100) / 100f, true) })
+                    StepButton(Icons.Rounded.Add, "Volume up on ${pc.name}", { send(((volume * 100 + .5f).toInt() + 5).coerceIn(0, 100) / 100f, true) })
+                }
+                Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(25, 50, 75).forEach { level -> GlassChip("$level", selected = !status.muted && (volume * 100 + .5f).toInt() == level) { send(level / 100f, true) } }
                 }

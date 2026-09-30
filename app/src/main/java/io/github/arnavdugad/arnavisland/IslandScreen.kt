@@ -61,6 +61,12 @@ import io.github.arnavdugad.arnavisland.link.IslandSetting
 import io.github.arnavdugad.arnavisland.link.IslandWire
 import io.github.arnavdugad.arnavisland.link.PcControls
 import io.github.arnavdugad.arnavisland.link.PcStats
+import io.github.arnavdugad.arnavisland.link.PcBattery
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.pointer.pointerInput
 import io.github.arnavdugad.arnavisland.link.PeerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -75,6 +81,8 @@ import kotlin.math.roundToInt
 @Composable fun IslandScreen(pc: PeerView?, visible: Boolean, onPair: () -> Unit, padding: PaddingValues) {
     val t = LocalTokens.current
     val stats by Hub.pcStats.collectAsState(); val controls by Hub.pcControls.collectAsState(); val settings by Hub.islandSettings.collectAsState(); val outputs by Hub.outputs.collectAsState()
+    val battery by Hub.pcBattery.collectAsState(); val peers by Hub.peers.collectAsState()
+    val pcs = remember(peers) { peers.filter { it.paired && !it.phone } }
     val confirm: (Confirm) -> Unit = { IslandUi.confirm = it }
     val ready = Hub.islandReady(pc)
     val owner = LocalLifecycleOwner.current
@@ -86,12 +94,16 @@ import kotlin.math.roundToInt
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(padding).padding(horizontal = 20.dp)) {
             ScreenTitle("Island", over = pc?.let { if (!it.online) "${it.name}  ·  away" else "${it.name}  ·  ${quality(it).text.lowercase()}" } ?: "No PC yet") { if (pc != null) LiveDot(pc.online) }
+            // 1.5: with more than one PC, their numbers side by side in a carousel: swipe to another and the rest follows it.
+            val carousel = pc != null && pcs.size > 1
+            if (carousel) { StatsCarousel(pcs, pc!!, stats); Spacer(Modifier.height(4.dp)) }
             when {
                 pc == null -> Notice(Icons.Rounded.Laptop, "Pair with your PC", "Then everything on its island is here: its numbers, its controls, its settings.", "Pair", onPair)
                 !pc.online -> Notice(Icons.Rounded.CloudOff, "${pc.name} is away", "Its island shows here again as soon as it's back.", null) {}
                 pc.revision < 5 -> Notice(Icons.Rounded.SystemUpdate, "Update Arnav Island on ${pc.name}", "Version 0.22 or later lets this phone control everything on its island.", null) {}
                 else -> {
-                    StatsPanel(stats) { IslandUi.statsOpen = true }
+                    if (!carousel) StatsPanel(stats, live = true) { IslandUi.statsOpen = true }
+                    if (battery?.present == true) { SectionLabel("Battery"); BatteryPanel(battery!!) }
                     SectionLabel("Controls"); ControlsPanel(controls, confirm)
                     SectionLabel("Focus"); FocusPanel(controls)
                     SectionLabel("Run on ${pc.name}"); CommandPanel(pc.name, confirm)
@@ -148,21 +160,137 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
 
 // ---- stats ----
 /** Three gauges (processor, graphics, memory), the network either way, and a flowing graph of the processor. */
-@Composable private fun StatsPanel(s: PcStats?, onOpen: () -> Unit) {
-    val t = LocalTokens.current
-    Box(Modifier.fillMaxWidth().glass(GlassShapes.card).clip(GlassShapes.card).clickable(role = Role.Button) { onOpen() }.semantics { contentDescription = "Your PC's numbers. Tap for more" }) {
-        Column(Modifier.padding(18.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                Gauge("CPU", s?.cpu ?: -1.0, t.accent); Gauge("GPU", s?.gpu ?: -1.0, t.accent2); Gauge("Memory", s?.ramPercent ?: -1.0, t.good)
+/** 1.5: the PCs' numbers in a glass carousel: each page one PC's (the others as last read); settling on one chooses it. */
+@Composable private fun StatsCarousel(pcs: List<PeerView>, pc: PeerView, stats: PcStats?) {
+    val t = LocalTokens.current; val index = pcs.indexOfFirst { it.id == pc.id }.coerceAtLeast(0)
+    val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = index) { pcs.size }
+    LaunchedEffect(pager.settledPage) { pcs.getOrNull(pager.settledPage)?.let { if (it.id != Hub.pc()?.id) Hub.choose(it.id) } }
+    LaunchedEffect(index) { if (pager.settledPage != index && !pager.isScrollInProgress) pager.animateScrollToPage(index) }
+    androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxWidth(), pageSpacing = 12.dp) { page ->
+        val p = pcs[page]; val live = p.id == pc.id
+        StatsPanel(if (live) stats else Hub.cachedStats(p.id), live = live && p.online, title = p.name, away = !p.online) { if (live) IslandUi.statsOpen = true }
+    }
+    // Which one this is.
+    Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.Center) {
+        pcs.indices.forEach { i ->
+            val on = i == pager.currentPage; val w by animateDpAsState(if (on) 18.dp else 6.dp, spring(dampingRatio = .7f, stiffness = 500f), label = "Dot")
+            Box(Modifier.padding(horizontal = 3.dp).size(w, 6.dp).clip(CircleShape).background(if (on) t.accent else t.faint.copy(alpha = .5f)))
+        }
+    }
+}
+
+/**
+ * The PC's numbers: its rings, a flowing graph of the processor and (1.5) a bar for each core, which shimmers when the
+ * core is busy. The card warms when the processor has been working hard for half a minute.
+ */
+@Composable private fun StatsPanel(s: PcStats?, live: Boolean, title: String? = null, away: Boolean = false, onOpen: () -> Unit) {
+    val t = LocalTokens.current; val trail by Hub.statsTrail.collectAsState()
+    // Heat: the processor's average over the last 30 s, past 55%, up to full warmth at 90%.
+    val heatTarget = if (!live) 0f else trail.takeLast(30).map { it.cpu }.filter { it >= 0 }.takeIf { it.size >= 10 }?.average()?.toFloat()?.let { ((it - 55f) / 35f).coerceIn(0f, 1f) } ?: 0f
+    val heat by animateFloatAsState(heatTarget, tween(1400), label = "Heat")
+    val warm = Color(0xFFFF8A3D)
+    Box(Modifier.fillMaxWidth().glass(GlassShapes.card).clip(GlassShapes.card)
+        .drawBehind { if (heat > 0.01f) drawRect(Brush.radialGradient(listOf(warm.copy(alpha = .30f * heat), Color(0xFFFF3D3D).copy(alpha = .10f * heat), Color.Transparent), Offset(size.width * .5f, 0f), size.width * .9f)) }
+        .clickable(role = Role.Button) { onOpen() }.semantics { contentDescription = (title?.let { "$it: " } ?: "") + "Your PC's numbers. Tap for more" }) {
+        Column(Modifier.padding(18.dp).graphicsLayer { alpha = if (away) .5f else 1f }) {
+            if (title != null) Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = Type.bodyStrong, color = t.text, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (away) "Away" else if (live) "Live" else "Swipe to see it live", style = Type.micro, color = if (live && !away) t.good else t.muted)
             }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Gauge("CPU", s?.cpu ?: -1.0, lerp(t.accent, warm, heat)); Gauge("GPU", s?.gpu ?: -1.0, t.accent2); Gauge("Memory", s?.ramPercent ?: -1.0, t.good)
+            }
+            if (heat > .5f) Text("Working hard: ${s?.cpu?.roundToInt() ?: 0}% for the last half minute", style = Type.caption, color = warm, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), textAlign = TextAlign.Center)
             Spacer(Modifier.height(14.dp))
-            Graph(s?.cpuHistory.orEmpty(), t.accent, Modifier.fillMaxWidth().height(46.dp), top = 100f)
+            Graph(s?.cpuHistory.orEmpty(), lerp(t.accent, warm, heat), Modifier.fillMaxWidth().height(46.dp), top = 100f)
+            if (!s?.cores.isNullOrEmpty()) { Spacer(Modifier.height(12.dp)); CoreBars(s!!.cores, lerp(t.accent, warm, heat), live) }
             Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Rate(Icons.Rounded.South, s?.download); Rate(Icons.Rounded.North, s?.upload)
                 Row(verticalAlignment = Alignment.CenterVertically) { Text("More", style = Type.caption, color = t.muted); Icon(Icons.Rounded.ChevronRight, null, tint = t.muted, modifier = Modifier.size(18.dp)) }
             }
         }
+    }
+}
+/** 1.5: a bar for each core, its height its load; a busy core (70% or more) shimmers, and the bars ease between readings. */
+@Composable private fun CoreBars(cores: List<Float>, color: Color, live: Boolean) {
+    val t = LocalTokens.current; val reduced = LocalReduced.current
+    val shimmer by rememberInfiniteTransition(label = "Cores").animateFloat(0f, 1f, infiniteRepeatable(tween(1300, easing = LinearEasing)), label = "Shimmer")
+    val shown = cores.map { v -> animateFloatAsState(if (v < 0) 0f else v / 100f, spring(dampingRatio = .85f, stiffness = 140f), label = "Core").value }
+    Column {
+        Canvas(Modifier.fillMaxWidth().height(34.dp).semantics { contentDescription = "${cores.size} cores: " + cores.joinToString { if (it < 0) "unknown" else "${it.roundToInt()}%" } }) {
+            val n = shown.size; val gap = if (n > 24) 2.dp.toPx() else 3.dp.toPx(); val w = ((size.width - gap * (n - 1)) / n).coerceAtLeast(1f); val r = (w / 2).coerceAtMost(3.dp.toPx())
+            shown.forEachIndexed { i, v ->
+                val x = i * (w + gap); val h = (v * size.height).coerceAtLeast(2.dp.toPx())
+                drawRoundRect(t.track, Offset(x, 0f), androidx.compose.ui.geometry.Size(w, size.height), androidx.compose.ui.geometry.CornerRadius(r, r))
+                drawRoundRect(color.copy(alpha = .55f + .45f * v), Offset(x, size.height - h), androidx.compose.ui.geometry.Size(w, h), androidx.compose.ui.geometry.CornerRadius(r, r))
+                // Busy: a band of light rises through the bar, each core a little behind the one before.
+                if (live && !reduced && v >= .7f) {
+                    val phase = (shimmer + i * .07f) % 1f; val y = size.height - h * phase
+                    drawRoundRect(Brush.verticalGradient(listOf(Color.Transparent, Color.White.copy(alpha = .55f), Color.Transparent), y - 10.dp.toPx(), y + 10.dp.toPx()),
+                        Offset(x, size.height - h), androidx.compose.ui.geometry.Size(w, h), androidx.compose.ui.geometry.CornerRadius(r, r))
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+            Text("${cores.size} cores", style = Type.micro, color = t.muted, modifier = Modifier.weight(1f))
+            val busy = cores.count { it >= 70f }; if (busy > 0) Text("$busy busy", style = Type.micro, color = t.muted)
+        }
+    }
+}
+
+/**
+ * 1.5: the PC's battery (island 0.23): a ring with its level, whether it's charging and for how long, the power going in
+ * or out, its health and cycles, its temperature and capacity, and its last day.
+ */
+@Composable private fun BatteryPanel(b: PcBattery) {
+    val t = LocalTokens.current
+    val colour = when { b.charging -> t.good; b.percent in 0..20 -> t.danger; else -> t.accent }
+    GlassPanel(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(92.dp), contentAlignment = Alignment.Center) {
+                    ProgressRing(if (b.percent >= 0) b.percent / 100f else 0f, colour, t.track, Modifier.fillMaxSize(), 7.dp)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (b.percent >= 0) RollingDigits("${b.percent}%", Type.headline, t.text) else Text("—", style = Type.headline, color = t.faint)
+                        if (b.charging) Icon(Icons.Rounded.Bolt, "Charging", tint = t.good, modifier = Modifier.size(16.dp))
+                    }
+                }
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(when { b.charging && b.minutesToFull > 0 -> "Full in ${span(b.minutesToFull * 60L)}"; b.charging -> "Charging"; b.online -> "On power"; b.minutesLeft > 0 -> "${span(b.minutesLeft * 60L)} left"; else -> "On battery" },
+                        style = Type.headline, color = t.text)
+                    val watts = kotlin.math.abs(b.rateMw) / 1000.0
+                    if (watts > .05) Text((if (b.rateMw > 0) "%.1f W going in" else "Using %.1f W").format(watts), style = Type.caption, color = t.muted)
+                    if (b.saver) Text("Battery saver is on", style = Type.caption, color = t.warn)
+                }
+            }
+            if (b.day.size >= 2) { Spacer(Modifier.height(14.dp)); BatteryDay(b.day, t.accent) }
+            Spacer(Modifier.height(10.dp))
+            val facts = buildList {
+                if (b.health >= 0) add("Health ${(b.health * 100).roundToInt()}%" + if (b.healthBefore >= 0 && kotlin.math.abs(b.health - b.healthBefore) >= .0005) ", %+.1f this week".format((b.health - b.healthBefore) * 100).replace("-", "−") else "")
+                if (b.cycles > 0) add("${b.cycles} cycles")
+                if (b.temperatureDeciK > 0) add("%.1f°C".format(b.temperatureDeciK / 10.0 - 273.15))
+                if (b.fullMwh > 0) add("%.1f of %.1f Wh".format(b.remainingMwh / 1000.0, b.fullMwh / 1000.0))
+                if (b.voltageMv > 0) add("%.2f V".format(b.voltageMv / 1000.0))
+                listOf(b.manufacturer, b.name).filter { it.isNotBlank() }.joinToString(" ").takeIf { it.isNotBlank() }?.let { add(it) }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { facts.forEach { GlassChip(it) } }
+        }
+    }
+}
+/** The battery's last day: its level over time, in the accent, green while it charged. */
+@Composable private fun BatteryDay(day: List<Triple<Long, Int, Boolean>>, colour: Color) {
+    val t = LocalTokens.current
+    Column {
+        Canvas(Modifier.fillMaxWidth().height(54.dp).semantics { contentDescription = "The battery over the last day" }) {
+            val first = day.first().first; val span = (day.last().first - first).coerceAtLeast(1).toFloat()
+            fun at(i: Int) = Offset((day[i].first - first) / span * size.width, size.height - day[i].second / 100f * size.height * .94f)
+            val fill = Path().apply { moveTo(0f, size.height); day.indices.forEach { lineTo(at(it).x, at(it).y) }; lineTo(size.width, size.height); close() }
+            drawPath(fill, Brush.verticalGradient(listOf(colour.copy(alpha = .25f), Color.Transparent)))
+            for (i in 1 until day.size) drawLine(if (day[i].third) t.good else colour, at(i - 1), at(i), 2.dp.toPx(), StrokeCap.Round)
+        }
+        Row(Modifier.fillMaxWidth()) { Text("A day ago", style = Type.micro, color = t.faint, modifier = Modifier.weight(1f)); Text("Now", style = Type.micro, color = t.faint) }
     }
 }
 @Composable private fun Gauge(label: String, value: Double, color: Color, size: Dp = 86.dp) {
@@ -213,9 +341,12 @@ private fun span(seconds: Long): String { val d = seconds / 86_400; val h = seco
         Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState())) {
             Text(s.name.ifEmpty { "Your PC" }, style = Type.title, color = t.text); if (s.model.isNotEmpty()) Text(s.model, style = Type.caption, color = t.muted)
             Spacer(Modifier.height(16.dp))
-            BigGraph("Processor", if (s.cpu >= 0) "${s.cpu.roundToInt()}%" else "—", s.cpuHistory, t.accent, 100f, s.cpuName.ifEmpty { null }?.let { "$it  ·  ${s.logical} threads" })
-            BigGraph("Graphics", if (s.gpu >= 0) "${s.gpu.roundToInt()}%" else "—", s.gpuHistory, t.accent2, 100f, s.gpuName.ifEmpty { null })
-            BigGraph("Downloading", rateText(s.download), s.downloadHistory, t.good, null, "Sending ${rateText(s.upload)}")
+            // 1.5: the numbers seen while the tab showed (up to five minutes), else the PC's last 40 seconds; drag to read any moment.
+            val trail by Hub.statsTrail.collectAsState(); val now = System.currentTimeMillis()
+            fun series(pick: (Hub.StatsPoint) -> Float, history: List<Float>) = if (trail.size >= history.size && trail.size >= 10) trail.map { it.at to pick(it) } else history.mapIndexed { i, v -> (now - (history.size - 1 - i) * 1000L) to v }
+            BigGraph("Processor", if (s.cpu >= 0) "${s.cpu.roundToInt()}%" else "—", series({ it.cpu }, s.cpuHistory), t.accent, 100f, s.cpuName.ifEmpty { null }?.let { "$it  ·  ${s.logical} threads" }) { "${it.roundToInt()}%" }
+            BigGraph("Graphics", if (s.gpu >= 0) "${s.gpu.roundToInt()}%" else "—", series({ it.gpu }, s.gpuHistory), t.accent2, 100f, s.gpuName.ifEmpty { null }) { if (it < 0) "—" else "${it.roundToInt()}%" }
+            BigGraph("Downloading", rateText(s.download), series({ it.download }, s.downloadHistory), t.good, null, "Sending ${rateText(s.upload)}") { rateText(it.toDouble()) }
             GlassPanel(Modifier.fillMaxWidth().padding(top = 4.dp)) {
                 Column(Modifier.padding(vertical = 4.dp)) {
                     Fact(Icons.Rounded.Memory, "Memory", "%.1f of %.1f GB  ·  %d%%".format(s.ramUsedGiB, s.ramTotalGiB, s.ramPercent.roundToInt()))
@@ -228,8 +359,9 @@ private fun span(seconds: Long): String { val d = seconds / 86_400; val h = seco
         }
     }
 }
-@Composable private fun BigGraph(title: String, now: String, samples: List<Float>, color: Color, top: Float?, detail: String?) {
-    val t = LocalTokens.current
+@Composable private fun BigGraph(title: String, now: String, series: List<Pair<Long, Float>>, color: Color, top: Float?, detail: String?, format: (Float) -> String) {
+    val t = LocalTokens.current; val samples = series.map { it.second }; val haptics = LocalHapticFeedback.current
+    var at by remember { mutableStateOf<Int?>(null) }
     GlassPanel(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
@@ -239,9 +371,33 @@ private fun span(seconds: Long): String { val d = seconds / 86_400; val h = seco
             Spacer(Modifier.height(10.dp))
             // Percentages up to the next step past the highest (so a quiet PC's line isn't flat on the floor); rates to their own highest.
             val scale = if (top == null) null else listOf(10f, 25f, 50f, 75f, 100f).first { it >= minOf(100f, (samples.maxOrNull() ?: 0f) * 1.15f) }
-            Box(Modifier.fillMaxWidth().height(84.dp)) {
+            Box(Modifier.fillMaxWidth().height(84.dp).pointerInput(series.size) {
+                // Touch and drag along it: a line at that moment, with its value and how long ago it was.
+                awaitEachGesture {
+                    val down = awaitFirstDown(); down.consume(); fun index(x: Float) = if (samples.size < 2) null else (x / size.width * (samples.size - 1)).roundToInt().coerceIn(0, samples.size - 1)
+                    at = index(down.position.x); haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                    while (true) { val e = awaitPointerEvent(); val c = e.changes.firstOrNull() ?: break; if (!c.pressed) break; c.consume(); val i = index(c.position.x); if (i != at) { at = i; if (i != null && i % 5 == 0) haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick) } }
+                    at = null
+                }
+            }) {
                 Graph(samples, color, Modifier.fillMaxSize(), scale)
-                if (scale != null) Text("${scale.roundToInt()}%", style = Type.micro, color = t.faint, modifier = Modifier.align(Alignment.TopEnd))
+                if (scale != null && at == null) Text("${scale.roundToInt()}%", style = Type.micro, color = t.faint, modifier = Modifier.align(Alignment.TopEnd))
+                val i = at
+                if (i != null && samples.size >= 2) {
+                    val high = max(scale ?: (samples.maxOrNull() ?: 1f) * 1.15f, 1f)
+                    Canvas(Modifier.fillMaxSize()) {
+                        val x = i / (samples.size - 1f) * size.width; val y = size.height - (samples[i].coerceAtLeast(0f) / high).coerceIn(0f, 1f) * size.height * .92f
+                        drawLine(t.text.copy(alpha = .35f), Offset(x, 0f), Offset(x, size.height), 1.dp.toPx())
+                        drawCircle(color.copy(alpha = .3f), 7.dp.toPx(), Offset(x, y)); drawCircle(color, 3.5.dp.toPx(), Offset(x, y))
+                    }
+                    val ago = ((System.currentTimeMillis() - series[i].first) / 1000).coerceAtLeast(0)
+                    Text("${format(samples[i])}  ·  ${if (ago < 2) "now" else if (ago < 90) "$ago s ago" else "${ago / 60} min ago"}", style = Type.micro, color = t.text,
+                        modifier = Modifier.align(Alignment.TopCenter).clip(RoundedCornerShape(8.dp)).background(t.deep.copy(alpha = .7f)).padding(horizontal = 8.dp, vertical = 3.dp))
+                }
+            }
+            if (series.size >= 2) Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
+                val span = ((series.last().first - series.first().first) / 1000).coerceAtLeast(1)
+                Text(if (span < 90) "$span s ago" else "${span / 60} min ago", style = Type.micro, color = t.faint, modifier = Modifier.weight(1f)); Text("Now", style = Type.micro, color = t.faint)
             }
         }
     }
@@ -274,6 +430,13 @@ private fun span(seconds: Long): String { val d = seconds / 86_400; val h = seco
             Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
                 if (c.brightness >= 0) { Level(Icons.Rounded.LightMode, "Brightness", c.brightness) { v -> Hub.setControl(IslandWire.BRIGHTNESS, v) { it.copy(brightness = v) } }; Spacer(Modifier.height(12.dp)) }
                 Level(if (c.muted || c.volume == 0) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp, "Volume", c.volume) { v -> Hub.setControl(IslandWire.VOLUME, v) { it.copy(volume = v) } }
+                // 1.5: a step down and up (5% each; held, they keep going).
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Volume", style = Type.caption, color = t.muted, modifier = Modifier.weight(1f))
+                    StepButton(Icons.Rounded.Remove, "Volume down", { val v = ((Hub.pcControls.value?.volume ?: c.volume) - 5).coerceIn(0, 100); Hub.setControl(IslandWire.VOLUME, v) { it.copy(volume = v, muted = false) } }, size = 40.dp)
+                    StepButton(Icons.Rounded.Add, "Volume up", { val v = ((Hub.pcControls.value?.volume ?: c.volume) + 5).coerceIn(0, 100); Hub.setControl(IslandWire.VOLUME, v) { it.copy(volume = v, muted = false) } }, size = 40.dp)
+                }
             }
         }
     }

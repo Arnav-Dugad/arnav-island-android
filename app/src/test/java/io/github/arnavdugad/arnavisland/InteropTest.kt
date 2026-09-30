@@ -51,7 +51,7 @@ class InteropTest {
         try {
             assertTrue(phone.start())
             val pcId = line("READY ").split(' ')[0]
-            phone.addPeer(pcId, "Interop PC", "127.0.0.1", pcPort, 2, 5)
+            phone.addPeer(pcId, "Interop PC", "127.0.0.1", pcPort, 2, 6)
             tell("peer ${phone.identity} ${phone.port}"); line("OK peer")
             phone.pair(pcId); await<LinkEvent.PairCode>(); phone.confirmPair(true); assertTrue(await<LinkEvent.Paired>().ok); line("PAIRED ok")
 
@@ -60,6 +60,22 @@ class InteropTest {
             assertTrue(stats.cpu in 0.0..100.0 && stats.gpu in 0.0..100.0); assertEquals(15.7, stats.ramTotalGiB, 1e-9); assertEquals(16, stats.logical); assertEquals(82, stats.battery); assertTrue(stats.charging)
             assertEquals(40, stats.cpuHistory.size); assertEquals(40, stats.downloadHistory.size); assertTrue(stats.cpuHistory.all { it in 0f..100f })
             assertEquals("ASUS ROG Zephyrus G14", stats.model); assertEquals("Windows 11 Home 24H2", stats.os); assertTrue(stats.gpuName.startsWith("NVIDIA")); assertTrue(stats.uptime > 3 * 86400)
+            // Revision 6: each core, and the battery in full with its last day.
+            assertEquals(16, stats.cores.size); assertTrue(stats.cores.all { it in 0f..100f }); assertTrue(stats.cores[3] > 60f)
+            val battery = phone.battery(pcId)!!; line("REMOTE battery")
+            assertEquals(82, battery.percent); assertTrue(battery.present && battery.online && battery.charging && !battery.saver); assertEquals(34, battery.minutesToFull)
+            assertEquals(69_920L, battery.fullMwh); assertEquals(21_500L, battery.rateMw); assertEquals(187L, battery.cycles); assertEquals(.92, battery.health, 1e-9); assertEquals("ASUSTeK", battery.manufacturer)
+            assertEquals(288, battery.day.size); assertTrue(battery.day.zipWithNext().all { (a, b) -> b.first > a.first }); assertTrue(battery.day.last().third)
+
+            // Revision 6: the PC asks this phone for its readings (on a connection it keeps), and tells it the focus clock.
+            val asked = LinkedBlockingQueue<Pair<Int, ByteArray>>()
+            phone.onQuery = { peer, command, payload -> assertEquals(pcId, peer); asked.put(command to payload)
+                if (command == Proto.QUERY_READINGS) { val text = "Battery\t77%\nPower\tUsing 1.8 W\nModel\tTest Phone".toByteArray(); Bytes().u32(text.size).raw(text).u32(3).raw(byteArrayOf(1, 2, 3)).build() } else ByteArray(0) }
+            tell("query ${phone.identity}"); assertEquals("3 Battery\t77% 3", line("PHONELIVE "))
+            tell("query ${phone.identity}"); assertEquals("3 Battery\t77% 3", line("PHONELIVE "))
+            tell("focus ${phone.identity} 1 1 240.5 300"); line("OK focus")
+            val (command, payload) = generateSequence { asked.poll(10, TimeUnit.SECONDS) }.first { it.first == Proto.QUERY_FOCUS }
+            val f = IslandWire.focus(payload)!!; assertEquals(Proto.QUERY_FOCUS, command); assertEquals(1, f.mode); assertTrue(f.running); assertEquals(240.5, f.shown, 1e-9); assertEquals(300.0, f.duration, 1e-9); assertEquals("Interop PC", f.pcName)
 
             // Every setting, then one changed (kept within its range) and a switch turned off.
             val settings = phone.islandSettings(pcId)!!
@@ -92,6 +108,7 @@ class InteropTest {
             val outputs = phone.outputs(pcId)!!; assertEquals(2, outputs.size); assertTrue(outputs[0].current)
             assertEquals(Proto.OK, phone.selectOutput(pcId, "buds")); line("OUTPUT buds"); assertTrue(phone.outputs(pcId)!!.first { it.id == "buds" }.current)
             assertTrue(phone.openIslandPage(pcId, 2)); line("ISLAND page 2")
+            assertTrue(phone.openIslandPage(pcId, 8)); line("ISLAND page 8")
             assertTrue(phone.closeIsland(pcId)); line("ISLAND close")
         } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
     }
@@ -231,8 +248,8 @@ class InteropTest {
             // Each sees the other through the relay.
             val seen = System.currentTimeMillis() + 40_000
             while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
-            val view = phone.peers().first { it.id == pcId }; assertTrue(view.online && view.internet); assertEquals(5, view.revision)
-            line("PRESENCE ${phone.identity} 1 1 5 1", 40)
+            val view = phone.peers().first { it.id == pcId }; assertTrue(view.online && view.internet); assertEquals(6, view.revision)
+            line("PRESENCE ${phone.identity} 1 1 6 1", 40)
 
             // Phone to PC.
             val photo = ByteArray(700_000) { (it * 13 + 5).toByte() }
@@ -323,7 +340,7 @@ class InteropTest {
             val seen = System.currentTimeMillis() + 40_000
             while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
             assertTrue("the phone sees the PC through the broker they share", phone.peers().any { it.id == pcId && it.online && it.internet })
-            line("PRESENCE ${phone.identity} 1 1 5 1", 40)
+            line("PRESENCE ${phone.identity} 1 1 6 1", 40)
             if (direct) {
                 val until = System.currentTimeMillis() + 20_000
                 while (System.currentTimeMillis() < until && phone.peers().none { it.id == pcId && it.path == 2 }) Thread.sleep(100)

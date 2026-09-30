@@ -88,6 +88,16 @@ class LinkService : Service() {
                 delay(wait)
             }
         }
+        // 1.5: the stats widget: as the Island tab reads the numbers, and every 5 s while the screen is on otherwise.
+        jobs += Hub.scope.launch { Hub.pcStats.collectLatest { StatsWidgets.refresh(this@LinkService) } }
+        jobs += Hub.scope.launch {
+            val power = getSystemService(PowerManager::class.java)
+            while (isActive) {
+                val wanted = StatsWidgets.ids(this@LinkService).isNotEmpty() && power?.isInteractive != false && !Hub.visible
+                if (wanted && Hub.islandReady()) Hub.refreshStats()
+                delay(if (wanted) 5_000L else 20_000L)
+            }
+        }
         // The phone's details, when they change (checked each minute).
         jobs += Hub.scope.launch { while (isActive) { delay(60_000); Hub.sendDetails() } }
     }

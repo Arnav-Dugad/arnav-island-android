@@ -64,6 +64,39 @@ object DeviceInfo {
         playing(context)?.let { out += "Playing" to it }
         return out
     }
+    /**
+     * 1.5: the readings a PC's Phone page asks for every two seconds: all of the above, and the power going in or out,
+     * whether the screen is on and its brightness.
+     */
+    fun live(context: Context): List<Pair<String, String>> {
+        val out = ArrayList(read(context))
+        runCatching {
+            val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return@runCatching
+            val status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1); val charging = status == BatteryManager.BATTERY_STATUS_CHARGING
+            val mv = battery.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0); val now = context.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+            // Microamps on most phones; a few report milliamps. Either way the power is the current times the voltage.
+            if (now != 0 && now != Int.MIN_VALUE && mv > 0) {
+                val ma = if (kotlin.math.abs(now) > 20_000) kotlin.math.abs(now) / 1000.0 else kotlin.math.abs(now).toDouble()
+                val watts = ma * mv / 1_000_000.0
+                if (watts in 0.05..200.0) out += "Power" to (if (charging) "Charging at %.1f W" else "Using %.1f W").format(watts)
+            }
+        }
+        runCatching { out += "Screen" to if (context.getSystemService(android.os.PowerManager::class.java).isInteractive) "on" else "off" }
+        runCatching { val level = android.provider.Settings.System.getInt(context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS); out += "Brightness" to "${(level * 100 + 127) / 255}%" }
+        return out
+    }
+    /** The cover of what plays on the phone, as a small JPEG (with notification access), or null. */
+    fun cover(context: Context): ByteArray? = runCatching {
+        if (!Mirror.allowed(context)) return null
+        val sessions = context.getSystemService(MediaSessionManager::class.java).getActiveSessions(ComponentName(context, Mirror::class.java))
+        val m = sessions.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }?.metadata ?: return null
+        val art = m.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART) ?: m.getBitmap(MediaMetadata.METADATA_KEY_ART) ?: m.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON) ?: return null
+        val side = 160; val scale = side.toFloat() / maxOf(art.width, art.height).coerceAtLeast(1)
+        val small = android.graphics.Bitmap.createScaledBitmap(art, (art.width * scale).toInt().coerceAtLeast(1), (art.height * scale).toInt().coerceAtLeast(1), true)
+        var quality = 82; var bytes: ByteArray
+        do { val o = java.io.ByteArrayOutputStream(); small.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, o); bytes = o.toByteArray(); quality -= 12 } while (bytes.size > 40_000 && quality > 30)
+        bytes.takeIf { it.size <= 48_000 }
+    }.getOrNull()
     private fun gb(bytes: Long) = if (bytes >= 10L shl 30) "${bytes shr 30} GB" else "%.1f GB".format(bytes / 1073741824.0)
     private fun uptime(ms: Long): String { val m = ms / 60_000; return when { m < 60 -> "$m min"; m < 48 * 60 -> "${m / 60} h ${m % 60} min"; else -> "${m / 1440} days" } }
     private fun network(context: Context): String = runCatching {

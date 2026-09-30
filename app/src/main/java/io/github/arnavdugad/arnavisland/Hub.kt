@@ -24,6 +24,10 @@ import io.github.arnavdugad.arnavisland.link.CommandResults
 import io.github.arnavdugad.arnavisland.link.IslandSettings
 import io.github.arnavdugad.arnavisland.link.PcControls
 import io.github.arnavdugad.arnavisland.link.PcStats
+import io.github.arnavdugad.arnavisland.link.PcBattery
+import io.github.arnavdugad.arnavisland.link.FocusState
+import io.github.arnavdugad.arnavisland.link.IslandWire
+import io.github.arnavdugad.arnavisland.link.Bytes
 import io.github.arnavdugad.arnavisland.link.safeName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -100,6 +104,7 @@ object Hub {
         // Over the internet too (through the relay, end-to-end encrypted) unless that is turned off.
         val l = Link(PhoneStore(app), phoneName(), DownloadsInbox(app), ::onEvent, Link.Options(relay = prefs.getBoolean("internet", true)))
         l.onAction = { key, index, reply -> NoticeActions.perform(app, key, index, reply) }
+        l.onQuery = { peer, command, payload -> if (peers.value.any { it.id == peer && it.paired }) answer(peer, command, payload) else null }
         l.onClipboard = { text, sensitive -> Clip.receive(app, text, sensitive).also { if (it && visible) banners.tryEmit(Banner(Banner.Kind.Clipboard, "Copied from your PC", text.lineSequence().first().take(60))) } }
         starting = l
         if (!l.start()) { starting = null; failure.value = l.failure ?: "The link couldn't start"; return null }
@@ -118,7 +123,7 @@ object Hub {
     fun pc(list: List<PeerView> = peers.value, chosen: String? = selected.value): PeerView? =
         list.firstOrNull { it.id == chosen && it.paired } ?: list.firstOrNull { it.paired && it.online && !it.phone } ?: list.firstOrNull { it.paired && !it.phone }
     private fun pickDefault() { val p = pc(); if (p != null && p.id != selected.value) choose(p.id) }
-    fun choose(peer: String) { selected.value = peer; prefs.edit().putString("pc", peer).apply(); status.value = null }
+    fun choose(peer: String) { if (selected.value != peer) clearIsland(); selected.value = peer; prefs.edit().putString("pc", peer).apply(); status.value = null }
 
     private val lastOnline = HashSet<String>()
     private fun onEvent(e: LinkEvent) {
@@ -340,8 +345,45 @@ object Hub {
     /** The PC's controls (and, while its numbers show, its stats): asked once a second while the Island screen shows. */
     suspend fun refreshIsland(withStats: Boolean) = withContext(Dispatchers.IO) {
         val l = link ?: return@withContext; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext
-        if (withStats) l.stats(p.id)?.let { pcStats.value = it }
+        if (withStats) l.stats(p.id)?.let { s ->
+            // A new PC starts its trail afresh; otherwise each poll adds a point (five minutes of them, for scrubbing).
+            if (trailPc != p.id) { trailPc = p.id; statsTrail.value = emptyList() }
+            pcStats.value = s; statsCache[p.id] = s; val now = System.currentTimeMillis()
+            statsTrail.value = (statsTrail.value + StatsPoint(now, s.cpu.toFloat(), s.gpu.toFloat(), s.download.toFloat(), s.upload.toFloat())).takeLast(300)
+        }
         l.controls(p.id)?.let { pcControls.value = it; controlsAt = System.currentTimeMillis() }
+        // 1.5: its battery, every third time (island 0.23).
+        if (withStats && p.revision >= 6 && batteryTick++ % 3 == 0) l.battery(p.id)?.let { pcBattery.value = it }
+    }
+    /** 1.5: the PC's battery in full (island 0.23), and the numbers seen while the Island tab showed, for scrubbing its graphs. */
+    val pcBattery = MutableStateFlow<PcBattery?>(null)
+    data class StatsPoint(val at: Long, val cpu: Float, val gpu: Float, val download: Float, val upload: Float)
+    val statsTrail = MutableStateFlow<List<StatsPoint>>(emptyList())
+    @Volatile private var trailPc: String? = null; private var batteryTick = 0
+    /** Forgets what was shown for the last PC (another one was chosen). */
+    fun clearIsland() {
+        // The numbers stay until the next PC's arrive, so the rings move from one PC's to the other's.
+        pcBattery.value = null; islandSettings.value = null; outputs.value = emptyList(); statsTrail.value = emptyList(); trailPc = null; batteryTick = 0
+    }
+
+    // ---- 1.5: what a PC asks this phone (revision 6) ----
+    /** The focus clock as a PC last told it (its lock-screen notification and widget follow it); kept across restarts. */
+    val focus by lazy { MutableStateFlow(loadFocus()) }
+    private fun loadFocus(): FocusState? = runCatching {
+        val p = prefs.getString("focus", null)?.split('\u0001') ?: return null
+        FocusState(p[0].toInt(), p[1] == "1", p[2] == "1", p[3].toDouble(), p[4].toDouble(), p[5], p[6].toLong())
+            // A countdown that has run out while this phone wasn't told is over.
+            .takeIf { f -> !f.running || f.mode == 2 || FocusLive.end(f) > System.currentTimeMillis() }
+    }.getOrNull()
+    private fun saveFocus(f: FocusState) { prefs.edit().putString("focus", listOf(f.mode, if (f.running) 1 else 0, if (f.finished) 1 else 0, f.shown, f.duration, f.pcName.replace('\u0001', ' '), f.at).joinToString("\u0001")).apply() }
+    private fun answer(peer: String, command: Int, payload: ByteArray): ByteArray? = when (command) {
+        Proto.QUERY_READINGS -> {
+            val text = DeviceInfo.live(app).joinToString("\n") { (k, v) -> k.replace('\t', ' ').replace('\n', ' ') + "\t" + v.replace('\t', ' ').replace('\n', ' ') }.take(12_000).toByteArray()
+            val cover = DeviceInfo.cover(app) ?: ByteArray(0)
+            Bytes().u32(text.size).raw(text).u32(cover.size).raw(cover).build()
+        }
+        Proto.QUERY_FOCUS -> IslandWire.focus(payload)?.let { f -> focus.value = f; saveFocus(f); FocusLive.show(app, f); ByteArray(0) }
+        else -> null
     }
     /** Changes a control at once here ([seen]: what it looks like meanwhile), then on the PC; what the PC says wins. */
     fun setControl(control: Int, value: Int, seen: (PcControls) -> PcControls = { it }) {
@@ -352,6 +394,19 @@ object Hub {
             if (c != null) { pcControls.value = c; controlsAt = System.currentTimeMillis() }
             else { banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't do that", l.lastRemoteError.ifEmpty { "Try again in a moment" })); l.controls(p.id)?.let { pcControls.value = it } }
         }
+    }
+    /** 1.5: just the PC's numbers (for the stats widget while the app isn't on screen). */
+    suspend fun refreshStats() = withContext(Dispatchers.IO) {
+        val l = link ?: return@withContext; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext
+        l.stats(p.id)?.let { pcStats.value = it; statsCache[p.id] = it }
+    }
+    /** 1.5: each PC's numbers as last read (the Island tab's carousel shows its neighbours with them). */
+    private val statsCache = java.util.concurrent.ConcurrentHashMap<String, PcStats>()
+    fun cachedStats(peer: String): PcStats? = statsCache[peer]
+    /** 1.5: a control changed from a widget or a notification: true when the PC did it. */
+    suspend fun setControlNow(control: Int, value: Int): Boolean = withContext(Dispatchers.IO) {
+        val l = link ?: return@withContext false; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext false
+        l.setControl(p.id, control, value)?.also { pcControls.value = it; controlsAt = System.currentTimeMillis() } != null
     }
     suspend fun loadIslandSettings(): IslandSettings? = withContext(Dispatchers.IO) {
         val l = link ?: return@withContext null; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext null

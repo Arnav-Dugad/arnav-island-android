@@ -178,6 +178,13 @@ data class Look(val appearance: Int, val glass: Boolean, val weather: Boolean)
                 GlassRow(Icons.Rounded.BlurOn, "Liquid glass", if (look.glass) "Surfaces bend and blur what’s behind them, and catch the light as you tilt the phone" else "Off: solid surfaces, calmer and lighter on the battery") {
                     GlassSwitch(look.glass, { onLook(look.copy(glass = it)) })
                 }
+                // 1.5: the widgets in the wallpaper's colours (Android 12 and later), or glass in the cover's.
+                if (android.os.Build.VERSION.SDK_INT >= 31) {
+                    Hairline()
+                    GlassRow(Icons.Rounded.Widgets, "Widgets in Material You", if (flag("widgetsYou", false)) "Your wallpaper’s colours, light or dark with the phone" else "Off: glass in the colours of what plays on your PC") {
+                        GlassSwitch(flag("widgetsYou", false), { set("widgetsYou", it); WidgetStyle.set(context, it) })
+                    }
+                }
                 Hairline()
                 GlassRow(Icons.Rounded.Umbrella, "Weather on the glass", "Rain, snow or fog on the app when that’s the weather where your PC is") {
                     GlassSwitch(look.weather, { onLook(look.copy(weather = it)) })

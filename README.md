@@ -31,6 +31,7 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 **The whole island (1.4)**
 - **The Island tab** controls everything on your PC's island: its controls, the focus clock, the command bar, power, where the sound goes, its pages and every setting.
 - **Your PC's numbers, live:** processor, graphics, memory, network, disk and battery, with graphs, and the processor and graphics card by name.
+- **1.5:** swipe between your PCs, a bar for each core, graphs you can scrub, the PC's battery in full, and volume buttons.
 
 **The remote**
 - See what plays on your PC: its cover, title, artist and app.
@@ -67,7 +68,8 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 
 **On this phone**
 - **Your PC's music player** on the lock screen and in quick settings, with the cover, the controls and a seek bar.
-- **Widgets:** the PC's music with its controls, and quick actions (lock, ring, send, camera, paste), in the colours of what plays.
+- **Widgets:** the PC's music with its controls, quick actions (lock, ring, send, camera, paste), the PC's numbers live, and its focus clock. In the colours of what plays, or in Material You.
+- **The PC's focus clock on the lock screen,** counting down.
 - **Shortcuts** (touch and hold the app icon): Photo to Shelf, Trackpad, Find my PC, Paste on PC.
 - **Music handoff:** a song continues here from where the PC was, and one tap sends it back.
 

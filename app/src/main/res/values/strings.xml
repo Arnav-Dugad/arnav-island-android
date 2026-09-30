@@ -6,6 +6,10 @@
     <string name="widget_pc_description">What plays on your PC, with its controls, and lock, ring, send, camera and paste</string>
     <string name="widget_actions_label">PC quick actions</string>
     <string name="widget_actions_description">Lock your PC, ring it, send photos, take one for its Shelf, paste on it</string>
+    <string name="widget_stats_label">Your PC’s numbers</string>
+    <string name="widget_stats_description">Your PC’s processor, graphics and memory, live</string>
+    <string name="widget_focus_label">Focus on your PC</string>
+    <string name="widget_focus_description">Your PC’s focus clock, counting down here too</string>
     <string name="sc_camera">Photo to Shelf</string>
     <string name="sc_camera_long">Take a photo for your PC’s Shelf</string>
     <string name="sc_trackpad">Trackpad</string>

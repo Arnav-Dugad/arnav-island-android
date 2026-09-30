@@ -75,6 +75,8 @@ class Link(
     /** Revision 3, asked by a paired PC: run one of this phone's notifications' actions (0 done, 1 gone, 2 failed), and set the clipboard. */
     @Volatile var onAction: ((key: String, index: Int, reply: String) -> Int)? = null
     @Volatile var onClipboard: ((text: String, sensitive: Boolean) -> Boolean)? = null
+    /** Revision 6: what a PC asks this phone (peer, command, payload): the answer's payload, or null when it can't. */
+    @Volatile var onQuery: ((peer: String, command: Int, payload: ByteArray) -> ByteArray?)? = null
     val relayBroker get() = relay?.broker
     /** How many of the public brokers this device is on (it stays on all it can reach). */
     val relayBrokersUp get() = relay?.brokersUp ?: 0
@@ -262,7 +264,7 @@ class Link(
         var claim: CompletableFuture<Int>? = null; var allowed = false
         synchronized(lock) {
             if (mode == Proto.MODE_PAIR && pairing == null) { claim = CompletableFuture(); pairing = claim; allowed = true }
-            else if (mode in listOf(Proto.MODE_SEND, Proto.MODE_MUSIC, Proto.MODE_FIND, Proto.MODE_LIST, Proto.MODE_TAKE, Proto.MODE_ACTION, Proto.MODE_CLIP, Proto.MODE_CAMERA)) allowed = peers[ss.peerId.hex()]?.key?.contentEquals(ss.peerPub) == true
+            else if (mode in listOf(Proto.MODE_SEND, Proto.MODE_MUSIC, Proto.MODE_FIND, Proto.MODE_LIST, Proto.MODE_TAKE, Proto.MODE_ACTION, Proto.MODE_CLIP, Proto.MODE_CAMERA, Proto.MODE_QUERY)) allowed = peers[ss.peerId.hex()]?.key?.contentEquals(ss.peerPub) == true
         }
         if (!allowed) { c.send(Bytes().raw(Proto.MAGIC).u8(Proto.VERSION).u8(1).build()); return null }
         val nonce = Crypto.random(32)
@@ -298,6 +300,15 @@ class Link(
                 val sensitive = (r.u8() ?: 0) != 0; val text = r.string(256 * 1024) ?: return
                 val done = runCatching { onClipboard?.invoke(text, sensitive) == true }.getOrDefault(false)
                 sealed(c, ss, byteArrayOf(Proto.FRAME_CLIP_ACK.toByte(), if (done) 0 else 2))
+            }
+            // Revision 6: a PC's questions, on a connection it keeps open while it asks (a minute apart at most).
+            Proto.MODE_QUERY -> {
+                val peer = ss.peerId.hex(); c.timeout(60_000)
+                while (true) {
+                    val f = opened(c, ss) ?: break; if (f.size < 2 || (f[0].toInt() and 0xFF) != Proto.FRAME_QUERY) break
+                    val answer = runCatching { onQuery?.invoke(peer, f[1].toInt() and 0xFF, f.copyOfRange(2, f.size)) }.getOrNull()
+                    if (!sealed(c, ss, Bytes().u8(Proto.FRAME_QUERY_REPLY).u8(if (answer != null) Proto.OK else Proto.FAILED).raw(answer ?: ByteArray(0)).build())) break
+                }
             }
             Proto.MODE_CAMERA -> {
                 val f = opened(c, ss) ?: return; if (f.size != 1 || f[0].toInt() != Proto.FRAME_CAMERA) return
@@ -719,6 +730,8 @@ class Link(
     fun selectOutput(peer: String, id: String): Int = remote(peer, Proto.CMD_AUDIO, Bytes().u8(1).string(id).build())?.status ?: Proto.FAILED
     fun openIslandPage(peer: String, page: Int): Boolean = ask(peer, Proto.CMD_ISLAND, byteArrayOf(0, page.toByte())) != null
     fun closeIsland(peer: String): Boolean = ask(peer, Proto.CMD_ISLAND, byteArrayOf(1)) != null
+    /** Revision 6: the PC's battery in full (the island keeps reading it quickly while this phone asks, and for 12 s after). */
+    fun battery(peer: String): PcBattery? = ask(peer, Proto.CMD_BATTERY)?.let { IslandWire.battery(it) }
 
     // ---- revision 4: connections kept for more ----
     /** A remote (or notices) connection kept open, the path it went by (3 this network, 2 direct, 1 relay) and when last used. */

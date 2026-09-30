@@ -18,6 +18,7 @@ import io.github.arnavdugad.arnavisland.link.LinkEvent
 object Notify {
     const val LINK = 1; const val PAIR = 2; const val MUSIC = 3; const val RING = 4; const val UPDATE = 5; const val PHOTO = 6
     const val OFFER = 1000; const val RECEIVED = 5000
+    // Also taken: 7 the PC's music player (PcMedia.ID), 8 the PC's focus clock (FocusLive.ID).
     private const val CH_LINK = "link"; private const val CH_FILES = "files"; private const val CH_RING = "ring"; private const val CH_UPDATES = "updates"; private const val CH_MUSIC = "music"
 
     fun channels(context: Context) {
