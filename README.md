@@ -33,6 +33,10 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 - **Your PC's numbers, live:** processor, graphics, memory, network, disk and battery, with graphs, and the processor and graphics card by name.
 - **1.5:** swipe between your PCs, a bar for each core, graphs you can scrub, the PC's battery in full, and volume buttons.
 
+**Screens, both ways (1.6)**
+- **Your PC's screen, here:** up to 1440p at 60 frames a second on the same Wi-Fi, still smooth over the internet. Tap to click, drag, scroll with two fingers, pinch to zoom, and type.
+- **This phone's screen on your PC,** in a floating window there. With **Settings › Accessibility › Control from your PC** on, the PC's clicks and typing work here too.
+
 **The remote**
 - See what plays on your PC: its cover, title, artist and app.
 - Scrub through the song (with a soft click at each lyric line), play and pause, skip.
@@ -119,6 +123,7 @@ To see your notifications and calls on the island, turn on **Devices › Your no
 - Your PC shows your notifications only while its *My phone's notifications* setting is on. It keeps them in memory only.
 - Notifications you hide on the lock screen are never sent. Replies and actions run on the phone; only the words you typed travel.
 - Copies marked sensitive (passwords) are never sent by the universal clipboard.
+- **Screens** are shown only while you've asked: the PC's screen only while its *My phone can control this PC* is on; this phone's screen only after Android asks, each time, with a notification to stop it. Neither is recorded or kept. The accessibility service acts only while this phone's screen is shown, and reads only the field it types into.
 
 ## Checking a download
 

@@ -1,5 +1,6 @@
 package io.github.arnavdugad.arnavisland
 
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -78,7 +79,10 @@ fun typedDiff(old: String, new: String): Pair<Int, String> {
  * second (30 over the internet); clicks and keys go at once, in order after the movement before them. A session the PC
  * closed (idle for two minutes) is opened again for the next frame.
  */
-class InputLink(private val peer: String, private val internet: Boolean, private val scope: CoroutineScope) {
+/** 1.6: where keys and typing go: the trackpad's session, or the PC's screen shown here. */
+interface Typist { fun key(vk: Int, vararg modifiers: Int); fun frame(f: ByteArray) }
+
+class InputLink(private val peer: String, private val internet: Boolean, private val scope: CoroutineScope) : Typist {
     /** 0 connecting, 1 ready, 2 couldn't connect. */
     val state = MutableStateFlow(0)
     private val queue = Channel<ByteArray>(Channel.UNLIMITED)
@@ -100,7 +104,7 @@ class InputLink(private val peer: String, private val internet: Boolean, private
     }
     fun move(x: Float, y: Float) = synchronized(lock) { dx += x; dy += y }
     fun scroll(vertical: Float, horizontal: Float) = synchronized(lock) { wheel += vertical; hwheel += horizontal }
-    fun frame(f: ByteArray) { flush(); queue.trySend(f) }
+    override fun frame(f: ByteArray) { flush(); queue.trySend(f) }
     private fun flush() {
         val (mx, my, w, h) = synchronized(lock) {
             val mx = dx.toInt(); val my = dy.toInt(); val w = wheel.toInt(); val h = hwheel.toInt()
@@ -109,7 +113,7 @@ class InputLink(private val peer: String, private val internet: Boolean, private
         if (mx != 0 || my != 0) queue.trySend(Link.moveFrame(mx, my))
         if (w != 0 || h != 0) queue.trySend(Link.scrollFrame(w, h))
     }
-    fun key(vk: Int, vararg modifiers: Int) {
+    override fun key(vk: Int, vararg modifiers: Int) {
         modifiers.forEach { frame(Link.keyFrame(it, 1)) }
         frame(Link.keyFrame(vk, 2))
         modifiers.reversed().forEach { frame(Link.keyFrame(it, 0)) }
@@ -233,7 +237,7 @@ private fun Modifier.graphicsLayerScale(s: Float) = this.then(Modifier.graphicsL
 private class Key(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector? = null, val send: () -> Unit)
 
 /** The keys a phone keyboard doesn't have, and a few shortcuts. */
-@Composable private fun Keys(input: InputLink) {
+@Composable fun Keys(input: Typist) {
     val t = LocalTokens.current; val haptics = LocalHapticFeedback.current
     val keys = listOf(
         Key("Esc") { input.key(Vk.ESCAPE) }, Key("Tab") { input.key(Vk.TAB) },
@@ -257,12 +261,12 @@ private class Key(val label: String, val icon: androidx.compose.ui.graphics.vect
 }
 
 /** Typing goes straight to the PC: letters as they are typed, corrections as backspaces, Enter as Enter. */
-@Composable private fun Typing(input: InputLink, pcName: String) {
+@Composable fun Typing(input: Typist, pcName: String, modifier: Modifier = Modifier, focus: androidx.compose.ui.focus.FocusRequester? = null) {
     val t = LocalTokens.current
     // A mark before the text: deleting it means a backspace with nothing left here.
     val mark = "​"
     var value by remember { mutableStateOf(TextFieldValue(mark, TextRange(1))) }
-    Row(Modifier.fillMaxWidth().glass(GlassShapes.capsule, GlassLevel.Control).padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().glass(GlassShapes.capsule, GlassLevel.Control).padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Rounded.Keyboard, null, tint = t.muted, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(10.dp))
         Box(Modifier.weight(1f)) {
             if (value.text.length <= 1) Text("Type on $pcName", style = Type.body, color = t.faint)
@@ -278,7 +282,7 @@ private class Key(val label: String, val icon: androidx.compose.ui.graphics.vect
             }, singleLine = true, textStyle = Type.body.copy(color = t.text), cursorBrush = SolidColor(t.accent),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { input.key(Vk.RETURN); value = TextFieldValue(mark, TextRange(1)) }),
-                modifier = Modifier.fillMaxWidth())
+                modifier = Modifier.fillMaxWidth().then(if (focus != null) Modifier.focusRequester(focus) else Modifier))
         }
     }
 }

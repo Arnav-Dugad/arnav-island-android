@@ -113,6 +113,80 @@ class InteropTest {
         } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
     }
 
+    /**
+     * Revision 7 (island 0.24): screens, either way, against the Windows engine's own capture-free pieces. The PC's
+     * screen is share_peer's made-up moving picture (never a real screen), encoded by the Windows encoder and put back
+     * together here; this phone's screen is played by frames that encoder made at a phone's shape, decoded and counted there.
+     */
+    @Test fun screens_either_way() {
+        val exe = System.getenv("ARNAV_SHARE_PEER"); assumeTrue("ARNAV_SHARE_PEER not set", exe != null && File(exe).exists())
+        val work = Files.createTempDirectory("arnav-screens").toFile(); val phoneDir = File(work, "phone").apply { mkdirs() }
+        val pcPort = 47937
+        val process = ProcessBuilder(exe, pcPort.toString(), File(work, "pc").path).redirectErrorStream(true).start()
+        val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
+        thread(isDaemon = true) { while (true) { val l = reader.readLine() ?: break; println("PC: $l"); lines.put(l) } }
+        val pc = process.outputStream.bufferedWriter(Charsets.UTF_8)
+        fun tell(cmd: String) { pc.write(cmd); pc.newLine(); pc.flush() }
+        val phone = Link(MemoryStore(), "Test Phone", FolderInbox(phoneDir), { events.put(it) }, Link.Options(tcpPort = 0, discovery = false, loopback = true))
+        try {
+            assertTrue(phone.start())
+            val pcId = line("READY ").split(' ')[0]
+            // A PC that's older can't be asked.
+            phone.addPeer(pcId, "Interop PC", "127.0.0.1", pcPort, 2, 6); assertNull(phone.openScreen(pcId, ScreenWire.askPc(1920, 1080, 60)))
+            phone.addPeer(pcId, "Interop PC", "127.0.0.1", pcPort, 2, 7)
+            tell("peer ${phone.identity} ${phone.port}"); line("OK peer")
+            phone.pair(pcId); await<LinkEvent.PairCode>(); phone.confirmPair(true); assertTrue(await<LinkEvent.Paired>().ok); line("PAIRED ok")
+
+            // The PC's screen here: the whole picture on this network, at 60 frames a second; the first frame a key frame
+            // with its SPS and PPS (a decoder's setup); numbers in order.
+            val (s, answer) = phone.openScreen(pcId, ScreenWire.askPc(2400, 1080, 60))!!
+            val r = ScreenWire.reply(answer)!!; assertEquals(0, r.status); assertEquals(1280, r.width); assertEquals(720, r.height); assertEquals(60, r.fps); assertTrue(r.bitrate >= 2_000_000); assertTrue(r.encoder.isNotEmpty())
+            val a = ScreenWire.Assembler(); val frames = ArrayList<ScreenWire.Assembler.Frame>(); var end = System.currentTimeMillis() + 20_000
+            while (frames.size < 90 && System.currentTimeMillis() < end) {
+                val f = s.receive(1000) ?: continue; val whole = a.add(f) ?: continue; frames += whole
+                if (frames.size % 15 == 0) s.send(ScreenWire.feedback(whole.number, 4, 0, 60))
+            }
+            assertTrue("frames: ${frames.size}", frames.size >= 90); assertTrue(frames.first().key)
+            val (sps, pps) = ScreenWire.parameterSets(frames.first().data)!!; assertEquals(7, sps[4].toInt() and 0x1F); assertEquals(8, pps[4].toInt() and 0x1F)
+            assertTrue(frames.zipWithNext().all { (x, y) -> y.number == x.number + 1 && y.pts > x.pts })
+            assertTrue(frames.drop(1).any { !it.key }); assertTrue(frames.all { f -> ScreenWire.nals(f.data).any { it.first == 1 || it.first == 5 } })
+            // A key frame asked for comes (with its SPS and PPS again).
+            s.send(byteArrayOf(Proto.SCREEN_KEYFRAME.toByte())); var again: ScreenWire.Assembler.Frame? = null; end = System.currentTimeMillis() + 5_000
+            while (again == null && System.currentTimeMillis() < end) { val f = s.receive(1000) ?: continue; a.add(f)?.takeIf { it.key }?.let { again = it } }
+            assertNotNull(again); assertNotNull(ScreenWire.parameterSets(again!!.data))
+            // A touch on the picture reaches the PC as a point (and a click).
+            s.send(ScreenWire.input(Link.pointFrame(.5f, .25f))); assertEquals("65ff7fff3f", line("MIRROR input "))
+            s.send(ScreenWire.input(Link.buttonFrame(0, 2))); assertEquals("610002", line("MIRROR input "))
+            s.send(byteArrayOf(Proto.SCREEN_STOP.toByte()))
+            val sent = line("MIRROR sent ").split(' '); assertTrue(sent[0].toInt() >= 90); assertEquals("1280x720", sent[2]); s.close()
+
+            // This phone's screen there: frames from the Windows encoder at a phone's shape, as this phone would send them.
+            fun encode(name: String, n: Int, w: Int, h: Int): List<Pair<Boolean, ByteArray>> {
+                val sample = File(work, name); tell("encode ${sample.path} $n $w $h"); val encoded = line("ENCODED ", 60).split(' ')[0].toInt(); assertTrue(encoded >= n * 2 / 3)
+                val bytes = sample.readBytes(); val video = ArrayList<Pair<Boolean, ByteArray>>(); var at = 0
+                while (at + 5 <= bytes.size) { val k = java.nio.ByteBuffer.wrap(bytes, at, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int; video += (bytes[at + 4].toInt() == 1) to bytes.copyOfRange(at + 5, at + 5 + k); at += 5 + k }
+                assertEquals(encoded, video.size); assertTrue(video.first().first); return video
+            }
+            // Upright, then turned (the encoder starts again at the new shape, as a turned phone's does).
+            val upright = encode("upright.h264", 90, 720, 1280); val turned = encode("turned.h264", 45, 1280, 720)
+            val video = upright + turned
+            val (p, reply) = phone.openScreen(pcId, ScreenWire.offerPhone(720, 1280, 30, "Test Phone"))!!
+            val pr = ScreenWire.reply(reply)!!; assertEquals(0, pr.status); assertEquals(720, pr.width); assertEquals(1280, pr.height)
+            assertEquals("720x1280 Test Phone", line("MIRROR showing "))
+            var lastAck = 0L; val acks = thread(isDaemon = true) { while (p.open) { val f = p.receive(500) ?: continue; if ((f[0].toInt() and 0xFF) == Proto.SCREEN_FEEDBACK) lastAck = Reader(f).let { it.u8(); it.u32() ?: 0 } } }
+            video.forEachIndexed { i, (key, data) ->
+                if (i == upright.size) assertTrue(p.send(Bytes().u8(Proto.SCREEN_LIMITS).u16(1280).u16(720).u8(30).build()))
+                ScreenWire.frames(i + 1, key, i * 333_333L, data).forEach { assertTrue(p.send(it)) }; Thread.sleep(8)
+            }
+            end = System.currentTimeMillis() + 5_000; while (lastAck < video.size && System.currentTimeMillis() < end) Thread.sleep(100)
+            assertEquals("the PC said it had them all", video.size.toLong(), lastAck)
+            assertEquals("720x1280", line("MIRROR frame ")); assertEquals("the turned frames, at their new shape", "1280x720", line("MIRROR frame "))
+            p.send(byteArrayOf(Proto.SCREEN_STOP.toByte()))
+            val shown = line("MIRROR shown ").split(' '); assertTrue("shown ${shown[0]} of ${video.size}", shown[0].toInt() >= video.size - 8); assertTrue(shown[1].toInt() >= 1)
+            p.close(); acks.join(2000)
+        } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
+    }
+
     @Test fun phone_and_windows_island_speak_the_same_protocol() {
         val exe = System.getenv("ARNAV_SHARE_PEER"); assumeTrue("ARNAV_SHARE_PEER not set", exe != null && File(exe).exists())
         val work = Files.createTempDirectory("arnav-interop").toFile(); val phoneDir = File(work, "phone").apply { mkdirs() }
@@ -248,8 +322,18 @@ class InteropTest {
             // Each sees the other through the relay.
             val seen = System.currentTimeMillis() + 40_000
             while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
-            val view = phone.peers().first { it.id == pcId }; assertTrue(view.online && view.internet); assertEquals(6, view.revision)
-            line("PRESENCE ${phone.identity} 1 1 6 1", 40)
+            val view = phone.peers().first { it.id == pcId }; assertTrue(view.online && view.internet); assertEquals(7, view.revision)
+            line("PRESENCE ${phone.identity} 1 1 7 1", 40)
+
+            // Revision 7: the PC's screen (its made-up picture) through the relay, light and paced for it.
+            run {
+                val (s, answer) = phone.openScreen(pcId, ScreenWire.askPc(1920, 1080, 60))!!
+                val r = ScreenWire.reply(answer)!!; assertEquals(0, r.status); assertTrue(r.fps == 20 || r.fps == 60); assertTrue(r.width <= 1920)
+                val a = ScreenWire.Assembler(); var frames = 0; var key = false; val end = System.currentTimeMillis() + 40_000
+                while (frames < 12 && System.currentTimeMillis() < end) { val f = s.receive(1000) ?: continue; a.add(f)?.let { frames++; key = key || it.key; s.send(ScreenWire.feedback(it.number, 3, 0, 20)) } }
+                assertTrue("frames through the relay: $frames", frames >= 12); assertTrue(key)
+                s.send(byteArrayOf(Proto.SCREEN_STOP.toByte())); line("MIRROR sent ", 40); s.close()
+            }
 
             // Phone to PC.
             val photo = ByteArray(700_000) { (it * 13 + 5).toByte() }
@@ -340,7 +424,7 @@ class InteropTest {
             val seen = System.currentTimeMillis() + 40_000
             while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
             assertTrue("the phone sees the PC through the broker they share", phone.peers().any { it.id == pcId && it.online && it.internet })
-            line("PRESENCE ${phone.identity} 1 1 6 1", 40)
+            line("PRESENCE ${phone.identity} 1 1 7 1", 40)
             if (direct) {
                 val until = System.currentTimeMillis() + 20_000
                 while (System.currentTimeMillis() < until && phone.peers().none { it.id == pcId && it.path == 2 }) Thread.sleep(100)

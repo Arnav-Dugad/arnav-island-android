@@ -12,8 +12,8 @@ import java.io.OutputStream
  */
 object Proto {
     const val VERSION = 2
-    /** Revision 4 (1.3, island 0.21): remote and notices connections stay open for more; the relay has a direct path. Revision 5 (1.4, island 0.22): the whole island. Revision 6 (1.5, island 0.23): the PC's battery, each core, and the PC asking this phone. */
-    const val REVISION = 6
+    /** Revision 4 (1.3, island 0.21): remote and notices connections stay open for more; the relay has a direct path. Revision 5 (1.4, island 0.22): the whole island. Revision 6 (1.5, island 0.23): the PC's battery, each core, and the PC asking this phone. Revision 7 (1.6, island 0.24): screens either way. */
+    const val REVISION = 7
     const val TCP_PORT = 47820
     const val UDP_PORT = 47821
     val MAGIC = byteArrayOf('A'.code.toByte(), 'R'.code.toByte(), 'N'.code.toByte(), 'V'.code.toByte())
@@ -45,6 +45,18 @@ object Proto {
     /** Revision 6: a PC asks this phone (mode Q, kept open): [0x80, command, payload] answered [0x81, status, payload]. 1 readings, 2 the focus clock. */
     const val MODE_QUERY = 'Q'.code; const val FRAME_QUERY = 0x80; const val FRAME_QUERY_REPLY = 0x81
     const val QUERY_READINGS = 1; const val QUERY_FOCUS = 2
+    /**
+     * Revision 7 (island 0.24): screens, either way, on a connection this phone opens (mode V). First [0xA0, kind]: 1 the
+     * PC's screen here (u16 largest width, height, u8 fps, u32 bits a second, 0 as the path allows); 2 this phone's screen
+     * on the PC (u16 width, height, u8 fps, its name). Answered [0xA1, status, u16 width, height, u8 fps, u32 bps, name].
+     * Frames [0xA2, flags (1 key, 2 first, 4 last), u32 number, u64 time (100 ns), Annex B]; feedback [0xA3, u32 last,
+     * u16 decode ms, u32 kbps, u8 fps]; [0xA4] a key frame please; [0xA5, u16 w, u16 h, u8 fps] new limits; to the PC
+     * [0xA9, input frame]; to this phone [0xA6, action, u16 x, u16 y], [0xA7, key], [0xA8, text]; [0xAF] the end.
+     */
+    const val MODE_MIRROR = 'V'.code
+    const val SCREEN_REQUEST = 0xA0; const val SCREEN_REPLY = 0xA1; const val SCREEN_VIDEO = 0xA2; const val SCREEN_FEEDBACK = 0xA3; const val SCREEN_KEYFRAME = 0xA4
+    const val SCREEN_LIMITS = 0xA5; const val SCREEN_TOUCH = 0xA6; const val SCREEN_BUTTON = 0xA7; const val SCREEN_TEXT = 0xA8; const val SCREEN_INPUT = 0xA9; const val SCREEN_STOP = 0xAF
+    const val INPUT_POINT = 0x65
     const val MODE_INPUT = 'I'.code; const val MODE_ACTION = 'A'.code; const val MODE_CLIP = 'C'.code; const val MODE_CAMERA = 'K'.code
     const val FRAME_ACTION = 0x70; const val FRAME_ACTION_ACK = 0x71; const val FRAME_CLIP = 0x50; const val FRAME_CLIP_ACK = 0x51; const val FRAME_CAMERA = 0x42; const val FRAME_CAMERA_ACK = 0x43
     const val INPUT_MOVE = 0x60; const val INPUT_BUTTON = 0x61; const val INPUT_SCROLL = 0x62; const val INPUT_TEXT = 0x63; const val INPUT_KEY = 0x64

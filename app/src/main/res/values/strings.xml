@@ -10,6 +10,9 @@
     <string name="widget_stats_description">Your PC’s processor, graphics and memory, live</string>
     <string name="widget_focus_label">Focus on your PC</string>
     <string name="widget_focus_description">Your PC’s focus clock, counting down here too</string>
+    <string name="control_label">Control from your PC</string>
+    <string name="control_summary">Your PC’s clicks and typing, while it shows this phone</string>
+    <string name="control_description">While your PC shows this phone’s screen (you start that in Arnav Island, and Android asks each time), its clicks tap here, dragging swipes, its right button goes back and its typing goes into the field you’re in. Nothing on the screen is read or kept, and nothing is done when the screen isn’t being shown.</string>
     <string name="sc_camera">Photo to Shelf</string>
     <string name="sc_camera_long">Take a photo for your PC’s Shelf</string>
     <string name="sc_trackpad">Trackpad</string>

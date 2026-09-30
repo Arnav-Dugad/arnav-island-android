@@ -367,6 +367,34 @@ class Link(
         val (c, ss, _) = reach(peer, Proto.MODE_INPUT, null); return c?.let { it.timeout(120_000); InputChannel(it, ss) }
     }
 
+    // ---- revision 7: screens, either way ----
+    /** A screen's connection: sends are safe from more than one thread; one thread receives. */
+    interface ScreenSession { val open: Boolean; fun send(frame: ByteArray): Boolean; fun receive(timeoutMs: Int): ByteArray?; fun close() }
+    private inner class ScreenChannel(private val c: Conn, private val ss: Session) : ScreenSession {
+        @Volatile override var open = true; private set
+        override fun send(frame: ByteArray): Boolean { if (!open) return false; val ok = synchronized(this) { sealed(c, ss, frame) }; if (!ok) close(); return ok }
+        override fun receive(timeoutMs: Int): ByteArray? {
+            if (!open) return null
+            // Waits only for a frame to start; once one has, it's read whole (giving up halfway would lose the stream's place).
+            try { c.timeout(maxOf(1, timeoutMs)); c.input.mark(1); if (c.input.read() < 0) { close(); return null }; c.input.reset() }
+            catch (_: java.net.SocketTimeoutException) { return null } catch (_: Exception) { close(); return null }
+            return try { c.timeout(20_000); ss.channel!!.open(c.recv()) } catch (_: Exception) { close(); null }
+        }
+        override fun close() { open = false; c.close() }
+    }
+    /** Opens a screen with a PC (island 0.24): its answer to [request], and the session; null when it can't be reached. */
+    fun openScreen(peer: String, request: ByteArray): Pair<ScreenSession, ByteArray>? {
+        val (t, _) = target(peer); if (t == null || t.revision < 7) return null
+        val (c, ss, _) = reach(peer, Proto.MODE_MIRROR, null); c ?: return null
+        val s = ScreenChannel(c, ss)
+        if (!s.send(request)) return null
+        // Its answer (the PC may take a moment to start its encoder).
+        var reply: ByteArray? = null; val end = System.currentTimeMillis() + 10_000
+        while (reply == null && s.open && System.currentTimeMillis() < end) reply = s.receive(1000)
+        if (reply == null || reply.isEmpty() || (reply[0].toInt() and 0xFF) != Proto.SCREEN_REPLY) { s.close(); return null }
+        return s to reply
+    }
+
     // ---- pairing from anywhere ----
     /** Offers a pairing code for ten minutes (blocks up to 8 s); null when the relay can't be reached. */
     fun hostPairing(): String? = relay?.host()
@@ -856,5 +884,7 @@ class Link(
         fun textFrame(text: String) = Bytes().u8(Proto.INPUT_TEXT).text(text.take(2000)).build()
         /** A Windows virtual-key code, pressed and let go (state 2), or down (1) or up (0). */
         fun keyFrame(vk: Int, state: Int = 2) = Bytes().u8(Proto.INPUT_KEY).u16(vk).u8(state).build()
+        /** Revision 7: a point on the PC's screen as it's shown here (0 to 1 each way). */
+        fun pointFrame(x: Float, y: Float) = Bytes().u8(Proto.INPUT_POINT).u16((x.coerceIn(0f, 1f) * 65535).toInt()).u16((y.coerceIn(0f, 1f) * 65535).toInt()).build()
     }
 }

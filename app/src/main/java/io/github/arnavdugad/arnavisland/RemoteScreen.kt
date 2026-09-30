@@ -2,6 +2,7 @@ package io.github.arnavdugad.arnavisland
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
 import android.graphics.Bitmap
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.*
@@ -279,6 +280,24 @@ import java.nio.ByteOrder
             GlassTile(Icons.Rounded.NotificationsActive, "Find ${pc.name}", "It chimes and lights up", Modifier.weight(1f).fillMaxHeight(), tint = t.warn) { scope.launch { Hub.ringPc() } }
             GlassTile(Icons.Rounded.Mouse, "Trackpad", "And the keyboard", Modifier.weight(1f).fillMaxHeight(), tint = t.accent2) {
                 if (pc.revision < 3 && pc.online) Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${pc.name}", "The trackpad needs version 0.20 or later")) else onTrackpad()
+            }
+        }
+        // 1.6: screens, either way.
+        val showing by PhoneScreen.showing.collectAsState()
+        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            GlassTile(Icons.Rounded.DesktopWindows, "${pc.name}’s screen", "Here, and touch it", Modifier.weight(1f).fillMaxHeight(), tint = t.accent) {
+                if (pc.revision < 7 && pc.online) Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${pc.name}", "Its screen needs version 0.24 or later"))
+                else context.startActivity(Intent(context, PcScreenActivity::class.java).putExtra("peer", pc.id))
+            }
+            GlassTile(Icons.Rounded.CastConnected, if (showing != null) "Stop showing" else "This phone there", if (showing != null) "On $showing now" else "In a window on ${pc.name}", Modifier.weight(1f).fillMaxHeight(), tint = t.accent2) {
+                when {
+                    showing != null -> PhoneScreen.stop(context)
+                    pc.revision < 7 && pc.online -> Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${pc.name}", "Showing this phone needs version 0.24 or later"))
+                    else -> {
+                        PhoneScreen.start(context, pc.id)
+                        if (!PhoneScreen.controllable(context)) Hub.banners.tryEmit(Banner(Banner.Kind.Info, "To use this phone from ${pc.name}", "Turn on “Control from your PC” in Settings › Accessibility"))
+                    }
+                }
             }
         }
     }
