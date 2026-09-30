@@ -74,9 +74,11 @@ data class Look(val appearance: Int, val glass: Boolean, val weather: Boolean)
             Column {
                 paired.forEachIndexed { i, p ->
                     if (i > 0) Hairline()
+                    // 1.3: its connection's quality ring (direct, relay or weak), and how it's reached with its round trip.
+                    val q = quality(p)
                     GlassRow(if (p.phone) Icons.Rounded.PhoneAndroid else Icons.Rounded.Laptop, p.name,
-                        listOf(when { !p.online -> "Away"; p.internet -> "Over the internet"; else -> "Here" }, if (p.id == pc?.id) "Remote and sends go here" else "", if (p.online && !p.remote) "Update its island for the remote" else "").filter { it.isNotEmpty() }.joinToString("  ·  "),
-                        tint = if (p.online) t.good else t.faint, onClick = { if (!p.phone) Hub.choose(p.id) }) {
+                        listOf(q.text, if (p.id == pc?.id) "Remote and sends go here" else "", if (p.online && !p.remote) "Update its island for the remote" else "").filter { it.isNotEmpty() }.joinToString("  ·  "),
+                        tint = if (p.online) t.good else t.faint, onClick = { if (!p.phone) Hub.choose(p.id) }, ring = if (p.online) q else null) {
                         var confirm by remember { mutableStateOf(false) }
                         Text(if (confirm) "Forget?" else "Forget", style = Type.caption, color = if (confirm) t.danger else t.muted,
                             modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(role = Role.Button) { if (confirm) Hub.forget(p.id) else confirm = true }.padding(8.dp))

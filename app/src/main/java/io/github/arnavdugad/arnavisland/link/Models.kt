@@ -9,6 +9,8 @@ data class PeerView(
     val version: Int, val revision: Int, val address: String?,
     /** Here only through the relay (on another network). */
     val internet: Boolean = false,
+    /** 1.3, over the internet: [path] 1 through the relay, 2 directly; its round trip (ms, 0 unknown); brokers it's heard on; a direct path over IPv6. */
+    val path: Int = 0, val rtt: Double = 0.0, val relays: Int = 0, val v6: Boolean = false,
 ) {
     /** Revision 2 (Arnav Island 0.19 and later) answers remote control, notices and find-my-phone. */
     val remote get() = version >= Proto.VERSION && revision >= 2

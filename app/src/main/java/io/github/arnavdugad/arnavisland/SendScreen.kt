@@ -73,7 +73,7 @@ import kotlinx.coroutines.withContext
         if (!ready) Text("${pc.name} is away. Files go once Arnav Island runs there, on this Wi-Fi or any other.", style = Type.caption, color = t.muted, modifier = Modifier.padding(top = 12.dp, start = 6.dp))
         else if (pc.internet) Row(Modifier.padding(top = 12.dp, start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Public, null, tint = t.muted, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(6.dp))
-            Text("${pc.name} is on another network: files go over the internet, end-to-end encrypted", style = Type.caption, color = t.muted)
+            Text("${pc.name} is on another network: files go ${if (pc.path == 2) "straight to it over the internet" else "through the relay"}, end-to-end encrypted", style = Type.caption, color = t.muted)
         }
         // Transfers under way.
         AnimatedVisibility(transfers.isNotEmpty(), enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {

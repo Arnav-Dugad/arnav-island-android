@@ -147,7 +147,7 @@ class InteropTest {
         thread(isDaemon = true) { while (true) { val l = reader.readLine() ?: break; if (!l.startsWith("REMOTE status")) println("PC: $l"); lines.put(l) } }
         val pc = process.outputStream.bufferedWriter(Charsets.UTF_8)
         fun tell(cmd: String) { pc.write(cmd); pc.newLine(); pc.flush() }
-        val phone = Link(MemoryStore(), "Test Phone", FolderInbox(phoneDir), { events.put(it) }, Link.Options(tcpPort = 0, discovery = false, loopback = true, relay = true))
+        val phone = Link(MemoryStore(), "Test Phone", FolderInbox(phoneDir), { events.put(it) }, Link.Options(tcpPort = 0, discovery = false, loopback = true, relay = true, directLoopback = true))
         try {
             assertTrue(phone.start())
             val pcId = line("READY ").split(' ')[0]
@@ -165,8 +165,8 @@ class InteropTest {
             // Each sees the other through the relay.
             val seen = System.currentTimeMillis() + 40_000
             while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
-            val view = phone.peers().first { it.id == pcId }; assertTrue(view.online && view.internet); assertEquals(3, view.revision)
-            line("PRESENCE ${phone.identity} 1 1 3 1", 40)
+            val view = phone.peers().first { it.id == pcId }; assertTrue(view.online && view.internet); assertEquals(4, view.revision)
+            line("PRESENCE ${phone.identity} 1 1 4 1", 40)
 
             // Phone to PC.
             val photo = ByteArray(700_000) { (it * 13 + 5).toByte() }
@@ -204,6 +204,14 @@ class InteropTest {
     @Test fun what_a_broker_drops_is_sent_again() =
         meetOnSplitBrokers(pcArgs = listOf("--relay", "--relay-lose=5"), phoneBrokers = Relay.DEFAULT_BROKERS, port = 47934, phoneLoseEvery = 4)
 
+    /**
+     * 1.3: a direct path. Both on the loopback here (as two devices on different networks are on their public addresses):
+     * after pairing through the relay they find each other directly within seconds; then the remote answers in one round
+     * trip on its kept connection, and 3 MB go each way over the path.
+     */
+    @Test fun a_direct_path_is_found_and_used() =
+        meetOnSplitBrokers(pcArgs = listOf("--relay", "--direct-loopback"), phoneBrokers = Relay.DEFAULT_BROKERS, port = 47935, direct = true)
+
     /** The other way round: the PC can reach only EMQX, the phone all three. A scanned link with another PC's key is refused first. */
     @Test fun a_pc_on_one_broker_is_still_found_by_the_phone() =
         meetOnSplitBrokers(pcArgs = listOf("--relay-only=1"), phoneBrokers = Relay.DEFAULT_BROKERS, port = 47933, wrongKeyFirst = true)
@@ -212,7 +220,7 @@ class InteropTest {
      * Pairs across a broker split by the island's QR code (its link carries the PC's key fingerprint, which the phone
      * checks, so only the PC confirms), then a remote status, a file each way and presence, all through the one broker both share.
      */
-    private fun meetOnSplitBrokers(pcArgs: List<String>, phoneBrokers: List<Pair<String, Int>>, port: Int, wrongKeyFirst: Boolean = false, phoneLoseEvery: Int = 0) {
+    private fun meetOnSplitBrokers(pcArgs: List<String>, phoneBrokers: List<Pair<String, Int>>, port: Int, wrongKeyFirst: Boolean = false, phoneLoseEvery: Int = 0, direct: Boolean = false) {
         val exe = System.getenv("ARNAV_SHARE_PEER"); assumeTrue("ARNAV_SHARE_PEER not set", exe != null && File(exe).exists())
         assumeTrue("ARNAV_RELAY_TEST not set", System.getenv("ARNAV_RELAY_TEST") != null)
         val work = Files.createTempDirectory("arnav-split").toFile(); val phoneDir = File(work, "phone").apply { mkdirs() }
@@ -221,7 +229,7 @@ class InteropTest {
         thread(isDaemon = true) { while (true) { val l = reader.readLine() ?: break; if (!l.startsWith("REMOTE status")) println("PC: $l"); lines.put(l) } }
         val pc = process.outputStream.bufferedWriter(Charsets.UTF_8)
         fun tell(cmd: String) { pc.write(cmd); pc.newLine(); pc.flush() }
-        val phone = Link(MemoryStore(), "Test Phone", FolderInbox(phoneDir), { events.put(it) }, Link.Options(tcpPort = 0, discovery = false, loopback = true, relay = true, relayBrokers = phoneBrokers, relayLoseEvery = phoneLoseEvery))
+        val phone = Link(MemoryStore(), "Test Phone", FolderInbox(phoneDir), { events.put(it) }, Link.Options(tcpPort = 0, discovery = false, loopback = true, relay = true, relayBrokers = phoneBrokers, relayLoseEvery = phoneLoseEvery, directLoopback = true))
         try {
             assertTrue(phone.start())
             val pcId = line("READY ").split(' ')[0]
@@ -249,16 +257,38 @@ class InteropTest {
             val seen = System.currentTimeMillis() + 40_000
             while (System.currentTimeMillis() < seen && phone.peers().none { it.id == pcId && it.online && it.internet }) Thread.sleep(200)
             assertTrue("the phone sees the PC through the broker they share", phone.peers().any { it.id == pcId && it.online && it.internet })
-            line("PRESENCE ${phone.identity} 1 1 3 1", 40)
+            line("PRESENCE ${phone.identity} 1 1 4 1", 40)
+            if (direct) {
+                val until = System.currentTimeMillis() + 20_000
+                while (System.currentTimeMillis() < until && phone.peers().none { it.id == pcId && it.path == 2 }) Thread.sleep(100)
+                assertTrue("a direct path was found", phone.peers().any { it.id == pcId && it.path == 2 })
+                tell("peers"); assertEquals("the PC went direct too", "2", line("PATH ${phone.identity} ", 10).split(' ')[0])
+            }
             val status = phone.status(pcId, null, null); assertNotNull(phone.lastRemoteError, status); assertEquals("Interop Song", status!!.title)
-            val photo = ByteArray(200_000) { (it * 7 + 3).toByte() }
+            // Revision 4: the remote's connection is kept, so each command is one round trip (and no handshake).
+            val t0 = System.nanoTime(); repeat(10) { assertNotNull(phone.lastRemoteError, phone.status(pcId, null, null)) }
+            val each = (System.nanoTime() - t0) / 10 / 1e6; println("status round trip (%s): %.0f ms".format(if (direct) "direct" else "relay", each))
+            if (direct) assertTrue("the remote on the direct path answers in %.0f ms".format(each), each < 150)
+            val size = if (direct) 3_000_000 else 200_000
+            val photo = ByteArray(size) { (it * 7 + 3).toByte() }
+            val sendAt = System.nanoTime()
             phone.send(pcId, listOf(Source("split.jpg", photo.size.toLong()) { ByteArrayInputStream(photo) }), "split.jpg")
-            line("OFFER 1 200000", 40); line("RECEIVED ", 90); await<LinkEvent.Sent>(40)
+            line("OFFER 1 $size", 40); line("RECEIVED ", 90); await<LinkEvent.Sent>(40)
+            if (direct) println("3 MB to the PC directly in %.1f s".format((System.nanoTime() - sendAt) / 1e9))
             assertArrayEquals(photo, File(work, "pc/dl/split.jpg").readBytes())
-            val fromPc = File(work, "back.bin").apply { writeBytes(ByteArray(90_000) { (it % 199).toByte() }) }
+            val fromPc = File(work, "back.bin").apply { writeBytes(ByteArray(if (direct) 3_000_000 else 90_000) { (it % 199).toByte() }) }
             tell("send ${phone.identity} ${fromPc.path}")
             val offer = await<LinkEvent.Offer>(40); phone.answer(offer.transfer, true); await<LinkEvent.Received>(90); line("SENT ", 40)
             assertArrayEquals(fromPc.readBytes(), File(phoneDir, "back.bin").readBytes())
+            if (direct) {
+                // The path goes quiet on the PC's side (as when a network drops it): within the minute the phone is back on
+                // the relay, and the remote answers there, on the same kept connection moved onto a broker.
+                tell("direct off"); line("OK direct off", 10)
+                val back = System.currentTimeMillis() + 60_000
+                while (System.currentTimeMillis() < back && phone.peers().none { it.id == pcId && it.path == 1 }) Thread.sleep(250)
+                assertTrue("back on the relay", phone.peers().any { it.id == pcId && it.path == 1 && it.online })
+                val relayed = phone.status(pcId, null, null); assertNotNull(phone.lastRemoteError, relayed); assertEquals("Interop Song", relayed!!.title)
+            }
         } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
     }
 }

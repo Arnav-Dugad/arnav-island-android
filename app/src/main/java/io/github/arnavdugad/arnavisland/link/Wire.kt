@@ -12,7 +12,8 @@ import java.io.OutputStream
  */
 object Proto {
     const val VERSION = 2
-    const val REVISION = 3
+    /** Revision 4 (1.3, island 0.21): remote and notices connections stay open for more; the relay has a direct path. */
+    const val REVISION = 4
     const val TCP_PORT = 47820
     const val UDP_PORT = 47821
     val MAGIC = byteArrayOf('A'.code.toByte(), 'R'.code.toByte(), 'N'.code.toByte(), 'V'.code.toByte())

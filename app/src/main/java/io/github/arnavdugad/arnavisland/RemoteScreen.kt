@@ -57,7 +57,7 @@ import java.nio.ByteOrder
     val t = LocalTokens.current
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(horizontal = 20.dp)) {
         if (pc == null) { Welcome(onPair); return@Column }
-        ScreenTitle(pc.name, over = when { !pc.online -> "Your PC  ·  away"; pc.internet -> "Your PC  ·  over the internet"; else -> "Your PC  ·  here" }) { LiveDot(pc.online) }
+        ScreenTitle(pc.name, over = when { !pc.online -> "Your PC  ·  away"; pc.internet -> "Your PC  ·  ${quality(pc).text.lowercase()}"; else -> "Your PC  ·  here" }) { LiveDot(pc.online) }
         // What the PC reports: its battery, how busy it is, and the weather where it is.
         if (status != null) Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (status.batteryPresent && status.battery >= 0) GlassChip("${status.battery}%", icon = if (status.charging) Icons.Rounded.BatteryChargingFull else Icons.Rounded.BatteryFull, iconTint = if (status.charging) t.good else if (status.battery <= 20) t.danger else Color.Unspecified)

@@ -280,7 +280,7 @@ private fun newPhoto(context: Context): Uri {
                     }
                     MiniIsland(status, cover, pc?.name, pc?.online == true, banner, transfers.values.maxByOrNull { it.id },
                         { if (islandOpen) islandOpen = false else if (status?.available == true && banner == null) islandOpen = true else scope.launch { pager.animateScrollToPage(if (transfers.isNotEmpty()) 1 else 0) } },
-                        Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp, start = 16.dp, end = 16.dp), expanded = islandOpen, internet = pc?.internet == true)
+                        Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp, start = 16.dp, end = 16.dp), expanded = islandOpen, internet = pc?.internet == true, quality = pc?.let { quality(it) })
                     GlassTabBar(tabs, pager.currentPage + pager.currentPageOffsetFraction, { scope.launch { pager.animateScrollToPage(it) } },
                         Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 22.dp, vertical = 14.dp).widthIn(max = 460.dp).fillMaxWidth())
                     androidx.compose.animation.AnimatedVisibility(playingHere != null, Modifier.align(Alignment.BottomCenter),

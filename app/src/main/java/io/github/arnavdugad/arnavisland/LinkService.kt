@@ -55,7 +55,7 @@ class LinkService : Service() {
                 val text = when {
                     Hub.failure.value != null -> Hub.failure.value!!
                     here.isEmpty() -> if (anywhere) "Reachable anywhere  ·  looking for your PCs" else "Looking for your PCs"
-                    here.size == 1 -> "Connected to ${here[0].name}${if (here[0].internet) " over the internet" else ""}"
+                    here.size == 1 -> "Connected to ${here[0].name}${if (here[0].internet) (if (here[0].path == 2) " directly, over the internet" else " through the relay") else ""}"
                     else -> "Connected to ${here.size} devices"
                 }
                 runCatching { androidx.core.app.NotificationManagerCompat.from(this@LinkService).notify(Notify.LINK, Notify.link(this@LinkService, text)) }

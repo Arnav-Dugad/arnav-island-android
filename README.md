@@ -25,6 +25,7 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 
 **Anywhere**
 - On the same Wi-Fi, devices talk directly. On different networks (another Wi-Fi, mobile data) they reach each other through a free public relay, end-to-end encrypted. It works on its own once you have paired.
+- **Straight there (1.3):** on different networks they try a direct path first (IPv6, or UDP hole punching through your router), and fall back to the relay. The remote then answers in milliseconds instead of about a third of a second. A ring round your PC shows how it's reached: green directly, amber through the relay, red when it's slow.
 - To pair from anywhere, the island shows a QR code (**Shelf › Nearby › Pair with a code**). Scan it with **Devices › Scan the QR code**, then choose Pair on the PC. The code names the PC's key, so the phone pairs with that PC only. You can also type the code, and check both show the same six digits.
 
 **The remote**
@@ -101,6 +102,7 @@ To see your notifications and calls on the island, turn on **Devices › Your no
 - There are no accounts, analytics or ads, and nothing is stored in a cloud.
 - Devices pair once, with the island's QR code or its typed code. The QR code also names the PC's key, and the phone refuses any other device that answers it.
 - The camera is used only while the QR scanner is open. Nothing it sees is kept or sent.
+- For a direct path, the phone tells your paired PCs its network addresses (sealed, as everything else), and asks free STUN servers (Google's and Cloudflare's) which public address its datagrams come from. They see its public IP address, as any website does.
 - Every connection is end-to-end encrypted:
   - keys: ECDH P-256, checked against the pairing
   - encryption: AES-256-GCM, with fresh keys for each connection

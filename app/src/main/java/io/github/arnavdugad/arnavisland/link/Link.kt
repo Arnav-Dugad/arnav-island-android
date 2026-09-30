@@ -36,7 +36,9 @@ class Link(
     private val options: Options = Options(),
 ) {
     class Options(val tcpPort: Int = Proto.TCP_PORT, val udpPort: Int = Proto.UDP_PORT, val discovery: Boolean = true, val loopback: Boolean = false, val phone: Boolean = true,
-                  val relay: Boolean = false, val relayBrokers: List<Pair<String, Int>> = Relay.DEFAULT_BROKERS, val relayLoseEvery: Int = 0)
+                  val relay: Boolean = false, val relayBrokers: List<Pair<String, Int>> = Relay.DEFAULT_BROKERS, val relayLoseEvery: Int = 0,
+                  /** 1.3: the relay's direct path ([directLoopback], [directExtra]: tests). */
+                  val direct: Boolean = true, val directLoopback: Boolean = false, val directExtra: List<String> = emptyList())
 
     private class Peer(var name: String = "", var address: String? = null, var port: Int = 0, var version: Int = 1, var revision: Int = 0,
                        var online: Boolean = false, var seen: Long = 0, var key: ByteArray? = null, var phone: Boolean = false)
@@ -96,7 +98,8 @@ class Link(
         if (options.relay) {
             relay = Relay(id, { displayName }, options.phone, Proto.REVISION,
                 incoming = { s, _ -> val c = Conn(s); try { incoming(c) } catch (_: Exception) {} finally { c.close() } },
-                changed = { postPeers() }, brokerList = options.relayBrokers, loseEvery = options.relayLoseEvery).also { it.start() }
+                changed = { postPeers() }, brokerList = options.relayBrokers, loseEvery = options.relayLoseEvery,
+                direct = options.direct, directLoopback = options.directLoopback, directExtra = options.directExtra).also { it.start() }
             syncRelay()
         }
         return true
@@ -108,9 +111,9 @@ class Link(
         r.pairs(keys.mapNotNull { (peer, pubKey) -> val agreed = Crypto.agree(k, pubKey) ?: return@mapNotNull null; Relay.RelayPair(peer.unhex() ?: return@mapNotNull null, agreed) })
     }
     /** The phone moved to another network: the relay reconnects, and this phone announces itself at once. */
-    fun networkChanged() { relay?.kick(); announceNow = true }
+    fun networkChanged() { relay?.kick(); announceNow = true; dropKept() }
     fun stop() {
-        relay?.stop(); relay = null
+        dropKept(); relay?.stop(); relay = null
         stopping = true
         runCatching { server?.close() }; runCatching { udp?.close() }
         pairing?.complete(0); decisions.values.forEach { it.complete(0) }
@@ -152,7 +155,9 @@ class Link(
         peers.filter { it.value.online || it.value.key != null }.map { (peer, p) ->
             // Here directly, or through the relay (which says what the device runs).
             val r = if (p.key != null) relay?.presence(peer) else null; val internet = !p.online && r?.here == true
-            PeerView(peer, p.name.ifEmpty { "A PC" }, p.key != null, p.online || internet, p.phone || r?.phone == true, p.version, if (internet) r!!.revision else p.revision, p.address, internet)
+            val path = if (internet) relay?.path(peer) else null
+            PeerView(peer, p.name.ifEmpty { "A PC" }, p.key != null, p.online || internet, p.phone || r?.phone == true, p.version, if (internet) r!!.revision else p.revision, p.address, internet,
+                path?.kind ?: 0, path?.rtt ?: 0.0, path?.brokers ?: 0, path?.v6 == true)
         }
     }.sortedWith(compareBy<PeerView>({ (if (it.online) 0 else 2) + (if (it.paired) 0 else 1) }, { it.name }))
 
@@ -675,6 +680,16 @@ class Link(
     fun remote(peer: String, command: Int, payload: ByteArray = ByteArray(0)): RemoteReply? {
         val (t, why0) = target(peer); if (t == null) { lastRemoteError = why0; return null }
         if (t.revision < 2) { lastRemoteError = "Update Arnav Island on ${t.name} to control it from your phone"; return null }
+        // Revision 4: on a connection kept open (one round trip a command, no new handshake).
+        if (t.revision >= 4) {
+            val request = Bytes().u8(Proto.FRAME_REQUEST).u8(command).raw(payload).build()
+            val (reply, why) = onKept(peer, Proto.MODE_REMOTE) { c, ss ->
+                if (!sealed(c, ss, request)) null
+                else opened(c, ss)?.let { f -> val r = Reader(f); if (r.u8() != Proto.FRAME_REPLY) null else r.u8()?.let { status -> RemoteReply(status, r.rest()) } }
+            }
+            if (reply == null) lastRemoteError = why.ifEmpty { "${t.name} didn't answer" }
+            return reply
+        }
         val (c, ss, why) = reach(peer, Proto.MODE_REMOTE, null); if (c == null) { lastRemoteError = why; return null }
         try {
             c.timeout(10_000)
@@ -685,6 +700,39 @@ class Link(
             return RemoteReply(status, r.rest())
         } finally { c.close() }
     }
+    // ---- revision 4: connections kept for more ----
+    /** A remote (or notices) connection kept open, the path it went by (3 this network, 2 direct, 1 relay) and when last used. */
+    private class Kept(val c: Conn, val ss: Session, val path: Int, @Volatile var used: Long)
+    private val kept = HashMap<String, Kept>(); private val keptLocks = ConcurrentHashMap<String, Any>()
+    /** How a paired device would be reached now: 3 on this network, 2 directly over the internet, 1 through the relay, 0 not. */
+    private fun pathNow(peer: String): Int {
+        val local = synchronized(lock) { peers[peer]?.let { it.online && it.address != null } == true }
+        return if (local) 3 else when (relay?.path(peer)?.kind) { 2 -> 2; 1 -> 1; else -> 0 }
+    }
+    /**
+     * Runs [ask] on a connection to [peer] in [mode] kept open for more: reached anew when there's none, it's idle long
+     * enough for the other side to have closed it (45 s), or a faster path has appeared; a kept one that fails is replaced
+     * by a fresh one once. Requests to one device and mode go one at a time.
+     */
+    private fun <T : Any> onKept(peer: String, mode: Int, ask: (Conn, Session) -> T?): Pair<T?, String> {
+        val key = "$peer/$mode"
+        synchronized(keptLocks.getOrPut(key) { Any() }) {
+            for (attempt in 0..1) {
+                val now = System.currentTimeMillis(); val best = pathNow(peer)
+                var e = synchronized(kept) { kept[key] }
+                if (e != null && (now - e.used > 45_000 || best > e.path)) { e.c.close(); synchronized(kept) { kept.remove(key) }; e = null }
+                val fresh = e == null
+                if (e == null) { val (c, ss, why) = reach(peer, mode, null); if (c == null) return null to why; e = Kept(c, ss, best, now); synchronized(kept) { kept[key] = e } }
+                val result = runCatching { e.c.timeout(10_000); ask(e.c, e.ss) }.getOrNull()
+                if (result != null) { e.used = System.currentTimeMillis(); return result to "" }
+                e.c.close(); synchronized(kept) { if (kept[key] === e) kept.remove(key) }
+                if (fresh) return null to ""
+            }
+            return null to ""
+        }
+    }
+    private fun dropKept() { val all = synchronized(kept) { kept.values.toList().also { kept.clear() } }; all.forEach { it.c.close() } }
+
     /** The PC's status for the remote. [haveCover]: the hash of the cover this phone already shows (so it isn't sent again). */
     fun status(peer: String, haveCover: ByteArray?, previous: PcStatus?): PcStatus? {
         val reply = remote(peer, Proto.CMD_STATUS, haveCover?.takeIf { it.size == 32 } ?: ByteArray(32)) ?: return null
@@ -693,6 +741,9 @@ class Link(
     }
     fun notice(peer: String, frame: ByteArray): Boolean {
         val (t, _) = target(peer); if (t == null || t.revision < 2) return false
+        if (t.revision >= 4) return onKept(peer, Proto.MODE_NOTICE) { c, ss ->
+            if (!sealed(c, ss, frame)) null else opened(c, ss)?.let { a -> a.isNotEmpty() && a[0].toInt() == Proto.FRAME_NOTICE_ACK }?.takeIf { it }
+        }.first == true
         val (c, ss, _) = reach(peer, Proto.MODE_NOTICE, null); c ?: return false
         try { c.timeout(10_000); if (!sealed(c, ss, frame)) return false; val a = opened(c, ss); return a != null && a.isNotEmpty() && a[0].toInt() == Proto.FRAME_NOTICE_ACK }
         finally { c.close() }

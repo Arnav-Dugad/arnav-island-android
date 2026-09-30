@@ -38,6 +38,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.arnavdugad.arnavisland.link.PcStatus
+import io.github.arnavdugad.arnavisland.link.PeerView
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -71,11 +73,49 @@ import kotlinx.coroutines.launch
     }
 }
 
-/** A settings-style row on glass: an icon, a title and a line under it, and whatever goes on the right. */
-@Composable fun GlassRow(icon: ImageVector, title: String, detail: String? = null, modifier: Modifier = Modifier, tint: Color = LocalTokens.current.accent, onClick: (() -> Unit)? = null, trailing: @Composable (() -> Unit)? = null) {
+/**
+ * 1.3: how a paired device is reached, for its quality ring: [fraction] of the ring lit (whole on this Wi-Fi or directly,
+ * most of the way through the relay, a short arc when that's weak), [kind] 0 away, 1 weak, 2 relay, 3 direct or here, and a
+ * line saying so (the relays' count and the round trip over the internet).
+ */
+data class Quality(val fraction: Float, val kind: Int, val text: String)
+fun quality(p: PeerView): Quality {
+    val ms = if (p.rtt > 0) "  ·  ${p.rtt.roundToInt()} ms" else ""
+    val relays = if (p.relays == 1) "1 free relay" else "${p.relays} free relays"
+    return when {
+        !p.online -> Quality(0f, 0, "Away")
+        !p.internet -> Quality(1f, 3, "On this Wi-Fi")
+        p.path == 2 -> Quality(1f, 3, (if (p.v6) "Direct over IPv6" else "Direct") + ms)
+        p.rtt >= 600 || p.relays <= 1 -> Quality(.3f, 1, "Weak  ·  through $relays$ms")
+        else -> Quality(.62f, 2, "Relay  ·  through $relays$ms")
+    }
+}
+@Composable fun qualityColor(kind: Int): Color { val t = LocalTokens.current; return when (kind) { 3 -> t.good; 2 -> t.warn; 1 -> t.danger; else -> t.faint } }
+/** The ring itself: its arc sweeps (and changes colour) as the connection gets better or worse. */
+@Composable fun QualityRing(q: Quality, modifier: Modifier = Modifier, stroke: Dp = 2.dp) {
+    val color by animateColorAsState(qualityColor(q.kind), tween(600), label = "RingColor")
+    val sweep by animateFloatAsState(q.fraction, spring(dampingRatio = .8f, stiffness = 90f), label = "RingSweep")
+    val track = LocalTokens.current.faint.copy(alpha = .28f)
+    androidx.compose.foundation.Canvas(modifier) {
+        val w = stroke.toPx(); val d = minOf(size.width, size.height) - w
+        val tl = androidx.compose.ui.geometry.Offset((size.width - d) / 2, (size.height - d) / 2); val box = androidx.compose.ui.geometry.Size(d, d)
+        drawArc(track, 0f, 360f, false, tl, box, style = androidx.compose.ui.graphics.drawscope.Stroke(w))
+        // Whole: one clean circle; part of the way: an arc from the top with round ends.
+        if (sweep >= .995f) drawArc(color, 0f, 360f, false, tl, box, style = androidx.compose.ui.graphics.drawscope.Stroke(w))
+        else if (sweep > 0f) drawArc(color, -90f, 360f * sweep, false, tl, box, style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+    }
+}
+
+/** A settings-style row on glass: an icon, a title and a line under it, and whatever goes on the right. [ring]: a device's connection, round its icon. */
+@Composable fun GlassRow(icon: ImageVector, title: String, detail: String? = null, modifier: Modifier = Modifier, tint: Color = LocalTokens.current.accent, onClick: (() -> Unit)? = null,
+                         ring: Quality? = null, trailing: @Composable (() -> Unit)? = null) {
     val t = LocalTokens.current
     Row(modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(role = Role.Button) { onClick() } else Modifier).padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(tint.copy(alpha = if (t.dark) .16f else .12f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp)) }
+        if (ring != null) Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+            QualityRing(ring, Modifier.fillMaxSize())
+            Box(Modifier.size(28.dp).clip(CircleShape).background(tint.copy(alpha = if (t.dark) .16f else .12f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = tint, modifier = Modifier.size(17.dp)) }
+        }
+        else Box(Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(tint.copy(alpha = if (t.dark) .16f else .12f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp)) }
         Spacer(Modifier.width(13.dp))
         Column(Modifier.weight(1f)) {
             Text(title, style = Type.bodyStrong, color = t.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -120,7 +160,7 @@ fun openUrl(context: Context, url: String) { runCatching { context.startActivity
  * where it is, the controls) and flows back when tapped again or anywhere else.
  */
 @Composable fun MiniIsland(status: PcStatus?, cover: android.graphics.Bitmap?, pcName: String?, online: Boolean, banner: Banner?, transfer: Transfer?, onClick: () -> Unit, modifier: Modifier = Modifier,
-                           expanded: Boolean = false, internet: Boolean = false) {
+                           expanded: Boolean = false, internet: Boolean = false, quality: Quality? = null) {
     val t = LocalTokens.current; val reduced = LocalReduced.current
     val mode = when { banner != null -> 2; expanded && status?.available == true -> 3; transfer != null -> 1; else -> 0 }
     val width by animateDpAsState(when (mode) { 3, 2 -> 360.dp; 1 -> 250.dp; else -> if (status?.available == true) 190.dp else 150.dp }, if (reduced) snap() else spring(dampingRatio = .68f, stiffness = 330f), label = "IslandW")
@@ -159,7 +199,12 @@ fun openUrl(context: Context, url: String) { runCatching { context.startActivity
                         Spacer(Modifier.width(4.dp))
                     } else {
                         LiveDot(online, size = 7.dp); Spacer(Modifier.width(2.dp))
-                        if (online && internet) { Icon(Icons.Rounded.Public, "Over the internet", tint = Color.White.copy(alpha = .6f), modifier = Modifier.size(13.dp)); Spacer(Modifier.width(5.dp)) }
+                        // 1.3: over the internet, the connection's quality ring (direct, relay or weak) where the globe was.
+                        if (online && internet) {
+                            if (quality != null) QualityRing(quality, Modifier.size(13.dp).semantics { contentDescription = quality.text }, 1.6.dp)
+                            else Icon(Icons.Rounded.Public, "Over the internet", tint = Color.White.copy(alpha = .6f), modifier = Modifier.size(13.dp))
+                            Spacer(Modifier.width(5.dp))
+                        }
                         Text(pcName ?: "No PC yet", style = Type.caption, color = Color.White.copy(alpha = .8f), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                         Spacer(Modifier.width(10.dp))
                     }

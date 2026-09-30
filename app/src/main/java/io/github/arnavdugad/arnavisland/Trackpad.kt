@@ -133,7 +133,7 @@ class InputLink(private val peer: String, private val internet: Boolean, private
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Trackpad", style = Type.title, color = t.text)
-                Text(when (state) { 0 -> "Connecting to ${pc.name}…"; 1 -> "Controlling ${pc.name}${if (pc.internet) "  ·  over the internet" else ""}"
+                Text(when (state) { 0 -> "Connecting to ${pc.name}…"; 1 -> "Controlling ${pc.name}${if (pc.internet) "  ·  ${if (pc.path == 2) "direct" else "through the relay"}" else ""}"
                     else -> "Couldn’t connect. On the island: Settings › Privacy & productivity › My phone can control this PC" }, style = Type.caption, color = if (state == 2) t.danger else t.muted, maxLines = 3)
             }
             LiveDot(state == 1)
