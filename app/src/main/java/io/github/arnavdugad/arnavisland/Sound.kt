@@ -89,7 +89,7 @@ object Player {
         Hub.music.value = null
         Hub.banners.tryEmit(Banner(Banner.Kind.Music, "Playing here", music.title))
     }
-    fun toggle() = main.post { val p = player ?: return@post; if (p.isPlaying) p.pause() else p.start(); publish() }
+    fun toggle() = main.post { val p = player ?: return@post; runCatching { if (p.isPlaying) p.pause() else p.start() }; publish() }
     fun pause() = main.post { runCatching { player?.pause() }; publish(false) }
     fun seek(seconds: Double) = main.post { runCatching { player?.seekTo((seconds * 1000).toInt()) }; publish() }
     fun release(context: Context) {

@@ -68,10 +68,8 @@ fun detent(value: Float) = (value * 20f + .5f).toInt().coerceIn(0, 20)
             val stroke = 11.dp.toPx(); val r = this.size.minDimension / 2 - stroke * 1.6f; val c = center
             val tl = Offset(c.x - r, c.y - r); val box = Size(r * 2, r * 2)
             val level = if (muted) 0f else shown
-            // The glow round the edge, brighter as the level rises (and while it turns).
-            drawCircle(Brush.radialGradient(listOf(Color.Transparent, t.accent.copy(alpha = (.1f + .32f * level + .15f * lift)), Color.Transparent), c, r + stroke * 2.4f), r + stroke * 2.4f, c)
             drawArc(t.track, DIAL_START, DIAL_SWEEP, false, tl, box, style = Stroke(stroke, cap = StrokeCap.Round))
-            if (level > 0f) drawArc(Brush.sweepGradient(listOf(t.accent.copy(alpha = .55f), t.accent, t.accent.copy(alpha = .55f)), c), DIAL_START, DIAL_SWEEP * level, false, tl, box, style = Stroke(stroke, cap = StrokeCap.Round))
+            if (level > 0f) drawArc(t.accent, DIAL_START, DIAL_SWEEP * level, false, tl, box, style = Stroke(stroke, cap = StrokeCap.Round))
             // The detents: a dot every 10%, lit up to the level.
             for (k in 0..10) {
                 val a = Math.toRadians((DIAL_START + DIAL_SWEEP * k / 10f).toDouble()); val rr = r + stroke * 1.25f
@@ -81,7 +79,6 @@ fun detent(value: Float) = (value * 20f + .5f).toInt().coerceIn(0, 20)
             // The knob, at the level.
             val a = Math.toRadians((DIAL_START + DIAL_SWEEP * level).toDouble())
             val k = Offset(c.x + (r * cos(a)).toFloat(), c.y + (r * sin(a)).toFloat())
-            drawCircle(Brush.radialGradient(listOf(t.accent.copy(alpha = .7f), Color.Transparent), k, stroke * (1.8f + lift)), stroke * (1.8f + lift), k)
             drawCircle(Color.Black.copy(alpha = if (t.dark) .3f else .16f), stroke * (.62f + .12f * lift) + 1.dp.toPx(), k + Offset(0f, 1.dp.toPx()))
             drawCircle(Color.White, stroke * (.62f + .12f * lift), k)
         }

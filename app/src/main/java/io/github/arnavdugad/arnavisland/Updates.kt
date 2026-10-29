@@ -98,11 +98,11 @@ object Updates {
         busy.withLock {
             val apkUrl = release.apk ?: return@withContext fail("That release has no APK")
             state.value = State.Downloading(release, 0f)
-            val expected = release.sha?.let { url -> get(url, 4096)?.toString(Charsets.UTF_8)?.let { shaIn(it) } } ?: return@withContext fail("Its SHA-256 file is missing")
+            val expected = release.sha?.let { url -> runCatching { get(url, 4096) }.getOrNull()?.toString(Charsets.UTF_8)?.let { shaIn(it) } } ?: return@withContext fail("Its SHA-256 file is missing")
             val dir = File(context.cacheDir, "update").apply { mkdirs() }; dir.listFiles()?.forEach { it.delete() }
             val apk = File(dir, "ArnavIsland-${release.versionName}.apk")
             val digest = MessageDigest.getInstance("SHA-256")
-            val conn = open(apkUrl) ?: return@withContext fail("Couldn't download it")
+            val conn = runCatching { open(apkUrl) }.getOrNull() ?: return@withContext fail("Couldn't download it")
             val total = conn.contentLengthLong.takeIf { it > 0 } ?: release.apkSize
             if (total > 300L * 1024 * 1024) { conn.disconnect(); return@withContext fail("That download is too large") }
             val ok = try {

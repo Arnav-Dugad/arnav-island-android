@@ -120,7 +120,7 @@ class InputLink(private val peer: String, private val internet: Boolean, private
         scope.launch(one) { state.value = if (open()) 1 else 2; for (f in queue) deliver(f) }
         scope.launch { while (isActive) { delay(if (internet) 33 else 12); flush() } }
     }
-    private fun open(): Boolean { session = Hub.link?.openInput(peer); return session != null }
+    private fun open(): Boolean { session = runCatching { Hub.link?.openInput(peer) }.getOrNull(); return session != null }
     private fun deliver(f: ByteArray) {
         if (session?.send(f) == true) return
         // The PC closed an idle session: once more, freshly opened.
@@ -169,8 +169,8 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(when (mode) { TRACKPAD_AIR -> "Air mouse"; TRACKPAD_KEYS -> "Keyboard"; else -> "Trackpad" }, style = Type.title, color = t.text)
-                Text(when (state) { 0 -> "Connecting to ${pc.name}…"; 1 -> "Controlling ${pc.name}${if (pc.internet) "  ·  ${if (pc.path == 2) "direct" else "through the relay"}" else ""}"
-                    else -> "Couldn’t connect. On the island: Settings › Privacy & productivity › My phone can control this PC" }, style = Type.caption, color = if (state == 2) t.danger else t.muted, maxLines = 3)
+                Text(when (state) { 0 -> "Connecting to ${pc.name}…"; 1 -> "Controlling ${pc.name}"
+                    else -> "Couldn’t connect. Turn on “My phone can control this PC” in the island’s Settings." }, style = Type.caption, color = if (state == 2) t.danger else t.muted, maxLines = 3)
             }
             LiveDot(state == 1)
         }
@@ -235,7 +235,7 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
     LaunchedEffect(held) { if (!held && dot != Offset.Zero) { val from = dot; animate(1f, 0f, animationSpec = spring(dampingRatio = .55f, stiffness = 300f)) { v, _ -> dot = from * v } } }
     if (!mouse.available) {
         Box(Modifier.fillMaxWidth().weight(1f).glass(GlassShapes.card, GlassLevel.Control).padding(24.dp), contentAlignment = Alignment.Center) {
-            Text("This phone has no gyroscope, so it can’t point. The trackpad works the same way.", style = Type.body, color = t.muted, textAlign = TextAlign.Center)
+            Text("No gyroscope on this phone", style = Type.body, color = t.muted, textAlign = TextAlign.Center)
         }
         return
     }
@@ -258,8 +258,6 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
                 Spacer(Modifier.height(10.dp))
                 val said = flicked?.first
                 Text(said ?: if (held) "Moving" else "Hold to move", style = Type.headline, color = if (held || said != null) t.text else t.muted)
-                Spacer(Modifier.height(4.dp))
-                Text(if (held) "Point at the screen" else if (flicks) "Point the phone at your PC, then hold here. Flick down to click" else "Point the phone at your PC, then hold here", style = Type.caption, color = t.faint, textAlign = TextAlign.Center)
             }
         }
         ScrollStrip(input, Modifier.width(60.dp).fillMaxHeight())
@@ -272,11 +270,11 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
         GlassSlider(sensitivity, { sensitivity = it; mouse.sensitivity = it }, { Hub.prefs.edit().putFloat(AirMouse.PREF, it).apply() },
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 6.dp), description = "Pointer sensitivity")
         Hairline()
-        GlassRow(Icons.Rounded.Gesture, "Flick to click", "Flick down to click, twice for a double click, twist for a right click", tint = t.purple, trailing = {
+        GlassRow(Icons.Rounded.Gesture, "Flick to click", tint = t.purple, trailing = {
             GlassSwitch(flicks, { flicks = it; Hub.prefs.edit().putBoolean(AirMouse.PREF_FLICKS, it).apply() })
         })
         Hairline()
-        GlassRow(Icons.Rounded.Tune, "Calibrate", "Learns the drift and the speed for your sweep", tint = t.teal, onClick = { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); held = false; calibrating = true }, trailing = {
+        GlassRow(Icons.Rounded.Tune, "Calibrate", tint = t.teal, onClick = { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); held = false; calibrating = true }, trailing = {
             GlassChip("Recenter", icon = Icons.Rounded.CenterFocusStrong) { mouse.recenter() }
         })
     }
@@ -380,7 +378,7 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
         }
         if (!used) Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Rounded.Mouse, null, tint = t.faint, modifier = Modifier.size(34.dp)); Spacer(Modifier.height(10.dp))
-            Text("One finger moves  ·  tap to click\nTwo fingers scroll  ·  two-finger tap for right-click\nDouble-tap and hold to drag", style = Type.caption, color = t.faint, textAlign = TextAlign.Center)
+            Text("Tap to click  ·  two fingers to scroll", style = Type.caption, color = t.faint, textAlign = TextAlign.Center)
         }
     }
 }

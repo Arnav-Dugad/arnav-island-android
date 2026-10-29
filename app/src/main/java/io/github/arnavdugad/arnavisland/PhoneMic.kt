@@ -86,6 +86,7 @@ class PhoneMicService : Service() {
         const val STOP = "io.github.arnavdugad.arnavisland.MIC_STOP"; const val MUTE = "io.github.arnavdugad.arnavisland.MIC_MUTE"
         @Volatile var instance: PhoneMicService? = null; private set
     }
+    private var sessions = 0
     @Volatile private var running = false; @Volatile private var session: Link.ScreenSession? = null
     private var done = false; private var pcName = "your PC"; @Volatile private var rate = 48_000
     private val main = Handler(Looper.getMainLooper())
@@ -105,9 +106,11 @@ class PhoneMicService : Service() {
         }.onFailure { android.util.Log.w("ArnavMic", "no foreground", it); PhoneMic.asking.value = false; CamWire.fail("Couldn’t turn on the microphone", "Open Arnav Island and try again"); stopSelf(); return START_NOT_STICKY }
         if (peer == null) { PhoneMic.asking.value = false; finish(); return START_NOT_STICKY }
         running = true; done = false; instance = this
+        // Each start is its own session: an earlier one ending late (off and on again quickly) leaves this one be.
+        val mine = ++sessions
         thread(name = "phone-mic", isDaemon = true) {
             try { stream(peer) } catch (e: Throwable) { android.util.Log.w("ArnavMic", "mic failed", e); if (running) CamWire.fail("The microphone stopped", "Couldn’t keep it on $pcName") }
-            finally { main.post { finish() } }
+            finally { main.post { if (mine == sessions) finish() } }
         }
         return START_NOT_STICKY
     }

@@ -124,9 +124,9 @@ import kotlin.math.roundToInt
                 pcs.forEach { p -> GlassChip(p.name, icon = pcIcon(p.id), selected = p.id == pc.id, iconTint = if (p.online) pcColor(p.id) else Color.Unspecified) { Hub.choose(p.id) } }
             }
             when {
-                pc == null -> Notice(Icons.Rounded.Laptop, "Pair with your PC", "Then everything on its island is here: its numbers, its controls, its settings.", "Pair") { Ui.pair() }
+                pc == null -> Notice(Icons.Rounded.Laptop, "Pair with your PC", null, "Pair") { Ui.pair() }
                 !pc.online -> AwayNotice(pc)
-                pc.revision < 5 -> Notice(Icons.Rounded.SystemUpdate, "Update Arnav Island on ${pc.name}", "Version 0.22 or later lets this phone control everything on its island.", null) {}
+                pc.revision < 5 -> Notice(Icons.Rounded.SystemUpdate, "Update Arnav Island on ${pc.name}", "Needs version 0.22 or later.", null) {}
                 else -> {
                     if (shown.size > 1) { JumpRow(shown, current, ::jump, inset = false); Spacer(Modifier.height(4.dp)) }
                     // 1.9: in your order, the pinned ones first.
@@ -200,7 +200,7 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
     GlassSheet(c != null, onDismiss) {
         if (c == null) return@GlassSheet
         Text(c.title, style = Type.title2, color = t.text, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(8.dp)); Text(c.detail, style = Type.body, color = t.muted, textAlign = TextAlign.Center)
+        if (c.detail.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text(c.detail, style = Type.body, color = t.muted, textAlign = TextAlign.Center) }
         Spacer(Modifier.height(24.dp))
         if (c.danger) Box(Modifier.fillMaxWidth().clip(GlassShapes.capsule).background(t.danger).clickable(role = Role.Button) { haptics.performHapticFeedback(HapticFeedbackType.Confirm); c.run(); onDismiss() }.padding(vertical = 15.dp), contentAlignment = Alignment.Center) {
             Text(c.action, style = Type.headline, color = Color.White)
@@ -210,13 +210,13 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
     }
 }
 
-@Composable private fun Notice(icon: ImageVector, title: String, detail: String, action: String?, onAction: () -> Unit) {
+@Composable private fun Notice(icon: ImageVector, title: String, detail: String?, action: String?, onAction: () -> Unit) {
     val t = LocalTokens.current
     GlassPanel(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Column(Modifier.fillMaxWidth().padding(26.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             IconTile(icon, t.blue, size = 58.dp)
             Spacer(Modifier.height(14.dp)); Text(title, style = Type.headline, color = t.text, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(6.dp)); Text(detail, style = Type.body, color = t.muted, textAlign = TextAlign.Center)
+            if (detail != null) { Spacer(Modifier.height(6.dp)); Text(detail, style = Type.body, color = t.muted, textAlign = TextAlign.Center) }
             if (action != null) { Spacer(Modifier.height(18.dp)); GlassButton(onAction, prominent = true, contentPadding = PaddingValues(horizontal = 28.dp, vertical = 13.dp)) { Text(action, style = Type.bodyStrong) } }
         }
     }
@@ -228,7 +228,7 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
         Column(Modifier.fillMaxWidth().padding(26.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             IconTile(Icons.Rounded.Bedtime, t.indigo, size = 58.dp)
             Spacer(Modifier.height(14.dp)); Text("${pc.name} is away", style = Type.headline, color = t.text)
-            Spacer(Modifier.height(6.dp)); Text(seen[pc.id]?.let { "Last seen ${ago(it).lowercase()}. Its island shows here again as soon as it's back." } ?: "Its island shows here again as soon as it's back.", style = Type.body, color = t.muted, textAlign = TextAlign.Center)
+            seen[pc.id]?.let { Spacer(Modifier.height(6.dp)); Text("Last seen ${ago(it).lowercase()}", style = Type.body, color = t.muted, textAlign = TextAlign.Center) }
             if (!machines[pc.id].isNullOrEmpty()) { Spacer(Modifier.height(18.dp)); GlassButton({ Hub.wake(pc.id) }, prominent = true, contentPadding = PaddingValues(horizontal = 28.dp, vertical = 13.dp)) { Icon(Icons.Rounded.PowerSettingsNew, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Wake ${pc.name}", style = Type.bodyStrong) } }
         }
     }
@@ -243,7 +243,7 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
     val heat by animateFloatAsState(heatTarget, tween(1400), label = "Heat")
     val warm = Color(0xFFFF8A3D)
     GlassPanel(Modifier.fillMaxWidth()) {
-        Column(Modifier.drawBehind { if (heat > 0.01f) drawRect(Brush.radialGradient(listOf(warm.copy(alpha = .26f * heat), Color.Transparent), Offset(size.width * .5f, 0f), size.width * .9f)) }.padding(18.dp)) {
+        Column(Modifier.padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconTile(pcIcon(pc.id), pcColor(pc.id), size = 54.dp)
                 Spacer(Modifier.width(14.dp))
@@ -270,7 +270,6 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
                 Gauge("CPU", s?.cpu ?: -1.0, lerp(t.blue, warm, heat)); Gauge("GPU", s?.gpu ?: -1.0, t.purple)
                 Gauge("Memory", s?.ramPercent ?: -1.0, t.good); Gauge("Disk", s?.diskUsedPercent ?: -1.0, t.teal)
             }
-            if (heat > .5f) Text("Working hard: ${s?.cpu?.roundToInt() ?: 0}% for the last half minute", style = Type.caption, color = warm, modifier = Modifier.fillMaxWidth().padding(top = 10.dp), textAlign = TextAlign.Center)
         }
     }
 }
@@ -324,13 +323,12 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
                 }
             }
         }
-        // The session, while this tab has shown.
-        if (trail.size >= 10) {
-            val secs = ((trail.last().at - trail.first().at) / 1000).coerceAtLeast(1)
+        // The session, while this tab has shown: there from the start ("—" until it has numbers), so nothing below it moves.
+        run {
             val cpus = trail.map { it.cpu }.filter { it >= 0 }; val gpus = trail.map { it.gpu }.filter { it >= 0 }
             var down = 0.0; var up = 0.0
             for (i in 1 until trail.size) { val dt = (trail[i].at - trail[i - 1].at) / 1000.0; if (dt in 0.0..10.0) { down += trail[i].download * dt; up += trail[i].upload * dt } }
-            Section(null, footer = "While this tab has shown, over the last ${if (secs < 90) "$secs s" else "${secs / 60} min"}.") {
+            Section(null) {
                 Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                     Stat("Peak CPU", cpus.maxOrNull()?.let { "${it.roundToInt()}%" } ?: "—"); Stat("Average", cpus.takeIf { it.isNotEmpty() }?.average()?.let { "${it.roundToInt()}%" } ?: "—")
                     Stat("Peak GPU", gpus.maxOrNull()?.let { "${it.roundToInt()}%" } ?: "—")
@@ -355,7 +353,7 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
         Column(Modifier.padding(14.dp)) {
             Text(title, style = Type.caption.copy(fontWeight = FontWeight.SemiBold), color = t.muted)
             Row(verticalAlignment = Alignment.Bottom) {
-                RollingNumber(if (value == null || value < 0) "—" else "${value.roundToInt()}", Type.title, t.text)
+                RollingNumber(if (value == null || !(value >= 0)) "—" else "${value.roundToInt()}", Type.title, t.text)
                 if (value != null && value >= 0) Text("%", style = Type.headline, color = t.muted, modifier = Modifier.padding(bottom = 3.dp, start = 1.dp))
             }
             Spacer(Modifier.height(8.dp))
@@ -369,7 +367,7 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = color, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-            Text(title, style = Type.bodyStrong, color = t.text, modifier = Modifier.weight(1f)); RollingNumber("${percent.roundToInt()}%", Type.callout, t.text)
+            Text(title, style = Type.bodyStrong, color = t.text, modifier = Modifier.weight(1f)); RollingNumber("${if (percent.isNaN()) 0 else percent.roundToInt()}%", Type.callout, t.text)
         }
         Spacer(Modifier.height(8.dp))
         Box(Modifier.fillMaxWidth().height(10.dp).clip(CircleShape).background(t.track)) { Box(Modifier.fillMaxWidth(f).fillMaxHeight().clip(CircleShape).background(Brush.horizontalGradient(listOf(color.copy(alpha = .75f), color)))) }
@@ -519,7 +517,7 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
             if (detail != null) Text(detail, style = Type.caption, color = t.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(10.dp))
             // Percentages up to the next step past the highest (so a quiet PC's line isn't flat on the floor); rates to their own highest.
-            val scale = if (top == null) null else listOf(10f, 25f, 50f, 75f, 100f).first { it >= minOf(100f, (samples.maxOrNull() ?: 0f) * 1.15f) }
+            val scale = if (top == null) null else listOf(10f, 25f, 50f, 75f, 100f).firstOrNull { it >= minOf(100f, (samples.maxOrNull() ?: 0f) * 1.15f) } ?: 100f
             Box(Modifier.fillMaxWidth().height(92.dp).pointerInput(series.size) {
                 // Touch and drag along it: a line at that moment, with its value and how long ago it was.
                 awaitEachGesture {
@@ -531,7 +529,8 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
             }) {
                 MorphGraph(samples, color, Modifier.fillMaxSize(), scale)
                 if (scale != null && at == null) Text("${scale.roundToInt()}%", style = Type.micro, color = t.faint, modifier = Modifier.align(Alignment.TopEnd))
-                val i = at
+                // A drag cut short (the samples grew under the finger) can leave a moment past the end once they shrink.
+                val i = at?.takeIf { it < samples.size }
                 if (i != null && samples.size >= 2) {
                     val high = max(scale ?: (samples.maxOrNull() ?: 1f) * 1.15f, 1f)
                     Canvas(Modifier.fillMaxSize()) {
@@ -586,7 +585,7 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
                 Text("APPS", style = Type.micro, color = t.muted, modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 2.dp))
                 apps.sortedWith(compareByDescending<io.github.arnavdugad.arnavisland.link.MixerApp> { it.active }.thenBy { it.system }.thenBy { it.name.lowercase() }).forEach { a -> MixerRow(a, icons[a.name]) }
                 Spacer(Modifier.height(6.dp))
-            } else if (pc.revision < 9) { Hairline(16.dp); Text("Update Arnav Island on ${pc.name} to 0.26 for each app’s own volume.", style = Type.caption, color = t.muted, modifier = Modifier.padding(16.dp)) }
+            } else if (pc.revision < 9) { Hairline(16.dp); Text("App volumes need island 0.26", style = Type.caption, color = t.muted, modifier = Modifier.padding(16.dp)) }
         }
     }
 }
@@ -662,7 +661,6 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
             Column(Modifier.weight(1f)) {
                 Text(when { c.focusFinished -> "Done"; c.focusRunning -> "Running"; c.focusMode == 2 -> if (shown > .5) "Paused" else "Ready"; shown < c.focusDuration - .5 -> "Paused"; else -> "Ready" },
                     style = Type.headline, color = t.text)
-                Text(if (c.focusMode == 2) "Counting up on your PC" else "On your PC’s island", style = Type.caption, color = t.muted)
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GlassIconButton(if (c.focusRunning) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (c.focusRunning) "Pause" else "Start", { Hub.setControl(IslandWire.FOCUS_TOGGLE, 0) { it.copy(focusRunning = !it.focusRunning, focusShown = shown) } }, prominent = true)
@@ -742,17 +740,17 @@ private fun kindColour(kind: Int, t: Tokens): Color = when (kind) {
     fun power(control: Int, title: String, detail: String, action: String, danger: Boolean) = onConfirm(Confirm(title, detail, action, danger) { Hub.setControl(control, 1) })
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Action(Icons.Rounded.Lock, "Lock", t.gray, Modifier.weight(1f)) { Hub.setControl(IslandWire.LOCK, 1) }
-        Action(Icons.Rounded.Bedtime, "Sleep", t.indigo, Modifier.weight(1f)) { power(IslandWire.SLEEP, "Put $pcName to sleep?", "It wakes when you open it or press a key" + if (Hub.canWake(pc.id)) ", or with Wake here." else ".", "Sleep", false) }
-        Action(Icons.Rounded.RestartAlt, "Restart", t.warn, Modifier.weight(1f)) { power(IslandWire.RESTART, "Restart $pcName?", "Anything unsaved there may be lost.", "Restart", true) }
-        Action(Icons.Rounded.PowerSettingsNew, "Shut down", t.danger, Modifier.weight(1f)) { power(IslandWire.SHUT_DOWN, "Shut down $pcName?", "Anything unsaved there may be lost.", "Shut down", true) }
+        Action(Icons.Rounded.Bedtime, "Sleep", t.indigo, Modifier.weight(1f)) { power(IslandWire.SLEEP, "Put $pcName to sleep?", "", "Sleep", false) }
+        Action(Icons.Rounded.RestartAlt, "Restart", t.warn, Modifier.weight(1f)) { power(IslandWire.RESTART, "Restart $pcName?", "Unsaved work may be lost.", "Restart", true) }
+        Action(Icons.Rounded.PowerSettingsNew, "Shut down", t.danger, Modifier.weight(1f)) { power(IslandWire.SHUT_DOWN, "Shut down $pcName?", "Unsaved work may be lost.", "Shut down", true) }
     }
     Spacer(Modifier.height(10.dp))
     GlassPanel(Modifier.fillMaxWidth()) {
         Column {
-            GlassRow(Icons.Rounded.DeleteSweep, "Empty the recycle bin", "For good, on $pcName", tint = t.danger, chevron = true, onClick = { power(IslandWire.EMPTY_BIN, "Empty the recycle bin?", "What's in it on $pcName is deleted for good.", "Empty", true) })
+            GlassRow(Icons.Rounded.DeleteSweep, "Empty recycle bin", tint = t.danger, chevron = true, onClick = { power(IslandWire.EMPTY_BIN, "Empty the recycle bin?", "This can't be undone.", "Empty", true) })
             Hairline()
             // 1.8: Wake-on-LAN, once this phone knows the PC's adapters (#38).
-            GlassRow(Icons.Rounded.PowerSettingsNew, "Wake from here", if (Hub.canWake(pc.id)) "When it sleeps or is off, on this Wi-Fi (if the PC allows Wake-on-LAN)" else "Needs island 0.26 on $pcName", tint = t.good)
+            GlassRow(Icons.Rounded.PowerSettingsNew, "Wake from here", if (Hub.canWake(pc.id)) null else "Needs island 0.26", tint = t.good)
         }
     }
 }
@@ -772,7 +770,7 @@ private fun kindColour(kind: Int, t: Tokens): Color = when (kind) {
         Column {
             val on = Alerts.kinds.filter { Alerts.on(it.key) }
             GlassRow(Icons.Rounded.NotificationsActive, if (on.isEmpty()) "No alerts yet" else on.joinToString(", ") { it.title.lowercase() }.replaceFirstChar { it.uppercase() },
-                if (on.isEmpty()) "A notification when it works hard, runs short, or its battery runs low or fills" else "${on.size} on", tint = t.danger, chevron = true, onClick = { Ui.alerts = true })
+                if (on.isEmpty()) null else "${on.size} on", tint = t.danger, chevron = true, onClick = { Ui.alerts = true })
         }
     }
 }
@@ -800,7 +798,7 @@ private fun kindColour(kind: Int, t: Tokens): Color = when (kind) {
         for (row in listOf(listOf(0, 1, 2, 3), listOf(5, 6, 7, 4))) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             for (i in row) Action(icons[i], IslandWire.PAGES[i], colours[i], Modifier.weight(1f), height = 80.dp) { Hub.openIslandPage(i) }
         }
-        GlassButton({ Hub.closeIsland() }, Modifier.fillMaxWidth(), contentPadding = PaddingValues(vertical = 12.dp)) { Icon(Icons.Rounded.CloseFullscreen, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Close the island", style = Type.bodyStrong) }
+        GlassButton({ Hub.closeIsland() }, Modifier.fillMaxWidth(), contentPadding = PaddingValues(vertical = 12.dp)) { Icon(Icons.Rounded.CloseFullscreen, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Close island", style = Type.bodyStrong) }
     }
 }
 
@@ -851,12 +849,12 @@ private val sectionIcons = listOf(Icons.Rounded.Tune, Icons.Rounded.ViewAgenda, 
     }
 }
 /** Switching these off cuts this phone off from the PC: asked first. */
-private val lifelines = mapOf("sharing" to "This phone loses its connection to the PC until sharing is turned back on there.",
-    "phoneControl" to "This phone can't control the PC until that's turned back on there.", "relay" to "On another network, this phone can't reach the PC until it's turned back on there.")
+private val lifelines = mapOf("sharing" to "This phone will lose its connection to the PC.",
+    "phoneControl" to "This phone won't be able to control the PC.", "relay" to "This phone can't reach the PC from another network.")
 @Composable private fun SectionSheet(section: Int?, s: IslandSettings?, onConfirm: (Confirm) -> Unit, onDismiss: () -> Unit) {
     GlassSheet(section != null && s != null, onDismiss, Modifier.heightIn(max = LocalConfiguration.current.screenHeightDp.dp * .9f)) {
         if (section == null || s == null) return@GlassSheet
-        SheetHeader(s.sections.getOrElse(section) { "" }, "On your PC’s island, as its Settings has it", onDismiss)
+        SheetHeader(s.sections.getOrElse(section) { "" }, null, onDismiss)
         Spacer(Modifier.height(8.dp))
         Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             s.items.filter { it.section == section && !(it.control == 5 && it.action in listOf(1, 16)) }.forEach { item -> SettingCard(item, onConfirm) }
@@ -881,7 +879,7 @@ private val lifelines = mapOf("sharing" to "This phone loses its connection to t
                 1 -> { var moving by remember(item.key) { mutableStateOf<Int?>(null) }; val shown = moving ?: item.value; val span = (item.hi - item.lo).coerceAtLeast(1)
                     Row(verticalAlignment = Alignment.CenterVertically) { head(); Text("$shown${item.unit}", style = Type.bodyStrong, color = t.accent) }
                     Spacer(Modifier.height(10.dp))
-                    fun snap(f: Float): Int { val raw = item.lo + (f * span).roundToInt(); val step = item.step.coerceAtLeast(1); return (item.lo + ((raw - item.lo + step / 2) / step) * step).coerceIn(item.lo, item.hi) }
+                    fun snap(f: Float): Int { val raw = item.lo + (f * span).roundToInt(); val step = item.step.coerceAtLeast(1); return (item.lo + ((raw - item.lo + step / 2) / step) * step).coerceIn(item.lo, maxOf(item.lo, item.hi)) }
                     GlassSlider((shown - item.lo).toFloat() / span, { moving = snap(it) }, { val v = snap(it); moving = null; Hub.setIslandSetting(item.key, v) }, Modifier.fillMaxWidth(), description = item.title) }
                 2 -> { Row { head() }; Spacer(Modifier.height(10.dp))
                     if (item.options.size in 2..3 && item.options.all { it.length <= 12 }) Segmented(item.options, item.value.coerceIn(0, item.options.lastIndex), { v -> if (item.value != v) Hub.setIslandSetting(item.key, v) }, Modifier.fillMaxWidth())

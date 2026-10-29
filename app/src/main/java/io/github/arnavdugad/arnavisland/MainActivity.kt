@@ -47,8 +47,6 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import io.github.arnavdugad.arnavisland.link.Proto
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -196,7 +194,7 @@ object Ui {
 
 @Composable private fun App(share: ShareRequest?, onShareDone: () -> Unit, opened: String?, onOpened: () -> Unit, link: io.github.arnavdugad.arnavisland.link.PairLink?, onLinkDone: () -> Unit, onDark: (Boolean) -> Unit) {
     val context = LocalContext.current
-    var look by remember { mutableStateOf(Look(Hub.prefs.getInt("appearance", 0), Hub.prefs.getBoolean("glass", true))) }
+    var look by remember { mutableStateOf(Look(Hub.prefs.getInt("appearance", 0), false)) }
     val dark = when (look.appearance) { 1 -> true; 2 -> false; else -> isSystemInDarkTheme() }
     LaunchedEffect(dark) { onDark(dark) }
     // Android's "Remove animations", read again whenever the app comes back.
@@ -227,8 +225,8 @@ object Ui {
     val accent2 by animateColorAsState(art?.let { Color(it.second) } ?: SystemIndigo, tween(900), label = "Accent2")
     val deep by animateColorAsState(art?.let { Color(it.deep) } ?: Color(0xFF0B1220), tween(900), label = "Deep")
     val tokens = tokens(dark, accent, accent2, deep)
-    // Without the glass, nothing follows the tilt: the sensor stays off.
-    val tilt = rememberTilt(!reduced && look.glass)
+    // 1.10: nothing follows the tilt (the glass's light is gone): the sensor stays off.
+    val tilt = rememberTilt(false)
 
     // The remote's status while the app is on screen: every second while music plays, a little less often otherwise.
     val owner = LocalLifecycleOwner.current
@@ -286,13 +284,10 @@ object Ui {
 
     CompositionLocalProvider(LocalTokens provides tokens, LocalReduced provides reduced, LocalTilt provides { tilt.value }, LocalGlassOn provides look.glass) {
         MaterialTheme(colorScheme = if (dark) darkColorScheme(primary = accent) else lightColorScheme(primary = accent)) {
-            val ambient = rememberLayerBackdrop(); val screen = rememberLayerBackdrop()
-            val floating = remember(ambient, screen) { GlassBackdrops(ambient, screen) }
-            val content = remember(ambient) { GlassBackdrops(ambient, ambient) }
             Box(Modifier.fillMaxSize()) {
                 // 1.7: a finger on the screen (and a fling's settling after) holds the ambient light still.
                 val touchScope = rememberCoroutineScope(); var release by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-                Box(Modifier.fillMaxSize().layerBackdrop(screen).pointerInput(Unit) {
+                Box(Modifier.fillMaxSize().pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
                             val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
@@ -301,10 +296,10 @@ object Ui {
                         }
                     }
                 }) {
-                    AmbientBackground(tokens.accent, tokens.accent2, tokens.deep, status?.playing == true, Modifier.layerBackdrop(ambient), still = saver)
-                    CompositionLocalProvider(LocalGlass provides content) {
+                    AmbientBackground(tokens.accent, tokens.accent2, tokens.deep, status?.playing == true, still = saver)
+                    run {
                         val insets = WindowInsets.systemBars.asPaddingValues()
-                        val padding = PaddingValues(top = insets.calculateTopPadding() + NavBarHeight, bottom = insets.calculateBottomPadding() + if (playingHere != null) 172.dp else 100.dp)
+                        val padding = PaddingValues(top = insets.calculateTopPadding() + NavBarHeight, bottom = insets.calculateBottomPadding() + TabBarHeight + if (playingHere != null) 96.dp else 20.dp)
                         HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
                             when (page) {
                                 0 -> RemoteScreen(pc, status, statusError, cover, lyrics, bars[0], pager.currentPage == 0 && !Ui.presenter && Ui.trackpad == null, padding)
@@ -316,14 +311,14 @@ object Ui {
                         }
                     }
                 }
-                CompositionLocalProvider(LocalGlass provides floating) {
+                run {
                     // The navigation bar of the page in view (the nearer one while swiping between two).
                     NavBar(bars[(pager.currentPage + pager.currentPageOffsetFraction).roundToInt().coerceIn(0, tabs.lastIndex)], Modifier.align(Alignment.TopCenter))
                     GlassTabBar(tabs, pager.currentPage + pager.currentPageOffsetFraction, { scope.launch { pager.animateScrollToPage(it) } },
-                        Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp).widthIn(max = 460.dp).fillMaxWidth())
+                        Modifier.align(Alignment.BottomCenter).fillMaxWidth())
                     androidx.compose.animation.AnimatedVisibility(playingHere != null, Modifier.align(Alignment.BottomCenter),
                         enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut()) {
-                        playingHere?.let { PlayingHere(it, Modifier.navigationBarsPadding().padding(start = 20.dp, end = 20.dp, bottom = 88.dp).widthIn(max = 460.dp).fillMaxWidth()) }
+                        playingHere?.let { PlayingHere(it, Modifier.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = TabBarHeight + 8.dp).widthIn(max = 460.dp).fillMaxWidth()) }
                     }
                     PairSheet(Ui.pairing, peers, pairCode, pairResult, { Ui.pairing = false }, start = Ui.pairStart)
                     OfferSheet(offers.firstOrNull())
@@ -335,7 +330,7 @@ object Ui {
                     RemoteSheets(pc)
                     ShelfSheets()
                     MoreSheets(pc)
-                    SettingsSheet(Ui.settings, look, { next -> look = next; Hub.prefs.edit().putInt("appearance", next.appearance).putBoolean("glass", next.glass).apply() }) { Ui.settings = false }
+                    SettingsSheet(Ui.settings, look, { next -> look = next; Hub.prefs.edit().putInt("appearance", next.appearance).apply() }) { Ui.settings = false }
                     PcSheet(Ui.pc?.let { id -> peers.firstOrNull { it.id == id } }) { Ui.pc = null }
                     ConnectionSheet(Ui.connection?.let { id -> peers.firstOrNull { it.id == id } }) { Ui.connection = null }
                     AlertsSheet(Ui.alerts) { Ui.alerts = false }

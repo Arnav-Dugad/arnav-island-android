@@ -71,7 +71,7 @@ import kotlin.math.roundToInt
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(Hub.phoneName(), style = Type.headline, color = t.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(failure ?: when { !running -> "Starting…"; internet -> "Reachable on this Wi-Fi and anywhere"; anywhere -> "Visible on this Wi-Fi  ·  connecting anywhere…"; else -> "Visible to your PCs on this Wi-Fi" },
+                    Text(failure ?: when { !running -> "Starting…"; internet -> "Reachable anywhere"; anywhere -> "Connecting…"; else -> "On this Wi-Fi" },
                         style = Type.caption, color = if (failure != null) t.danger else t.muted)
                 }
                 LiveDot(running && failure == null)
@@ -79,24 +79,24 @@ import kotlin.math.roundToInt
         }
         HealthCard()
         val paired = peers.filter { it.paired }
-        Section("Your PCs", footer = "Tap one for its connection, its name and colour, and more.") {
+        Section("Your PCs") {
             paired.forEachIndexed { i, p ->
                 if (i > 0) Hairline()
                 // 1.3: its connection's quality ring; 1.8: when it was last here (#39), its own icon and colour (#40).
                 val q = quality(p)
-                GlassRow(pcIcon(p.id, p.phone), p.name, listOfNotNull(if (p.online) q.text else seen[p.id]?.let { "Away  ·  last seen ${ago(it).lowercase()}" } ?: "Away",
-                    if (p.id == pc?.id) "the remote's" else null, if (p.online && !p.remote) "update its island" else null).joinToString("  ·  "),
+                GlassRow(pcIcon(p.id, p.phone), p.name, listOfNotNull(if (p.online) q.text else seen[p.id]?.let { "Last seen ${ago(it).lowercase()}" } ?: "Away",
+                    if (p.online && !p.remote) "Update needed" else null).joinToString("  ·  "),
                     tint = if (p.online) pcColor(p.id) else t.gray, ring = if (p.online) q else null, chevron = true, onClick = { Ui.pc = p.id }) {
                     if (p.id == pc?.id) Icon(Icons.Rounded.CheckCircle, "Remote and sends go here", tint = t.blue, modifier = Modifier.size(20.dp))
                 }
             }
             if (paired.isNotEmpty()) Hairline()
-            GlassRow(Icons.Rounded.Add, "Pair a PC", "On this Wi-Fi: both show the same six digits", tint = t.blue, chevron = true, onClick = { Ui.pair() })
+            GlassRow(Icons.Rounded.Add, "Pair a PC", tint = t.blue, chevron = true, onClick = { Ui.pair() })
             Hairline()
-            GlassRow(Icons.Rounded.QrCodeScanner, "Scan the QR code", "From anywhere: the island’s Shelf › Nearby › Pair with a code", tint = t.indigo, chevron = true, onClick = { Ui.pair(PAIR_SCAN) })
+            GlassRow(Icons.Rounded.QrCodeScanner, "Scan QR code", tint = t.indigo, chevron = true, onClick = { Ui.pair(PAIR_SCAN) })
         }
         Section(null) {
-            GlassRow(Icons.Rounded.Settings, "Settings", "Connection, your island, this phone, alerts, look, updates", tint = t.gray, chevron = true, onClick = { Ui.settings = true })
+            GlassRow(Icons.Rounded.Settings, "Settings", tint = t.gray, chevron = true, onClick = { Ui.settings = true })
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -118,21 +118,21 @@ import kotlin.math.roundToInt
         fun open(i: Intent) = runCatching { context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         buildList {
             if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
-                add(Missing("notify", Icons.Rounded.Notifications, t.danger, "Notifications", "For files, music, alerts and find my phone") { notify.launch(Manifest.permission.POST_NOTIFICATIONS) })
-            if (!Mirror.allowed(context)) add(Missing("listener", Icons.Rounded.NotificationsActive, t.warn, "Notification access", "To show this phone’s notifications and calls on your PC") { open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) })
-            if (power?.isIgnoringBatteryOptimizations(context.packageName) == false) add(Missing("battery", Icons.Rounded.BatteryAlert, t.good, "Run in the background", "So your PCs always reach this phone") {
+                add(Missing("notify", Icons.Rounded.Notifications, t.danger, "Notifications", "For files, music and alerts") { notify.launch(Manifest.permission.POST_NOTIFICATIONS) })
+            if (!Mirror.allowed(context)) add(Missing("listener", Icons.Rounded.NotificationsActive, t.warn, "Notification access", "Show notifications on your PC") { open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) })
+            if (power?.isIgnoringBatteryOptimizations(context.packageName) == false) add(Missing("battery", Icons.Rounded.BatteryAlert, t.good, "Run in the background", "So your PCs can always reach it") {
                 open(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))).onFailure { open(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) } })
-            if (!RecentPhotos.permitted(context)) add(Missing("photos", Icons.Rounded.PhotoLibrary, t.pink, "Photo access", "So a photo you just took shows on your PC, to paste there") { photos.launch(RecentPhotos.permission()) })
-            if (!PhoneScreen.controllable(context)) add(Missing("access", Icons.Rounded.TouchApp, t.blue, "Control from your PC", "So your PC can tap and type here while it shows this phone") { open(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
+            if (!RecentPhotos.permitted(context)) add(Missing("photos", Icons.Rounded.PhotoLibrary, t.pink, "Photo access", "Show new photos on your PC") { photos.launch(RecentPhotos.permission()) })
+            if (!PhoneScreen.controllable(context)) add(Missing("access", Icons.Rounded.TouchApp, t.blue, "Control from your PC", "Let your PC tap and type here") { open(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
         }.filterNot { Hub.prefs.getBoolean("health_skip_${it.key}", false) }
     }
     AnimatedVisibility(missing.isNotEmpty(), enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-        Section(if (missing.size == 1) "1 thing to finish" else "${missing.size} things to finish", footer = "Each is for one feature; the cross hides one you don’t need.") {
+        Section(if (missing.size == 1) "1 thing to finish" else "${missing.size} things to finish") {
             missing.forEachIndexed { i, m ->
                 if (i > 0) Hairline()
                 GlassRow(m.icon, m.title, m.detail, tint = m.colour) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        GlassButton(m.fix, prominent = true, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) { Text("Fix", style = Type.bodyStrong) }
+                        GlassButton(m.fix, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)) { Text("Fix", style = Type.callout.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = LocalTokens.current.blue) }
                         Spacer(Modifier.width(4.dp))
                         Box(Modifier.size(32.dp).clip(CircleShape).clickable { Hub.prefs.edit().putBoolean("health_skip_${m.key}", true).apply(); version++ }.semantics { contentDescription = "Don't ask about ${m.title}" }, contentAlignment = Alignment.Center) {
                             Icon(Icons.Rounded.Close, null, tint = t.faint, modifier = Modifier.size(17.dp))
@@ -166,7 +166,7 @@ import kotlin.math.roundToInt
                     Text("Arnav Island ${Updates.current}", style = Type.bodyStrong, color = t.text)
                     Text(when (val s = state) {
                         Updates.State.Idle -> if (Updates.lastChecked() > 0) "Checked ${ago(Updates.lastChecked()).lowercase()}" else "Not checked yet"
-                        Updates.State.Checking -> "Checking GitHub…"
+                        Updates.State.Checking -> "Checking…"
                         is Updates.State.Current -> "Up to date  ·  checked ${ago(s.checkedAt).lowercase()}"
                         is Updates.State.Available -> "${s.release.versionName} is out"
                         is Updates.State.Downloading -> "Downloading ${s.release.versionName}  ·  ${(s.fraction * 100).toInt()}%"
@@ -182,9 +182,9 @@ import kotlin.math.roundToInt
                 else GlassButton({ scope.launch { Updates.check(force = true) } }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp)) { Text("Check", style = Type.bodyStrong) }
             }
             Hairline()
-            GlassRow(Icons.Rounded.Bolt, "Update automatically", "Checked, then installed quietly", tint = t.yellow) { GlassSwitch(auto, { auto = it; Hub.prefs.edit().putBoolean("autoUpdate", it).apply() }) }
+            GlassRow(Icons.Rounded.Bolt, "Update automatically", tint = t.yellow) { GlassSwitch(auto, { auto = it; Hub.prefs.edit().putBoolean("autoUpdate", it).apply() }) }
             Hairline()
-            GlassRow(Icons.Rounded.History, "Release history", "Every version and what it brought", tint = t.gray, chevron = true, onClick = onUpdates)
+            GlassRow(Icons.Rounded.History, "Release history", tint = t.gray, chevron = true, onClick = onUpdates)
         }
     }
 }
@@ -216,70 +216,68 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
     val entries = listOf(
         Entry(0, "Reach my PCs anywhere", "internet relay mobile data network anywhere") {
             val anywhere = flag("internet")
-            GlassRow(Icons.Rounded.Public, "Reach my PCs anywhere", if (!anywhere) "Off: only on the same Wi-Fi" else "Any Wi-Fi or mobile data, end-to-end encrypted, through ${(Hub.link?.relayBrokersUp ?: 0).let { n -> if (n > 1) "$n free relays" else "a free relay" }}", tint = t.blue) {
+            GlassRow(Icons.Rounded.Public, "Reach my PCs anywhere", null, tint = t.blue) {
                 GlassSwitch(anywhere, { on -> set("internet", on); Hub.restart() }) } },
         Entry(0, "Stay reachable", "background closed service reachable") {
-            GlassRow(Icons.Rounded.Wifi, "Stay reachable", "Files, music and find-my-phone reach this phone while the app is closed", tint = t.blue) { GlassSwitch(flag("reachable"), { on -> set("reachable", on); if (on) LinkService.start(context) }) } },
+            GlassRow(Icons.Rounded.Wifi, "Stay reachable", "While the app is closed", tint = t.blue) { GlassSwitch(flag("reachable"), { on -> set("reachable", on); if (on) LinkService.start(context) }) } },
         Entry(0, "Run in the background", "battery optimisation always reachable") {
-            GlassRow(Icons.Rounded.BatteryAlert, "Run in the background", if (unrestricted) "Allowed: Android keeps Arnav Island running" else "Let Android keep Arnav Island running, so your PCs always find it", tint = t.good) {
+            GlassRow(Icons.Rounded.BatteryAlert, "Run in the background", null, tint = t.good) {
                 if (!unrestricted) GlassButton({ open(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))).onFailure { open(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) } },
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) { Text("Allow", style = Type.bodyStrong) } else Icon(Icons.Rounded.CheckCircle, null, tint = t.good) } },
         Entry(0, "Accept files without asking", "auto accept files downloads") {
-            GlassRow(Icons.Rounded.Download, "Accept files without asking", "From your paired PCs, into Downloads › Arnav Island", tint = t.good) { GlassSwitch(flag("autoAccept", false), { set("autoAccept", it) }) } },
+            GlassRow(Icons.Rounded.Download, "Accept files without asking", tint = t.good) { GlassSwitch(flag("autoAccept", false), { set("autoAccept", it) }) } },
         Entry(1, "Your notifications", "notifications mirror island reply") {
-            GlassRow(Icons.Rounded.NotificationsActive, "Your notifications", if (!mirrorAllowed) "Allow notification access so the island can show them" else "New ones show on the island; reply and act from the PC", tint = t.danger) {
+            GlassRow(Icons.Rounded.NotificationsActive, "Your notifications", if (!mirrorAllowed) "Needs notification access" else null, tint = t.danger) {
                 GlassSwitch(mirrorAllowed && flag("mirror"), { on -> if (on && !mirrorAllowed) open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)); set("mirror", on) }) } },
         Entry(1, "Calls", "calls ringing decline phone") {
-            GlassRow(Icons.Rounded.Call, "Calls", "See who’s calling on the island, and decline from the PC", tint = t.good) {
+            GlassRow(Icons.Rounded.Call, "Calls", tint = t.good) {
                 GlassSwitch(mirrorAllowed && flag("calls"), { on -> if (on && !mirrorAllowed) open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)); set("calls", on) }) } },
         Entry(1, "Your battery", "battery forecast low") {
-            GlassRow(Icons.Rounded.BatteryChargingFull, "Your battery", "On the island by this phone, and a word when it runs low", tint = t.good) { GlassSwitch(flag("battery"), { set("battery", it); if (it) Hub.sendBattery(force = true) }) } },
+            GlassRow(Icons.Rounded.BatteryChargingFull, "Your battery", tint = t.good) { GlassSwitch(flag("battery"), { set("battery", it); if (it) Hub.sendBattery(force = true) }) } },
         Entry(1, "Your hotspot", "hotspot tethering join wifi") {
-            GlassRow(Icons.Rounded.WifiTethering, "Your hotspot", when { hotspot.name.isEmpty() -> "Show it on your PC’s island while it’s on, to join in one tap"; hotspotOn && hotspot.enabled -> "“${hotspot.name}” is on: the island offers to join"; else -> "“${hotspot.name}”, while it’s on" },
+            GlassRow(Icons.Rounded.WifiTethering, "Your hotspot", when { hotspot.name.isEmpty() -> null; hotspotOn && hotspot.enabled -> "“${hotspot.name}” is on"; else -> "“${hotspot.name}”" },
                 tint = t.good, onClick = { Ui.hotspot = true }) { GlassSwitch(hotspot.enabled && hotspot.name.isNotEmpty(), { on -> if (on && hotspot.name.isEmpty()) Ui.hotspot = true else Hub.setHotspot(enabled = on) }) } },
         Entry(1, "Live activities on your PC", "live activity delivery swiggy zomato blinkit zepto ride uber ola timer tracking order") {
-            GlassRow(Icons.Rounded.DeliveryDining, "Live activities on your PC", if (!mirrorAllowed) "Allow notification access first" else "Deliveries, rides, timers: what’s on its way shows live on the island, with its tracking line (island 0.27)", tint = t.warn) {
+            GlassRow(Icons.Rounded.DeliveryDining, "Live activities on your PC", if (!mirrorAllowed) "Needs notification access" else "Deliveries, rides, timers", tint = t.warn) {
                 GlassSwitch(mirrorAllowed && flag("mirror") && LiveCapture.enabled(), { on -> if (on && !mirrorAllowed) open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)); if (on) set("mirror", true); LiveCapture.setEnabled(on); version++ }) } },
         Entry(1, "Your phone’s details", "details storage memory network") {
-            GlassRow(Icons.Rounded.PhoneAndroid, "Your phone’s details", "Storage, memory, network, sound and more, on the island", tint = t.gray) { GlassSwitch(flag("details"), { set("details", it); if (it) Hub.sendDetails(force = true) }) } },
+            GlassRow(Icons.Rounded.PhoneAndroid, "Your phone’s details", tint = t.gray) { GlassSwitch(flag("details"), { set("details", it); if (it) Hub.sendDetails(force = true) }) } },
         Entry(1, "Photos you take", "photos screenshots paste shelf camera") {
-            GlassRow(Icons.Rounded.PhotoCamera, "Photos you take", if (flag("recent_photos", false) && !RecentPhotos.permitted(context)) "Allow photo access for this" else "A photo or screenshot you just took shows on the island, to paste there or keep", tint = t.pink) {
+            GlassRow(Icons.Rounded.PhotoCamera, "Photos you take", if (flag("recent_photos", false) && !RecentPhotos.permitted(context)) "Needs photo access" else null, tint = t.pink) {
                 GlassSwitch(flag("recent_photos", false) && RecentPhotos.permitted(context), { on -> if (on && !RecentPhotos.permitted(context)) photoAccess.launch(RecentPhotos.permission()) else { set("recent_photos", on); RecentPhotos.sync(context) } }) } },
         Entry(1, "Universal clipboard", "clipboard copy paste") {
-            GlassRow(Icons.Rounded.ContentPaste, "Universal clipboard", "Copy on one, paste on the other (with the island’s own switch on too)", tint = t.indigo) { GlassSwitch(flag("clipboard"), { set("clipboard", it) }) } },
+            GlassRow(Icons.Rounded.ContentPaste, "Universal clipboard", tint = t.indigo) { GlassSwitch(flag("clipboard"), { set("clipboard", it) }) } },
         Entry(2, "Your PC’s music player", "lock screen media player quick settings") {
-            GlassRow(Icons.Rounded.MusicNote, "Your PC’s music player", "On the lock screen and in quick settings, with its controls", tint = t.pink) {
+            GlassRow(Icons.Rounded.MusicNote, "Your PC’s music player", "Lock screen and quick settings", tint = t.pink) {
                 GlassSwitch(flag("pcMedia"), { on -> set("pcMedia", on); if (on) PcMedia.update(context, Hub.pc(), Hub.status.value) else PcMedia.clear(context) }) } },
         Entry(2, "Volume buttons turn your PC", "volume keys buttons sound") {
-            GlassRow(Icons.Rounded.VolumeUp, "Volume buttons turn your PC", "While the Remote shows, this phone’s volume buttons step your PC’s sound", tint = t.blue) { GlassSwitch(flag("volumeKeys"), { set("volumeKeys", it) }) } },
+            GlassRow(Icons.Rounded.VolumeUp, "Volume buttons turn your PC", "While the Remote shows", tint = t.blue) { GlassSwitch(flag("volumeKeys"), { set("volumeKeys", it) }) } },
         Entry(2, "Widgets", "widgets home screen lyrics batteries transfer") {
             Column {
-                GlassRow(Icons.Rounded.Widgets, "Widgets", if (widgets.isRequestPinAppWidgetSupported) "Add one to your home screen" else "Add them from your home screen’s widget list", tint = t.blue)
+                GlassRow(Icons.Rounded.Widgets, "Widgets", if (widgets.isRequestPinAppWidgetSupported) null else "Add from your home screen", tint = t.blue)
                 if (widgets.isRequestPinAppWidgetSupported) Row(Modifier.horizontalScroll(rememberScrollState()).padding(start = 60.dp, end = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("Now playing" to PcWidget::class.java, "Controls" to ControlsWidget::class.java, "Mixer" to MixerWidget::class.java, "Quick actions" to ActionsWidget::class.java, "Lyrics" to LyricsWidget::class.java, "Batteries" to BatteriesWidget::class.java, "Transfers" to TransferWidget::class.java,
                         "PC’s numbers" to StatsWidget::class.java, "Focus" to FocusWidget::class.java).forEach { (name, c) -> GlassChip(name, icon = Icons.Rounded.Add) { runCatching { widgets.requestPinAppWidget(ComponentName(context, c), null, null) } } }
                 }
             } },
         Entry(2, "Use with Gemini", "gemini assistant voice google ask hey app functions shortcuts routines") {
-            GlassRow(Icons.Rounded.Mic, "Use with Gemini", "Ask Gemini to lock, wake or play on your PC, or anything its command bar understands", tint = t.purple, chevron = true, onClick = { MoreUi.gemini = true }) },
+            GlassRow(Icons.Rounded.Mic, "Use with Gemini", tint = t.purple, chevron = true, onClick = { MoreUi.gemini = true }) },
         Entry(2, "Live wallpaper", "wallpaper ambient light colours home lock screen") {
-            GlassRow(Icons.Rounded.Wallpaper, "Live wallpaper", "The app’s light, in the colours of what plays on your PC, behind your home screen", tint = t.purple, chevron = true, onClick = { open(AmbientWallpaper.chooserIntent(context)) }) },
+            GlassRow(Icons.Rounded.Wallpaper, "Live wallpaper", tint = t.purple, chevron = true, onClick = { open(AmbientWallpaper.chooserIntent(context)) }) },
         Entry(2, "Clear song history", "history songs recently played loved") {
-            GlassRow(Icons.Rounded.History, "Clear song history", "Recently played on the Remote (loved songs stay)", tint = t.gray, onClick = { Hub.clearHistory(); Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Song history cleared", "Loved songs stay")) }) },
+            GlassRow(Icons.Rounded.History, "Clear song history", "Loved songs stay", tint = t.gray, onClick = { Hub.clearHistory(); Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Song history cleared", "Loved songs stay")) }) },
         Entry(3, "Alerts", "alerts cpu gpu memory disk battery charged notification") {
-            GlassRow(Icons.Rounded.NotificationImportant, "Alerts", Alerts.kinds.filter { Alerts.on(it.key) }.takeIf { it.isNotEmpty() }?.joinToString(", ") { it.title.lowercase() }?.replaceFirstChar { it.uppercase() } ?: "When your PC works hard, runs short, or its battery runs low or fills",
+            GlassRow(Icons.Rounded.NotificationImportant, "Alerts", Alerts.kinds.filter { Alerts.on(it.key) }.takeIf { it.isNotEmpty() }?.joinToString(", ") { it.title.lowercase() }?.replaceFirstChar { it.uppercase() } ?: "Off",
                 tint = t.danger, chevron = true, onClick = { Ui.alerts = true }) },
         Entry(3, "Transfers as live updates", "live updates transfers progress status bar") {
-            GlassRow(Icons.Rounded.SwapVert, "Transfers as live updates", if (Build.VERSION.SDK_INT >= 36) "In the status bar’s chip and on the lock screen, with their progress" else "An ongoing notification with their progress", tint = t.blue) { GlassSwitch(flag("liveTransfers"), { set("liveTransfers", it) }) } },
+            GlassRow(Icons.Rounded.SwapVert, "Transfers as live updates", tint = t.blue) { GlassSwitch(flag("liveTransfers"), { set("liveTransfers", it) }) } },
         Entry(3, "Your PC’s song as a live update", "live update song music status bar chip") {
-            GlassRow(Icons.Rounded.GraphicEq, "Your PC’s song as a live update", if (Build.VERSION.SDK_INT >= 36) "Counting down in the status bar’s chip while it plays" else "Needs Android 16", tint = t.pink) {
+            GlassRow(Icons.Rounded.GraphicEq, "Your PC’s song as a live update", if (Build.VERSION.SDK_INT >= 36) null else "Needs Android 16", tint = t.pink) {
                 GlassSwitch(flag("liveSong") && Build.VERSION.SDK_INT >= 36, { set("liveSong", it); if (!it) LiveUpdates.song(context, null, null) }, enabled = Build.VERSION.SDK_INT >= 36) } },
         Entry(4, "Theme", "appearance dark light automatic theme") {
             Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 14.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { IconTile(Icons.Rounded.Contrast, t.indigo); Spacer(Modifier.width(14.dp)); Text("Theme", style = Type.body, color = t.text) }; Spacer(Modifier.height(12.dp)); Segmented(listOf("Automatic", "Dark", "Light"), look.appearance, { onLook(look.copy(appearance = it)) }, Modifier.fillMaxWidth()) } },
-        Entry(4, "Liquid glass", "glass blur refraction solid") {
-            GlassRow(Icons.Rounded.BlurOn, "Liquid glass", if (look.glass) "Surfaces bend and blur what’s behind them, and catch the light as you tilt the phone" else "Off: solid surfaces, calmer and lighter on the battery", tint = t.teal) { GlassSwitch(look.glass, { onLook(look.copy(glass = it)) }) } },
         Entry(4, "Widgets in Material You", "widgets material you wallpaper colours") {
-            if (Build.VERSION.SDK_INT >= 31) GlassRow(Icons.Rounded.Palette, "Widgets in Material You", if (flag("widgetsYou", false)) "Your wallpaper’s colours" else "Off: glass in the colours of what plays on your PC", tint = t.purple) {
+            if (Build.VERSION.SDK_INT >= 31) GlassRow(Icons.Rounded.Palette, "Widgets in Material You", tint = t.purple) {
                 GlassSwitch(flag("widgetsYou", false), { set("widgetsYou", it); WidgetStyle.set(context, it) }) } },
     )
     GlassSheet(visible, onDismiss, Modifier.fillMaxHeight(.92f)) {
@@ -316,15 +314,18 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
                         5 -> { Spacer(Modifier.height(16.dp)); UpdateCard { Ui.updates = true } }
                         6 -> Section(null) {
                             Column(Modifier.padding(18.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) { IconTile(Icons.Rounded.Shield, t.good); Spacer(Modifier.width(12.dp)); Text("Only between your own devices", style = Type.headline, color = t.text) }
+                                Row(verticalAlignment = Alignment.CenterVertically) { IconTile(Icons.Rounded.Shield, t.good); Spacer(Modifier.width(12.dp)); Text("Private by design", style = Type.headline, color = t.text) }
                                 Spacer(Modifier.height(10.dp))
-                                Text("On the same Wi-Fi everything goes directly between your devices. On different networks it passes through a free public relay (MQTT over TLS), sealed end to end: the relay sees only random-looking topics and encrypted bytes, never what they carry. No accounts, no analytics, nothing in a cloud.", style = Type.body, color = t.muted)
+                                Text("Everything stays between your own devices, encrypted end to end. No accounts, no analytics, no cloud.", style = Type.body, color = t.muted)
                             }
                         }
                         7 -> Section(null) {
                             GlassRow(Icons.Rounded.Info, "Version", tint = t.gray, value = Updates.current); Hairline()
                             GlassRow(Icons.Rounded.PhoneAndroid, "This phone", tint = t.good, value = Hub.phoneName()); Hairline()
-                            GlassRow(Icons.AutoMirrored.Rounded.OpenInNew, "Arnav Island for Android", "Open source, on GitHub", tint = t.blue, chevron = true, onClick = { openUrl(context, "https://github.com/${Updates.REPO}") })
+                            var crash by remember { mutableStateOf(Crashes.last(context)) }
+                            crash?.let { (_, at) -> GlassRow(Icons.Rounded.BugReport, "Last crash", ago(at), tint = t.danger, onClick = { Crashes.share(context) }) {
+                                GlassIconButton(Icons.Rounded.Close, "Forget it", { Crashes.forget(context); crash = null }, size = 30.dp, iconSize = 15.dp) }; Hairline() }
+                            GlassRow(Icons.AutoMirrored.Rounded.OpenInNew, "Source code", "GitHub", tint = t.blue, chevron = true, onClick = { openUrl(context, "https://github.com/${Updates.REPO}") })
                         }
                         else -> Section(null) { entries.filter { it.page == shown }.forEachIndexed { i, e -> if (i > 0) Hairline(); e.row() } }
                     }
@@ -349,7 +350,7 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
             IconTile(pcIcon(p.id, p.phone), pcColor(p.id), size = 76.dp)
             Spacer(Modifier.height(12.dp))
             Text(p.name, style = Type.title2, color = t.text, textAlign = TextAlign.Center)
-            Text(if (p.online) quality(p).text else seen[p.id]?.let { "Away  ·  last seen ${ago(it).lowercase()}" } ?: "Away", style = Type.caption, color = t.muted)
+            Text(if (p.online) quality(p).text else seen[p.id]?.let { "Last seen ${ago(it).lowercase()}" } ?: "Away", style = Type.caption, color = t.muted)
             // Its name here.
             Section("Name") {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -389,10 +390,10 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
                 GlassRow(Icons.Rounded.Schedule, "Last seen", tint = t.indigo, value = if (p.online) "Here now" else seen[p.id]?.let { ago(it) } ?: "Not yet")
                 Hairline()
                 GlassRow(Icons.Rounded.Shield, "Island protocol", tint = t.good, value = "${p.version}.${p.revision}")
-                if (!p.phone && !machines[p.id].isNullOrEmpty()) { Hairline(); GlassRow(Icons.Rounded.PowerSettingsNew, "Wake ${p.name}", "On this Wi-Fi, if it allows Wake-on-LAN", tint = t.good, chevron = true, onClick = { Hub.wake(p.id) }) }
+                if (!p.phone && !machines[p.id].isNullOrEmpty()) { Hairline(); GlassRow(Icons.Rounded.PowerSettingsNew, "Wake ${p.name}", tint = t.good, chevron = true, onClick = { Hub.wake(p.id) }) }
             }
             Spacer(Modifier.height(16.dp))
-            if (!p.phone && p.id != Hub.pc()?.id) { GlassButton({ Hub.choose(p.id); onDismiss() }, Modifier.fillMaxWidth(), prominent = true, contentPadding = PaddingValues(vertical = 15.dp)) { Text("Use for the remote and sends", style = Type.headline) }; Spacer(Modifier.height(10.dp)) }
+            if (!p.phone && p.id != Hub.pc()?.id) { GlassButton({ Hub.choose(p.id); onDismiss() }, Modifier.fillMaxWidth(), prominent = true, contentPadding = PaddingValues(vertical = 15.dp)) { Text("Use this PC", style = Type.headline) }; Spacer(Modifier.height(10.dp)) }
             GlassButton({ if (confirmForget) { Hub.forget(p.id); onDismiss() } else confirmForget = true }, Modifier.fillMaxWidth(), contentPadding = PaddingValues(vertical = 15.dp)) {
                 Text(if (confirmForget) "Tap again to forget ${p.name}" else "Forget this PC", style = Type.headline, color = t.danger)
             }
@@ -420,12 +421,11 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Text(when { !p.online -> "Away"; !p.internet -> "On this Wi-Fi"; p.path == 2 -> "Directly, over the internet"; else -> "Through the relay" }, style = Type.headline, color = t.text)
-                        Text(when { !p.online -> "Not reachable right now"; !p.internet -> "Straight between your devices, the fastest way"; p.path == 2 -> "A direct path through your router (no relay in between)"; else -> "Passed on by free public brokers, sealed end to end" }, style = Type.caption, color = t.muted)
                     }
                 }
             }
             val samples = trail[p.id].orEmpty()
-            if (p.internet && samples.size >= 2) Section("Round trip", footer = "Since the app started, while ${p.name} was reached over the internet.") {
+            if (p.internet && samples.size >= 2) Section("Round trip") {
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.Bottom) { RollingNumber("${samples.last().second.roundToInt()}", Type.title, t.text); Text(" ms", style = Type.headline, color = t.muted, modifier = Modifier.padding(bottom = 3.dp)) }
                     Text("Best ${samples.minOf { it.second }.roundToInt()} ms  ·  average ${samples.map { it.second }.average().roundToInt()} ms", style = Type.caption, color = t.muted)
@@ -440,12 +440,12 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
                     GlassRow(Icons.Rounded.Hub, "Relays heard on", tint = t.indigo, value = "${p.relays} of 3"); Hairline()
                     GlassRow(Icons.Rounded.Language, "IPv6", tint = t.teal, value = if (p.v6) "Yes" else "No"); Hairline() }
                 if (!p.address.isNullOrBlank()) { GlassRow(Icons.Rounded.SettingsEthernet, "Address", tint = t.gray, value = p.address); Hairline() }
-                GlassRow(Icons.Rounded.Lock, "Encryption", "ECDH P-256 keys checked against the pairing, AES-256-GCM, fresh keys each connection", tint = t.good); Hairline()
+                GlassRow(Icons.Rounded.Lock, "Encryption", tint = t.good, value = "AES-256-GCM"); Hairline()
                 GlassRow(Icons.Rounded.Shield, "Island protocol", tint = t.gray, value = "${p.version}.${p.revision}")
             }
             Spacer(Modifier.height(16.dp))
             GlassButton({ testing = true; Hub.retest(); scope.launch { kotlinx.coroutines.delay(2500); testing = false } }, Modifier.fillMaxWidth(), prominent = true, enabled = !testing, contentPadding = PaddingValues(vertical = 15.dp)) {
-                if (testing) { Radar(t.onAccent, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Finding the paths…", style = Type.headline) } else { Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(8.dp)); Text("Test again", style = Type.headline) }
+                if (testing) { Radar(t.onAccent, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Testing…", style = Type.headline) } else { Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(8.dp)); Text("Test again", style = Type.headline) }
             }
             Spacer(Modifier.height(6.dp))
         }

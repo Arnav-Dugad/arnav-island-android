@@ -29,6 +29,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
@@ -89,7 +90,7 @@ import kotlinx.coroutines.launch
 
 /** An icon on a small rounded square of solid colour, white on it: as Apple's Settings marks each row. */
 @Composable fun IconTile(icon: ImageVector, color: Color, modifier: Modifier = Modifier, size: Dp = 30.dp) {
-    Box(modifier.size(size).clip(RoundedCornerShape(size * .27f)).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.lerp(color, Color.White, .1f), color))),
+    Box(modifier.size(size).clip(RoundedCornerShape(size * .26f)).background(color),
         contentAlignment = Alignment.Center) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(size * .6f)) }
 }
 
@@ -97,13 +98,14 @@ import kotlinx.coroutines.launch
 @Composable fun GlassTile(icon: ImageVector, title: String, detail: String, modifier: Modifier = Modifier, tint: Color = LocalTokens.current.accent, enabled: Boolean = true, onClick: () -> Unit) {
     val t = LocalTokens.current; val haptics = LocalHapticFeedback.current
     val source = remember { MutableInteractionSource() }; val pressed by source.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) .96f else 1f, spring(dampingRatio = .55f, stiffness = 650f), label = "Tile")
-    Column(modifier.graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (enabled) 1f else .45f }.glass(GlassShapes.tile)
+    val scale by animateFloatAsState(if (pressed) .97f else 1f, spring(dampingRatio = .7f, stiffness = 900f), label = "Tile")
+    val dim by animateFloatAsState(if (pressed) .6f else 1f, tween(if (pressed) 60 else 220), label = "TileHighlight")
+    Column(modifier.graphicsLayer { scaleX = scale; scaleY = scale; alpha = (if (enabled) 1f else .45f) * dim }.glass(GlassShapes.tile)
         .clickable(source, null, enabled = enabled, role = Role.Button) { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); onClick() }.padding(14.dp)) {
         IconTile(icon, tint, size = 36.dp)
         Spacer(Modifier.height(12.dp))
         Text(title, style = Type.bodyStrong, color = t.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(detail, style = Type.caption, color = t.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (detail.isNotEmpty()) Text(detail, style = Type.caption, color = t.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -147,7 +149,7 @@ fun quality(p: PeerView): Quality {
 @Composable fun GlassRow(icon: ImageVector, title: String, detail: String? = null, modifier: Modifier = Modifier, tint: Color = LocalTokens.current.accent, onClick: (() -> Unit)? = null,
                          ring: Quality? = null, chevron: Boolean = false, value: String? = null, trailing: @Composable (() -> Unit)? = null) {
     val t = LocalTokens.current
-    Row(modifier.fillMaxWidth().heightIn(min = 52.dp).then(if (onClick != null) Modifier.clickable(role = Role.Button) { onClick() } else Modifier).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().heightIn(min = 50.dp).then(if (onClick != null) Modifier.clickable(role = Role.Button) { onClick() } else Modifier).padding(horizontal = 16.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
         if (ring != null) Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
             QualityRing(ring, Modifier.fillMaxSize())
             IconTile(icon, tint, Modifier.clip(CircleShape), size = 26.dp)
@@ -156,7 +158,7 @@ fun quality(p: PeerView): Quality {
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(title, style = Type.body, color = t.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!detail.isNullOrEmpty()) Text(detail, style = Type.caption, color = t.muted, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            if (!detail.isNullOrEmpty()) Text(detail, style = Type.caption, color = t.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         if (value != null) { Spacer(Modifier.width(8.dp)); Text(value, style = Type.body, color = t.muted, maxLines = 1) }
         if (trailing != null) { Spacer(Modifier.width(10.dp)); trailing() }
@@ -266,7 +268,8 @@ class BannerState { var current by mutableStateOf<Banner?>(null); internal var s
         exit = if (reduced) fadeOut() else slideOutVertically(tween(260)) { -it * 2 } + fadeOut(tween(200))) {
         val b = shown ?: return@AnimatedVisibility
         val (icon, tint) = bannerIcon(b.kind, t)
-        Row(Modifier.fillMaxWidth().offset { IntOffset(0, drag.value.coerceAtMost(0f).roundToInt()) }.glass(RoundedCornerShape(24.dp), GlassLevel.Bar)
+        Row(Modifier.fillMaxWidth().offset { IntOffset(0, drag.value.coerceAtMost(0f).roundToInt()) }.dropShadow(RoundedCornerShape(22.dp), androidx.compose.ui.graphics.shadow.Shadow(radius = 18.dp, color = Color.Black.copy(alpha = if (t.dark) .5f else .14f), offset = androidx.compose.ui.unit.DpOffset(0.dp, 4.dp)))
+            .clip(RoundedCornerShape(22.dp)).background(if (t.dark) Color(0xFF2C2C2E) else Color.White)
             .clickable(remember { MutableInteractionSource() }, null) { state.dismiss() }
             .pointerInput(Unit) {
                 detectVerticalDragGestures(onDragEnd = { scope.launch { if (drag.value < -40.dp.toPx()) state.dismiss() else drag.animateTo(0f, spring(dampingRatio = .7f)) } }) { c, amount ->
@@ -293,16 +296,16 @@ class BannerState { var current by mutableStateOf<Banner?>(null); internal var s
     val t = LocalTokens.current; val haptics = LocalHapticFeedback.current; val reduced = LocalReduced.current
     val at by animateFloatAsState(selected.toFloat(), if (reduced) snap() else spring(dampingRatio = .78f, stiffness = 520f), label = "Segment")
     var width by remember { mutableIntStateOf(0) }; val density = LocalDensity.current
-    Box(modifier.height(38.dp).glass(GlassShapes.capsule, GlassLevel.Control).onSizeChanged { width = it.width }.padding(3.dp)) {
+    Box(modifier.height(34.dp).clip(RoundedCornerShape(10.dp)).background(if (t.dark) Color(0x3D767680) else Color(0x1F767680)).onSizeChanged { width = it.width }.padding(2.dp)) {
         if (width > 0 && options.isNotEmpty()) {
             val cell = with(density) { ((width - 6.dp.roundToPx()) / options.size.toFloat()).toDp() }
             Box(Modifier.width(cell).fillMaxHeight().offset { IntOffset((at * cell.toPx()).roundToInt(), 0) }
-                .graphicsLayer { shadowElevation = 3.dp.toPx(); shape = GlassShapes.capsule; clip = true }
+                .graphicsLayer { shadowElevation = 2.dp.toPx(); shape = RoundedCornerShape(8.dp); clip = true }
                 .background(if (t.dark) Color(0xFF636366) else Color.White))
         }
         Row(Modifier.fillMaxSize()) {
             options.forEachIndexed { i, label ->
-                Box(Modifier.weight(1f).fillMaxHeight().clip(GlassShapes.capsule).clickable(role = Role.Tab) { if (i != selected) { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); onSelect(i) } }
+                Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(8.dp)).clickable(role = Role.Tab) { if (i != selected) { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); onSelect(i) } }
                     .semantics { this.selected = i == selected }, contentAlignment = Alignment.Center) {
                     Text(label, style = Type.caption.copy(fontWeight = if (i == selected) FontWeight.SemiBold else FontWeight.Medium), color = t.text, maxLines = 1)
                 }
@@ -369,7 +372,7 @@ val NavBarHeight = 48.dp
     val t = LocalTokens.current; val p = bar.progress
     val showAccessory = bar.accessory != null && p > .98f
     Box(modifier.fillMaxWidth()) {
-        if (p > 0f) Box(Modifier.matchParentSize().graphicsLayer { alpha = p }.glass(RoundedCornerShape(0.dp), GlassLevel.Bar, rim = false))
+        if (p > 0f) Box(Modifier.matchParentSize().graphicsLayer { alpha = p }.background(surface(t, GlassLevel.Bar, Color.Unspecified)))
         Column(Modifier.fillMaxWidth().statusBarsPadding()) {
             Box(Modifier.fillMaxWidth().height(NavBarHeight).padding(horizontal = 12.dp)) {
                 Text(bar.title, style = Type.headline, color = t.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -387,7 +390,7 @@ val NavBarHeight = 48.dp
 /** A search field in glass, as Apple's: a magnifier, the words, and a clear button once something's typed. */
 @Composable fun SearchField(text: String, onText: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier, onGo: (() -> Unit)? = null, fieldModifier: Modifier = Modifier) {
     val t = LocalTokens.current
-    Row(modifier.fillMaxWidth().height(42.dp).glass(GlassShapes.capsule, GlassLevel.Control).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().height(38.dp).clip(RoundedCornerShape(11.dp)).background(if (t.dark) Color(0x3D767680) else Color(0x1F767680)).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Rounded.Search, null, tint = t.muted, modifier = Modifier.size(19.dp)); Spacer(Modifier.width(8.dp))
         Box(Modifier.weight(1f)) {
             if (text.isEmpty()) Text(placeholder, style = Type.body, color = t.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -78,7 +78,7 @@ import kotlin.math.roundToInt
                     val again = { why: String -> note = why; going = false; calm = 0f; time = 0f; angle = 0f; swept = 0f; xs.clear(); ys.clear(); dts.clear(); haptics.performHapticFeedback(HapticFeedbackType.Reject) }
                     when {
                         angle < -10f -> again("That went right to left. Start at the left edge")
-                        angle < 12f -> again("A little wider: from one edge of the screen to the other")
+                        angle < 12f -> again("A little wider, edge to edge")
                         else -> {
                             val s = AirMouse.sensitivityFor(AirMouse.travel(xs.toFloatArray(), ys.toFloatArray(), dts.toFloatArray()))
                             if (s == null) again("Once more, a little quicker")
@@ -116,7 +116,7 @@ import kotlin.math.roundToInt
                     Spacer(Modifier.height(18.dp))
                     Text("Hold still", style = Type.headline, color = t.text)
                     Spacer(Modifier.height(4.dp))
-                    Text("Point the phone at your PC and keep it still for two seconds while it learns its gyroscope’s drift", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+                    Text("Point at your PC and hold still", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
                 }
                 1 -> {
                     // A screen, and the pointer crossing it as the sweep goes (a comfortable sweep is ~30-50°).
@@ -138,7 +138,7 @@ import kotlin.math.roundToInt
                         if (abs(swept) >= 1f) { Spacer(Modifier.width(10.dp)); RollingNumber("${abs(swept).roundToInt()}°", Type.headline, t.muted) }
                     }
                     Spacer(Modifier.height(4.dp))
-                    Text("Point at the left edge of your screen, then sweep to the right edge once, at an easy pace", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+                    Text("Point at the left edge, then sweep to the right", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
                 }
                 else -> {
                     Icon(Icons.Rounded.CheckCircle, null, tint = t.good, modifier = Modifier.size(64.dp))

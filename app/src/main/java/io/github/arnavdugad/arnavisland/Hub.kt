@@ -40,6 +40,7 @@ import io.github.arnavdugad.arnavisland.link.PcProcess
 import io.github.arnavdugad.arnavisland.link.Sensors
 import io.github.arnavdugad.arnavisland.link.FileList
 import io.github.arnavdugad.arnavisland.link.PcClip
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -89,7 +90,8 @@ data class Banner(val kind: Kind, val title: String, val detail: String = "") {
  */
 object Hub {
     lateinit var app: Context; private set
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // What goes wrong in one task (a PC that vanished mid-answer, a widget or a notification Android refused) ends that task, never the app.
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> android.util.Log.w("ArnavHub", "task failed", e) })
     @Volatile var link: Link? = null; private set
     val running = MutableStateFlow(false)
     val failure = MutableStateFlow<String?>(null)
@@ -159,7 +161,9 @@ object Hub {
     fun choose(peer: String) { if (selected.value != peer) { clearIsland(); missing.value = emptySet() }; selected.value = peer; prefs.edit().putString("pc", peer).apply(); status.value = null; probe(peer) }
 
     private val lastOnline = HashSet<String>()
-    private fun onEvent(e: LinkEvent) {
+    /** Called on the link's own threads (discovery, the relay, each transfer): what goes wrong here is logged, not thrown at them. */
+    private fun onEvent(e: LinkEvent) { try { handle(e) } catch (x: Exception) { android.util.Log.w("ArnavHub", "event ${e::class.simpleName} failed", x) } }
+    private fun handle(e: LinkEvent) {
         when (e) {
             is LinkEvent.Peers -> {
                 peers.value = dressed(e.peers); pickDefault(); internet.value = (link ?: starting)?.internet == true
@@ -172,7 +176,7 @@ object Hub {
             is LinkEvent.PairCode -> { codePairing.value = null; pairCode.value = e; if (!visible) Notify.pairing(app, e) }
             is LinkEvent.Paired -> {
                 codePairing.value = null; pairCode.value = null; pairResult.value = e; Notify.cancel(app, Notify.PAIR)
-                if (e.ok) { if (pc()?.id == null || selected.value == null) choose(e.peer); banners.tryEmit(Banner(Banner.Kind.Paired, "Paired with ${e.name}", "Files, music and the remote are ready, on any network")); sendBattery(force = true); sendDetails(force = true) }
+                if (e.ok) { if (pc()?.id == null || selected.value == null) choose(e.peer); banners.tryEmit(Banner(Banner.Kind.Paired, "Paired with ${e.name}")); sendBattery(force = true); sendDetails(force = true) }
                 else banners.tryEmit(Banner(Banner.Kind.Failed, if (e.name.isEmpty()) "Not paired" else "Not paired with ${e.name}", e.detail))
             }
             is LinkEvent.Offer -> {
@@ -207,7 +211,7 @@ object Hub {
                 if (again != null) {
                     transfers.update { it - e.transfer }
                     synchronized(queue) { queue.update { listOf(Queued(again.id, again.peer, again.name, again.sources, again.title, again.size, again.toShelf, again.preview, again.ask, again.onStarted, again.token, again.attempts + 1)) + it } }
-                    banners.tryEmit(Banner(Banner.Kind.Info, "${e.title} is waiting", "It carries on where it stopped when ${e.name} is back"))
+                    banners.tryEmit(Banner(Banner.Kind.Info, "${e.title} is waiting", "Resumes when ${e.name} is back"))
                     scope.launch { delay(4_000); if (peers.value.firstOrNull { it.id == e.peer }?.online == true) next(e.peer) }
                     return
                 }
@@ -251,7 +255,7 @@ object Hub {
         val pkg = when { m.app.contains("spotify", true) -> "com.spotify.music"; m.app.contains("youtube", true) -> "com.google.android.apps.youtube.music"; else -> null }
         val chosen = pkg?.let { p -> Intent(intent).setPackage(p).takeIf { it.resolveActivity(context.packageManager) != null } }
         val ok = runCatching { context.startActivity(chosen ?: intent) }.isSuccess
-        banners.tryEmit(if (ok) Banner(Banner.Kind.Music, "Continuing ${m.title}", if (chosen != null) "In ${m.app}" else "In your music app") else Banner(Banner.Kind.Failed, "No music app plays searches", "Install one that does, or play it on the PC"))
+        banners.tryEmit(if (ok) Banner(Banner.Kind.Music, "Continuing ${m.title}", if (chosen != null) "In ${m.app}" else "In your music app") else Banner(Banner.Kind.Failed, "No music app plays searches"))
     }
 
     // ---- pairing ----
@@ -432,7 +436,7 @@ object Hub {
     /** Wakes a PC on this network (its adapters must allow Wake-on-LAN): a magic packet to each of its addresses. */
     fun wake(peer: String) {
         val p = peers.value.firstOrNull { it.id == peer }; val list = machines.value[peer]
-        if (list.isNullOrEmpty()) { banners.tryEmit(Banner(Banner.Kind.Failed, "Can't wake ${p?.name ?: "it"} yet", "It's learnt once the PC has island 0.26 and is here")); return }
+        if (list.isNullOrEmpty()) { banners.tryEmit(Banner(Banner.Kind.Failed, "Can't wake ${p?.name ?: "it"} yet", "Needs island 0.26")); return }
         scope.launch {
             val sent = Wake.send(list)
             banners.tryEmit(if (sent) Banner(Banner.Kind.Info, "Waking ${p?.name ?: "your PC"}", "If it allows Wake-on-LAN, it starts in a moment") else Banner(Banner.Kind.Failed, "Couldn't send the wake signal", "Join the PC's network first"))
@@ -516,7 +520,7 @@ object Hub {
     // ---- 1.8: the PC's apps, each with its volume, and its sound's levels (island 0.26) ----
     val mixer = MutableStateFlow<List<MixerApp>>(emptyList())
     val mixerIcons = MutableStateFlow<Map<String, androidx.compose.ui.graphics.ImageBitmap>>(emptyMap())
-    private val mixerAsked = HashMap<Long, Long>()
+    private val mixerAsked = java.util.concurrent.ConcurrentHashMap<Long, Long>()
     suspend fun refreshMixer() = withContext(Dispatchers.IO) {
         val p = pc()?.takeIf { it.online && it.revision >= 9 } ?: return@withContext
         // Icons only for apps not seen yet.
@@ -551,6 +555,8 @@ object Hub {
     /** Asks a newly arrived island 0.27 which of these it has: its apps' list and a folder listing (both only read). */
     private fun probe(peer: String) {
         val p = peers.value.firstOrNull { it.id == peer } ?: return; if (p.revision < 10 || p.phone || peer != pc()?.id) return
+        // Taken as missing until the PC says it has them, so their rows appear once rather than show and then vanish.
+        missing.update { it + Proto.CMD_PROCESSES + Proto.CMD_FILES + Proto.CMD_SCREENSHOT }
         scope.launch {
             val l = link ?: return@launch
             note(Proto.CMD_PROCESSES, l.remote(peer, Proto.CMD_PROCESSES, Bytes().u8(0).u8(0).u8(1).u8(0).build())?.status)
@@ -595,8 +601,8 @@ object Hub {
         val p = pc() ?: return
         if (!rev10(p)) { banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${p.name}", "Screenshots need version 0.27 or later")); return }
         scope.launch { screenshotAsked = System.currentTimeMillis(); val size = link?.screenshot(p.id, what)
-            banners.tryEmit(when { size != null -> Banner(Banner.Kind.Photo, "Taking a screenshot of ${p.name}", "${size.first} × ${size.second}, coming over")
-                link?.remote(p.id, Proto.CMD_SCREENSHOT, ByteArray(0))?.status == Proto.UNSUPPORTED -> { missing.update { it + Proto.CMD_SCREENSHOT }; Banner(Banner.Kind.Info, "Screenshots aren't on ${p.name}'s island yet", "A later island adds them") }
+            banners.tryEmit(when { size != null -> Banner(Banner.Kind.Photo, "Taking a screenshot of ${p.name}", "${size.first} × ${size.second}")
+                link?.remote(p.id, Proto.CMD_SCREENSHOT, ByteArray(0))?.status == Proto.UNSUPPORTED -> { missing.update { it + Proto.CMD_SCREENSHOT }; Banner(Banner.Kind.Info, "Screenshots aren't on ${p.name}'s island yet") }
                 else -> Banner(Banner.Kind.Failed, "${p.name} couldn't take one") }) }
     }
     /** 1.9: the connection's speed both ways (bits a second), each measured for about three seconds; null when it couldn't. */
@@ -700,7 +706,7 @@ object Hub {
     /** The PC's controls (and, while its numbers show, its stats): asked once a second while the Island screen shows. */
     suspend fun refreshIsland(withStats: Boolean) = withContext(Dispatchers.IO) {
         val l = link ?: return@withContext; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext
-        if (withStats) l.stats(p.id)?.let { s ->
+        if (withStats) l.stats(p.id)?.let { read -> val s = withCores(p, read)
             // A new PC starts its trail afresh; otherwise each poll adds a point (five minutes of them, for scrubbing).
             if (trailPc != p.id) { trailPc = p.id; statsTrail.value = emptyList() }
             pcStats.value = s; statsCache[p.id] = s; val now = System.currentTimeMillis(); Alerts.check(app, p, s)
@@ -763,10 +769,12 @@ object Hub {
             else { banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't do that", l.lastRemoteError.ifEmpty { "Try again in a moment" })); l.controls(p.id)?.let { pcControls.value = it } }
         }
     }
+    /** Not every reading carries each core's: the last ones carry on, so their box doesn't leave and come back. */
+    private fun withCores(p: PeerView, read: PcStats): PcStats { val before = statsCache[p.id]; return if (read.cores.isEmpty() && !before?.cores.isNullOrEmpty()) read.copy(cores = before!!.cores) else read }
     /** 1.5: just the PC's numbers (for the stats widget while the app isn't on screen). */
     suspend fun refreshStats() = withContext(Dispatchers.IO) {
         val l = link ?: return@withContext; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext
-        l.stats(p.id)?.let { pcStats.value = it; statsCache[p.id] = it; Alerts.check(app, p, it) }
+        l.stats(p.id)?.let { read -> val s = withCores(p, read); pcStats.value = s; statsCache[p.id] = s; Alerts.check(app, p, s) }
         if (rev10(p) && (Alerts.on("cpuheat") || Alerts.on("gpuheat"))) refreshSensors()
     }
     /** 1.5: each PC's numbers as last read (the Island tab's carousel shows its neighbours with them). */
@@ -852,7 +860,7 @@ object Hub {
         val p = pc() ?: return false
         if (p.online && p.revision < 3) { banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${p.name}", "Find my PC needs version 0.20 or later")); return false }
         val ok = command(Proto.CMD_RING_PC)?.ok == true
-        if (ok) banners.tryEmit(Banner(Banner.Kind.Ring, "Ringing ${p.name}", "Its island chimes and lights up"))
+        if (ok) banners.tryEmit(Banner(Banner.Kind.Ring, "Ringing ${p.name}"))
         return ok
     }
 
@@ -865,7 +873,7 @@ object Hub {
         photoFor = null; Notify.cancel(app, Notify.PHOTO)
         if (target == null) { banners.tryEmit(Banner(Banner.Kind.Failed, "No PC yet", "Pair with your PC first")); return }
         send(target.id, listOf(uri), toShelf = target.revision >= 3)
-        banners.tryEmit(Banner(Banner.Kind.Photo, "On its way to ${target.name}", if (target.revision >= 3) "It lands on the island’s Shelf" else "It goes to the PC’s Downloads"))
+        banners.tryEmit(Banner(Banner.Kind.Photo, "On its way to ${target.name}"))
     }
 
     // ---- the universal clipboard ----

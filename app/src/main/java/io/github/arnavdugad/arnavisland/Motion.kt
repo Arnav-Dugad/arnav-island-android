@@ -108,9 +108,8 @@ import kotlin.math.sin
         val w = stroke.toPx(); val d = min(size.width, size.height) - w; val tl = Offset((size.width - d) / 2, (size.height - d) / 2)
         drawArc(track, 0f, 360f, false, tl, Size(d, d), style = Stroke(w, cap = StrokeCap.Round))
         if (shown > 0f) {
-            drawArc(Brush.sweepGradient(listOf(color.copy(alpha = .35f), color, color), center), -90f, 360f * shown, false, tl, Size(d, d), style = Stroke(w, cap = StrokeCap.Round))
-            val a = (-90f + 360f * shown) * PI.toFloat() / 180f; val head = Offset(center.x + d / 2 * cos(a), center.y + d / 2 * sin(a))
-            drawCircle(Brush.radialGradient(listOf(color.copy(alpha = .8f), Color.Transparent), head, w * 2.6f), w * 2.6f, head)
+            // 1.10: one solid colour, as Apple's rings are (no glow at its head).
+            drawArc(color, -90f, 360f * shown, false, tl, Size(d, d), style = Stroke(w, cap = StrokeCap.Round))
         }
     }
 }

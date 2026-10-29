@@ -150,7 +150,7 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
                     0, 1 -> {
                         Text("Pair with your PC", style = Type.title2, color = t.text)
                         Spacer(Modifier.height(4.dp))
-                        Text(if (stage == 1) "Asking ${peers.firstOrNull { it.id == asking }?.name ?: "your PC"}…" else "Your PCs on this Wi-Fi appear here. On the PC, turn on Settings › Privacy & productivity › Share with my PCs", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+                        Text(if (stage == 1) "Asking ${peers.firstOrNull { it.id == asking }?.name ?: "your PC"}…" else "On your PC, turn on Share with my PCs", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
                         val found = peers.filter { !it.paired && it.online && !it.phone }
                         Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
                             Radar(t.accent, Modifier.size(280.dp))
@@ -168,11 +168,11 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
                             }
                         }
                         if (result?.ok == false) Text(result.detail, style = Type.caption, color = t.danger, textAlign = TextAlign.Center)
-                        else if (found.isEmpty()) Text("Looking on this Wi-Fi…", style = Type.caption, color = t.muted)
-                        Section("On another network", footer = "The island shows its code at Shelf › Nearby › Pair with a code.") {
-                            GlassRow(Icons.Rounded.QrCodeScanner, "Scan the island’s QR code", tint = t.blue, chevron = true, onClick = { Hub.pairResult.value = null; mode = PAIR_SCAN })
+                        else if (found.isEmpty()) Text("Searching…", style = Type.caption, color = t.muted)
+                        Section("On another network", footer = "On your PC: Shelf › Nearby › Pair with a code") {
+                            GlassRow(Icons.Rounded.QrCodeScanner, "Scan QR code", tint = t.blue, chevron = true, onClick = { Hub.pairResult.value = null; mode = PAIR_SCAN })
                             Hairline()
-                            GlassRow(Icons.Rounded.Keyboard, "Type its code", tint = t.gray, chevron = true, onClick = { Hub.pairResult.value = null; mode = PAIR_TYPE })
+                            GlassRow(Icons.Rounded.Keyboard, "Enter code", tint = t.gray, chevron = true, onClick = { Hub.pairResult.value = null; mode = PAIR_TYPE })
                         }
                     }
                     PAIR_TYPE -> CodeEntry(finding != null, result?.takeIf { !it.ok }?.detail, onScan = { Hub.pairResult.value = null; mode = PAIR_SCAN }, onBack = { mode = PAIR_NEARBY; Hub.pairResult.value = null }) { typed -> Hub.pairWithCode(typed) }
@@ -181,7 +181,7 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
                     2 -> if (code != null) {
                         Text(if (code.confirmed) "Confirm on ${code.name}" else "Pair with ${code.name}?", style = Type.title, color = t.text, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(6.dp))
-                        Text(if (code.confirmed) "It shows the same code. Choose Pair there to finish" else "Check that ${code.name} shows the same code", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+                        Text(if (code.confirmed) "Choose Pair there to finish" else "Make sure the codes match", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(26.dp))
                         RollingDigits("%06d".format(code.code).let { it.substring(0, 3) + " " + it.substring(3) }, Type.digits.copy(fontSize = Type.digits.fontSize * 1.1f), t.text)
                         Spacer(Modifier.height(30.dp))
@@ -197,7 +197,6 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
                         Box(Modifier.size(96.dp).clip(CircleShape).background(t.good.copy(alpha = .2f)), contentAlignment = Alignment.Center) { DrawnCheck(t.good, Modifier.size(62.dp)) }
                         Spacer(Modifier.height(18.dp))
                         Text("Paired with ${result?.name ?: "your PC"}", style = Type.title, color = t.text, textAlign = TextAlign.Center)
-                        Text("Files, music and the remote are ready", style = Type.caption, color = t.muted)
                         Spacer(Modifier.height(20.dp))
                     }
                 }
@@ -215,7 +214,7 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(if (error == null) "Finding your PC" else "Not paired", style = Type.title, color = t.text)
         Spacer(Modifier.height(4.dp))
-        Text(error ?: "Over the internet, end-to-end encrypted. Keep the code showing on your PC", style = Type.caption, color = if (error == null) t.muted else t.danger, textAlign = TextAlign.Center)
+        Text(error ?: "Keep the code showing on your PC", style = Type.caption, color = if (error == null) t.muted else t.danger, textAlign = TextAlign.Center)
         val space by animateDpAsState(if (error == null) 250.dp else 150.dp, spring(dampingRatio = .8f, stiffness = 300f), label = "Space")
         Box(Modifier.fillMaxWidth().height(space), contentAlignment = Alignment.Center) {
             if (error == null) Radar(t.accent, Modifier.size(230.dp))
@@ -228,7 +227,7 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
                 Icon(Icons.Rounded.QrCodeScanner, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Scan again", style = Type.caption)
             }
             GlassButton(onType, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) {
-                Icon(Icons.Rounded.Keyboard, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Type the code", style = Type.caption)
+                Icon(Icons.Rounded.Keyboard, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Enter code", style = Type.caption)
             }
         } else GlassButton(onHide, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) { Text("Hide", style = Type.caption) }
     }
@@ -246,7 +245,7 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Pair with a code", style = Type.title, color = t.text)
         Spacer(Modifier.height(4.dp))
-        Text("On your PC, open the island’s Shelf › Nearby › Pair with a code, then type the code it shows. Any network works.", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+        Text("On your PC: Shelf › Nearby › Pair with a code", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
         Spacer(Modifier.height(22.dp))
         BasicTextField(text, { typed ->
             val clean = typed.uppercase().filter { it.isLetterOrDigit() }.take(8)
@@ -270,16 +269,15 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
             })
         Spacer(Modifier.height(20.dp))
         when {
-            connecting -> Row(verticalAlignment = Alignment.CenterVertically) { Radar(t.accent, Modifier.size(28.dp)); Spacer(Modifier.width(10.dp)); Text("Finding your PC over the internet…", style = Type.caption, color = t.muted) }
+            connecting -> Row(verticalAlignment = Alignment.CenterVertically) { Radar(t.accent, Modifier.size(28.dp)); Spacer(Modifier.width(10.dp)); Text("Finding your PC…", style = Type.caption, color = t.muted) }
             error != null -> Text(error, style = Type.caption, color = t.danger, textAlign = TextAlign.Center)
-            else -> Text("Encrypted end to end. The relay passes sealed bytes only.", style = Type.caption, color = t.faint, textAlign = TextAlign.Center)
         }
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GlassButton(onScan, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) {
                 Icon(Icons.Rounded.QrCodeScanner, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Scan instead", style = Type.caption)
             }
-            GlassButton(onBack, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) { Text("Back to this Wi-Fi", style = Type.caption) }
+            GlassButton(onBack, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp)) { Text("Back", style = Type.caption) }
         }
     }
 }
@@ -294,7 +292,7 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
         Text("${offer.name} is sending", style = Type.title, color = t.text, textAlign = TextAlign.Center)
         Spacer(Modifier.height(4.dp))
         Text(offer.title, style = Type.bodyStrong, color = t.text, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-        Text("${if (offer.count > 1) "${offer.count} files  ·  " else ""}${Hub.sizeText(offer.size)}  ·  to Downloads › Arnav Island", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+        Text("${if (offer.count > 1) "${offer.count} files  ·  " else ""}${Hub.sizeText(offer.size)}", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             GlassButton({ Hub.answer(offer, false) }, Modifier.weight(1f)) { Text("Decline", style = Type.bodyStrong) }
@@ -322,17 +320,16 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
         Spacer(Modifier.height(16.dp))
         Text("Continue on this phone?", style = Type.caption, color = t.muted)
         Text(m.title, style = Type.title, color = t.text, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text(listOfNotNull(m.artist.takeIf { it.isNotBlank() }, "from ${music.name}", if (m.duration > 0) "at ${clock(m.position)} of ${clock(m.duration)}" else null).joinToString("  ·  "), style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+        Text(listOfNotNull(m.artist.takeIf { it.isNotBlank() }, music.name).joinToString("  ·  "), style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
         Spacer(Modifier.height(22.dp))
         val moving = transfers[music.transfer]
         if (answered && m.fileSize > 0) {
             val f = moving?.let { if (it.total > 0) it.done.toFloat() / it.total else 0f } ?: 0f
-            Row(verticalAlignment = Alignment.CenterVertically) { ProgressRing(f, t.accent, t.track, Modifier.size(28.dp), 3.dp); Spacer(Modifier.width(10.dp)); Text("Bringing the song over… ${(f * 100).toInt()}%", style = Type.body, color = t.text) }
+            Row(verticalAlignment = Alignment.CenterVertically) { ProgressRing(f, t.accent, t.track, Modifier.size(28.dp), 3.dp); Spacer(Modifier.width(10.dp)); Text("Loading… ${(f * 100).toInt()}%", style = Type.body, color = t.text) }
         } else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             GlassButton({ Hub.answerMusic(music, false, context) }, Modifier.weight(1f)) { Text("Not now", style = Type.bodyStrong) }
             GlassButton({ answered = true; Hub.answerMusic(music, true, context) }, Modifier.weight(1f), prominent = true) { Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("Play here", style = Type.bodyStrong) }
         }
-        if (m.fileSize <= 0) Text("Your PC plays it from an app, so it continues in this phone’s music app", style = Type.caption, color = t.faint, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
     }
 }
 
@@ -425,13 +422,13 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
     LaunchedEffect(visible) { if (visible) Updates.check() }
     GlassSheet(visible, onDismiss, Modifier.fillMaxHeight(.86f)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) { Text("Release history", style = Type.title, color = t.text); Text("You have ${Updates.current}", style = Type.caption, color = t.muted) }
+            Text("Release history", style = Type.title, color = t.text, modifier = Modifier.weight(1f))
             GlassIconButton(Icons.Rounded.Refresh, "Check for updates", { scope.launch { Updates.check(force = true) } }, size = 40.dp, iconSize = 19.dp)
         }
         Spacer(Modifier.height(14.dp))
         UpdateCard(onUpdates = {})
         Spacer(Modifier.height(10.dp))
-        if (releases.isEmpty()) Text("No releases read yet. Check needs the internet.", style = Type.caption, color = t.muted, modifier = Modifier.padding(20.dp))
+        if (releases.isEmpty()) Text("No releases yet", style = Type.caption, color = t.muted, modifier = Modifier.padding(20.dp))
         LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 10.dp)) {
             items(releases, key = { it.tag }) { r ->
                 val mine = r.versionName == Updates.current.substringBefore('-')
@@ -448,7 +445,7 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
                     if (open && r.notes.isNotBlank()) { Spacer(Modifier.height(10.dp)); Notes(r.notes) }
                 }
             }
-            item { Text("All releases: ${Updates.PAGE}", style = Type.caption, color = t.accent, modifier = Modifier.clickable { openUrl(context, Updates.PAGE) }.padding(10.dp)) }
+            item { Text("All releases", style = Type.caption, color = t.accent, modifier = Modifier.clickable { openUrl(context, Updates.PAGE) }.padding(10.dp)) }
         }
     }
 }
@@ -527,7 +524,7 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
         Spacer(Modifier.height(12.dp))
         Text("Your hotspot", style = Type.title, color = t.text)
         Spacer(Modifier.height(6.dp))
-        Text("While it’s on, your PC’s island offers to join it in one tap. Android doesn’t tell apps its name and password, so type them once, as your hotspot settings show them.",
+        Text("Type its name and password so your PC can join it.",
             style = Type.body, color = t.muted, textAlign = TextAlign.Center)
         Spacer(Modifier.height(18.dp))
         Box(Modifier.fillMaxWidth().glass(GlassShapes.capsule, GlassLevel.Control).padding(horizontal = 18.dp, vertical = 15.dp)) {
@@ -538,7 +535,7 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth().glass(GlassShapes.capsule, GlassLevel.Control).padding(start = 18.dp, end = 6.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f).padding(vertical = 11.dp)) {
-                if (password.isEmpty()) Text("Password (none for an open hotspot)", style = Type.body, color = t.faint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (password.isEmpty()) Text("Password", style = Type.body, color = t.faint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 BasicTextField(password, { password = it.take(64) }, singleLine = true, textStyle = Type.body.copy(color = t.text), cursorBrush = SolidColor(t.accent),
                     visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Hotspot password" })
@@ -547,19 +544,19 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
         }
         if (!passwordOk) { Spacer(Modifier.height(8.dp)); Text("A hotspot password has 8 to 63 characters", style = Type.caption, color = t.danger) }
         Spacer(Modifier.height(10.dp))
-        Text("Only your paired PCs get them, sealed end to end, and only while the hotspot is on.", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+        Text("Only your paired PCs get them, encrypted end to end.", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
         Spacer(Modifier.height(16.dp))
-        GlassButton({ Hub.setHotspot(name.trim(), password, true); Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Your hotspot is ready for your PC", "Its island offers to join while it’s on")); onDismiss() },
+        GlassButton({ Hub.setHotspot(name.trim(), password, true); Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Hotspot saved")); onDismiss() },
             Modifier.fillMaxWidth(), prominent = true, enabled = nameOk && passwordOk) { Icon(Icons.Rounded.Check, null); Spacer(Modifier.width(8.dp)); Text("Save", style = Type.bodyStrong) }
         Spacer(Modifier.height(8.dp))
         GlassButton({
             // The hotspot's own settings page where Android has one; else the network settings.
             val tether = android.content.Intent().setClassName("com.android.settings", "com.android.settings.TetherSettings").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             runCatching { context.startActivity(tether) }.onFailure { runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } }
-        }, Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Settings, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Open hotspot settings", style = Type.caption) }
+        }, Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Settings, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Hotspot settings", style = Type.caption) }
         if (setup.name.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
-            GlassButton({ Hub.setHotspot("", "", false); onDismiss() }, Modifier.fillMaxWidth()) { Text("Forget it", style = Type.caption, color = t.danger) }
+            GlassButton({ Hub.setHotspot("", "", false); onDismiss() }, Modifier.fillMaxWidth()) { Text("Forget", style = Type.caption, color = t.danger) }
         }
     }
 }

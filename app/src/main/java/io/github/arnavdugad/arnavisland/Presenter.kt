@@ -147,8 +147,8 @@ private fun buzz(context: Context, w: Warning) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Present", style = Type.title, color = t.text)
-                Text(when (state) { 0 -> "Connecting to ${pc.name}…"; 1 -> "Running the slideshow on ${pc.name}"
-                    else -> "Couldn’t connect. On the island: Settings › Privacy & productivity › My phone can control this PC" }, style = Type.caption, color = if (state == 2) t.danger else t.muted, maxLines = 3)
+                Text(when (state) { 0 -> "Connecting to ${pc.name}…"; 1 -> "On ${pc.name}"
+                    else -> "Couldn’t connect. Turn on “My phone can control this PC” in the island’s Settings." }, style = Type.caption, color = if (state == 2) t.danger else t.muted, maxLines = 3)
             }
             LiveDot(state == 1)
         }
@@ -177,11 +177,11 @@ private fun buzz(context: Context, w: Warning) {
             TalkTimer()
             SectionLabel("Options")
             Column(Modifier.fillMaxWidth().glass(GlassShapes.tile, GlassLevel.Control)) {
-                GlassRow(Icons.AutoMirrored.Rounded.VolumeUp, "Volume keys flip slides", "Down for next, up for back", trailing = {
+                GlassRow(Icons.AutoMirrored.Rounded.VolumeUp, "Volume keys flip slides", trailing = {
                     GlassSwitch(volumeFlips, { volumeFlips = it; Hub.prefs.edit().putBoolean("presenterVolume", it).apply() })
                 })
                 Hairline()
-                GlassRow(Icons.Rounded.Keyboard, "Slide keys", if (pageKeys) "Page Down and Page Up, for apps that skip the arrows" else "The arrow keys, as PowerPoint expects", trailing = {
+                GlassRow(Icons.Rounded.Keyboard, "Slide keys", trailing = {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         ShowChip("Arrows", null, !pageKeys) { pageKeys = false; Hub.prefs.edit().putBoolean("presenterPageKeys", false).apply() }
                         ShowChip("Page", null, pageKeys) { pageKeys = true; Hub.prefs.edit().putBoolean("presenterPageKeys", true).apply() }
@@ -192,7 +192,7 @@ private fun buzz(context: Context, w: Warning) {
     }
     if (deck != null) SlidesSheet(open && listing, deck, { listing = false }) { index ->
         listing = false
-        outer.launch { deck.go(index) }
+        outer.launch { runCatching { deck.go(index) } }
     }
 }
 
@@ -254,8 +254,8 @@ private fun buzz(context: Context, w: Warning) {
     val t = LocalTokens.current
     val s = deck.slides
     when {
-        s == null -> StageNote(Icons.Rounded.Slideshow, t.gray, "Looking for PowerPoint on $pcName…", "Its slides and notes show here")
-        s.state == SlidesWire.NOT_RUNNING -> StageNote(Icons.Rounded.Slideshow, t.gray, "PowerPoint isn’t open on $pcName", "Open your deck there to see its slides and notes here")
+        s == null -> StageNote(Icons.Rounded.Slideshow, t.gray, "Looking for PowerPoint…", "")
+        s.state == SlidesWire.NOT_RUNNING -> StageNote(Icons.Rounded.Slideshow, t.gray, "PowerPoint isn’t open on $pcName", "")
         s.state == SlidesWire.OPEN || s.index <= 0 -> StageNote(Icons.Rounded.Slideshow, t.warn, s.deck.ifEmpty { "PowerPoint is open" }, "No slideshow yet${if (s.count > 0) "  ·  ${s.count} slides" else ""}") {
             GlassButton(onStart, prominent = true, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
                 Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Start", style = Type.bodyStrong)
@@ -304,7 +304,7 @@ private fun buzz(context: Context, w: Warning) {
         IconTile(icon, color, size = 36.dp); Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(title, style = Type.bodyStrong, color = t.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(detail, style = Type.caption, color = t.muted, maxLines = 2)
+            if (detail.isNotEmpty()) Text(detail, style = Type.caption, color = t.muted, maxLines = 2)
         }
         if (trailing != null) { Spacer(Modifier.width(10.dp)); trailing() }
     }
@@ -401,8 +401,8 @@ private fun buzz(context: Context, w: Warning) {
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(if (on) "Laser on" else "Hold for laser pointer", style = Type.bodyStrong, color = t.text)
-            Text(if (!mouse.available) "This phone has no gyroscope to point with" else if (on) "Point at the screen" else "Point the phone to move it", style = Type.caption, color = t.muted)
+            Text(if (on) "Laser on" else "Hold for laser", style = Type.bodyStrong, color = t.text)
+            if (!mouse.available || on) Text(if (!mouse.available) "No gyroscope" else "Point at the screen", style = Type.caption, color = t.muted)
         }
     }
 }

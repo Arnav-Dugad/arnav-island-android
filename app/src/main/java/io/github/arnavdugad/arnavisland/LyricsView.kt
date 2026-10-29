@@ -45,8 +45,8 @@ fun synced(lines: List<LyricsLine>) = lines.size > 1 && lines.any { it.time > 0.
     val lines = lyrics?.lines.orEmpty()
     Box(modifier, contentAlignment = Alignment.Center) {
         when {
-            lyrics == null || lyrics.state == 1 -> Hint("Looking for the lyrics…", "")
-            lyrics.state == 0 -> Hint("Lyrics are off on $pcName", "Turn them on in the island’s Settings › Music")
+            lyrics == null || lyrics.state == 1 -> Hint("Loading lyrics…", "")
+            lyrics.state == 0 -> Hint("Lyrics are off on $pcName", "Turn them on in the island’s Settings")
             lines.isEmpty() -> Hint("No lyrics for this song", "")
             !synced(lines) -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(22.dp)) {
                 itemsIndexed(lines) { _, l -> Text(l.text, style = Type.bodyStrong.copy(fontSize = 18.sp, lineHeight = 25.sp), color = Color.White.copy(alpha = .86f), modifier = Modifier.padding(vertical = 4.dp)) }

@@ -115,7 +115,7 @@ class ScreenStreamer(private val peer: String, private val scope: CoroutineScope
     private suspend fun run(surface: Surface, longest: Int, shortest: Int) {
         val link = Hub.link ?: run { state.value = State.Failed("Arnav Island isn’t connected yet"); return }
         val pcName = Hub.peers.value.firstOrNull { it.id == peer }?.name ?: "Your PC"
-        val opened = link.openScreen(peer, ScreenWire.askPc(longest, shortest, 60))
+        val opened = runCatching { link.openScreen(peer, ScreenWire.askPc(longest, shortest, 60)) }.getOrNull()
         if (opened == null) { state.value = State.Failed(if ((Hub.peers.value.firstOrNull { it.id == peer }?.revision ?: 0) < 7) "Update Arnav Island on $pcName to 0.24 or later" else "Couldn’t reach $pcName"); return }
         val (s, answer) = opened; session = s
         val r = ScreenWire.reply(answer)

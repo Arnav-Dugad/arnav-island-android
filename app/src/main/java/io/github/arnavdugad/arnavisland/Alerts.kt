@@ -105,14 +105,14 @@ object Alerts {
 @Composable fun AlertsSheet(visible: Boolean, onDismiss: () -> Unit) {
     val t = LocalTokens.current; var version by remember { mutableIntStateOf(0) }
     GlassSheet(visible, onDismiss, Modifier.heightIn(max = LocalConfiguration.current.screenHeightDp.dp * .9f)) {
-        SheetHeader("Alerts", "A notification when your PC needs you", onDismiss)
+        SheetHeader("Alerts", null, onDismiss)
         Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState())) {
             version.hashCode()
-            Section(null, footer = "Your PC is read every 20 seconds while this phone stays reachable, and every second while its Island tab shows.") {
+            Section(null) {
                 Alerts.kinds.forEachIndexed { i, k ->
                     if (i > 0) Hairline()
                     val on = Alerts.on(k.key); val level = Alerts.level(k)
-                    GlassRow(k.icon, k.title, if (k.step == 0) "When its battery is full" else if (k.key == "disk") "Under $level GB free" else if (k.unit == "°C") "At $level°C or more for ${Alerts.minutes()} min (island 0.27)" else (if (k.key == "battery") "At $level% or less" else "At $level% or more") + if (k.sustained) " for ${Alerts.minutes()} min" else "",
+                    GlassRow(k.icon, k.title, if (k.step == 0) null else if (k.key == "disk") "Under $level GB" else "At $level${k.unit}",
                         tint = listOf(t.blue, t.purple, t.teal, t.gray, t.danger, t.good, t.warn, t.pink)[i]) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (on && k.step > 0) {
@@ -126,7 +126,7 @@ object Alerts {
                     }
                 }
             }
-            Section("Busy for", footer = "How long the processor or graphics card must stay past its level before you hear about it.") {
+            Section("Busy for") {
                 Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(1, 2, 5, 10).forEach { m -> GlassChip("$m min", Modifier.weight(1f), selected = Alerts.minutes() == m) { Hub.prefs.edit().putInt("alert_minutes", m).apply(); version++ } }
                 }

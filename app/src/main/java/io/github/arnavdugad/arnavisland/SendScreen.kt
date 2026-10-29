@@ -84,7 +84,7 @@ import kotlin.math.roundToInt
     val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> go(uris) }
     val queue by Hub.queue.collectAsState()
     Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(padding).padding(horizontal = 16.dp)) {
-        ScreenTitle("Send", over = if (toAll) "To all your PCs" else pc?.let { "To ${it.name}" } ?: "Pair a PC first")
+        ScreenTitle("Send", over = if (toAll) "To all your PCs" else pc?.let { "To ${it.name}" } ?: "No PC yet")
         val paired = peers.filter { it.paired && !it.phone }
         if (paired.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 14.dp, start = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GlassChip("All PCs", icon = Icons.Rounded.Devices, selected = toAll) { toAll = !toAll }
@@ -93,24 +93,24 @@ import kotlin.math.roundToInt
         if (pc == null) { GlassButton({ Ui.pair() }, Modifier.fillMaxWidth(), prominent = true, contentPadding = PaddingValues(vertical = 15.dp)) { Icon(Icons.Rounded.Laptop, null); Spacer(Modifier.width(8.dp)); Text("Pair with your PC", style = Type.headline) }; return@Column }
         val ready = pc.online
         Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            GlassTile(Icons.Rounded.PhotoLibrary, "Photos & videos", "Full quality, as they are", Modifier.weight(1f).fillMaxHeight(), tint = t.pink, enabled = ready) { photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }
-            GlassTile(Icons.Rounded.Folder, "Files", "Anything, any size", Modifier.weight(1f).fillMaxHeight(), tint = t.blue, enabled = ready) { files.launch(arrayOf("*/*")) }
+            GlassTile(Icons.Rounded.PhotoLibrary, "Photos & videos", "", Modifier.weight(1f).fillMaxHeight(), tint = t.pink, enabled = ready) { photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }
+            GlassTile(Icons.Rounded.Folder, "Files", "", Modifier.weight(1f).fillMaxHeight(), tint = t.blue, enabled = ready) { files.launch(arrayOf("*/*")) }
         }
         Spacer(Modifier.height(12.dp))
         Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            GlassTile(Icons.Rounded.PhotoCamera, "Camera", if (pc.revision >= 3) "Straight onto ${pc.name}’s Shelf" else "A photo, to ${pc.name}", Modifier.weight(1f).fillMaxHeight(), tint = t.gray, enabled = ready) { onCamera() }
-            GlassTile(Icons.Rounded.ContentPaste, "Clipboard", "Paste it on ${pc.name}", Modifier.weight(1f).fillMaxHeight(), tint = t.indigo, enabled = ready) {
+            GlassTile(Icons.Rounded.PhotoCamera, "Camera", "", Modifier.weight(1f).fillMaxHeight(), tint = t.gray, enabled = ready) { onCamera() }
+            GlassTile(Icons.Rounded.ContentPaste, "Clipboard", "", Modifier.weight(1f).fillMaxHeight(), tint = t.indigo, enabled = ready) {
                 val clipboard = context.getSystemService(ClipboardManager::class.java)
                 val text = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
                 if (text.isBlank()) Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Your clipboard is empty")) else scope.launch { if (Hub.command(Proto.CMD_CLIP_SET, text.toByteArray())?.ok == true) Hub.banners.tryEmit(Banner(Banner.Kind.Clipboard, "On ${pc.name}’s clipboard", text.lineSequence().first().take(60))) }
             }
         }
         val missing by Hub.missing.collectAsState()
-        if (pc.revision >= 10 && Proto.CMD_FILES !in missing) { Spacer(Modifier.height(12.dp)); GlassPanel(Modifier.fillMaxWidth()) { GlassRow(Icons.Rounded.FolderOpen, "Bring from ${pc.name}", "Browse its files and take any of them", tint = t.teal, chevron = true, onClick = { MoreUi.files = "" }) } }
-        if (!ready) Text("${pc.name} is away. Files go once Arnav Island runs there, on this Wi-Fi or any other.", style = Type.caption, color = t.muted, modifier = Modifier.padding(top = 12.dp, start = 6.dp))
+        if (pc.revision >= 10 && Proto.CMD_FILES !in missing) { Spacer(Modifier.height(12.dp)); GlassPanel(Modifier.fillMaxWidth()) { GlassRow(Icons.Rounded.FolderOpen, "Bring from ${pc.name}", tint = t.teal, chevron = true, onClick = { MoreUi.files = "" }) } }
+        if (!ready) Text("${pc.name} is away", style = Type.caption, color = t.muted, modifier = Modifier.padding(top = 12.dp, start = 6.dp))
         else if (pc.internet) Row(Modifier.padding(top = 12.dp, start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Lock, null, tint = t.muted, modifier = Modifier.size(13.dp)); Spacer(Modifier.width(6.dp))
-            Text("${pc.name} is on another network: files go ${if (pc.path == 2) "straight to it over the internet" else "through the relay"}, end-to-end encrypted", style = Type.caption, color = t.muted)
+            Text("End-to-end encrypted", style = Type.caption, color = t.muted)
         }
         // Transfers under way.
         AnimatedVisibility(transfers.isNotEmpty(), enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
@@ -118,7 +118,7 @@ import kotlin.math.roundToInt
         }
         // 1.8: sends waiting their turn; hold one and drag it to change the order.
         AnimatedVisibility(queue.isNotEmpty(), enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-            Section("Up next", footer = "One at a time to each PC. Touch and hold one to move it.") { QueueList(queue) }
+            Section("Up next") { QueueList(queue) }
         }
         if (moments.isNotEmpty()) {
             SectionLabel("Recent") { Text("Clear", style = Type.body, color = t.accent, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { Hub.clearMoments() }.padding(horizontal = 6.dp, vertical = 2.dp)) }
@@ -136,7 +136,6 @@ import kotlin.math.roundToInt
                     shown.take(40).forEachIndexed { i, m -> key(m.at, m.title) { if (i > 0) Hairline(70.dp); SwipeAway({ Hub.forgetMoment(m) }) { MomentRow(m) } } }
                 }
             }
-            Text("Swipe one to the left to take it off the list.", style = Type.caption, color = t.muted, modifier = Modifier.padding(start = 18.dp, top = 7.dp))
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -196,7 +195,7 @@ import kotlin.math.roundToInt
                             Spacer(Modifier.width(13.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(q.title, style = Type.body, color = t.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("To ${q.name}  ·  ${Hub.sizeText(q.size)}  ·  waiting", style = Type.caption, color = t.muted, maxLines = 1)
+                                Text("To ${q.name}  ·  ${Hub.sizeText(q.size)}", style = Type.caption, color = t.muted, maxLines = 1)
                             }
                             Icon(Icons.Rounded.DragHandle, "Hold to move", tint = t.faint, modifier = Modifier.size(22.dp)); Spacer(Modifier.width(6.dp))
                             GlassIconButton(Icons.Rounded.Close, "Don't send", { Hub.dropQueued(q.id) }, size = 34.dp, iconSize = 16.dp)
@@ -316,17 +315,17 @@ object ShelfUi { var peek by mutableStateOf<Pair<Int, ShelfItem>?>(null); var se
     Box(Modifier.fillMaxSize().nestedScroll(connection)) {
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
             when {
-                pc == null -> { ScreenTitle("Shelf", over = "Your PC’s"); Empty(Icons.Rounded.Inventory2, "Pair with your PC", "Then take anything on its Shelf with a tap") { GlassButton({ Ui.pair() }, prominent = true) { Text("Pair", style = Type.bodyStrong) } } }
-                !pc.online -> { ScreenTitle("Shelf", over = "${pc.name}’s"); Empty(Icons.Rounded.WifiOff, "${pc.name} is away", "Its Shelf shows here when Arnav Island runs there") }
-                l == null -> { ScreenTitle("Shelf", over = "${pc.name}’s"); Empty(Icons.Rounded.Inventory2, "Looking at ${pc.name}’s Shelf…", "") }
+                pc == null -> { ScreenTitle("Shelf", over = "Your PC’s"); Empty(Icons.Rounded.Inventory2, "Pair with your PC", "") { GlassButton({ Ui.pair() }, prominent = true) { Text("Pair", style = Type.bodyStrong) } } }
+                !pc.online -> { ScreenTitle("Shelf", over = "${pc.name}’s"); Empty(Icons.Rounded.WifiOff, "${pc.name} is away", "") }
+                l == null -> { ScreenTitle("Shelf", over = "${pc.name}’s"); Empty(Icons.Rounded.Inventory2, "Loading…", "") }
                 l.error != null -> { ScreenTitle("Shelf", over = "${pc.name}’s"); Empty(Icons.Rounded.ErrorOutline, "Couldn’t look", l.error) { GlassButton({ load() }) { Text("Try again", style = Type.bodyStrong) } } }
-                !l.shared -> { ScreenTitle("Shelf", over = "${pc.name}’s"); Empty(Icons.Rounded.Lock, "${pc.name} keeps its Shelf to itself", "Turn on “My PCs can take from the Shelf” in the island’s Settings › Privacy & productivity") }
+                !l.shared -> { ScreenTitle("Shelf", over = "${pc.name}’s"); Empty(Icons.Rounded.Lock, "Shelf sharing is off", "Turn on “My PCs can take from the Shelf” in the island’s Settings.") }
                 else -> LazyVerticalGrid(GridCells.Adaptive(150.dp), Modifier.fillMaxSize().graphicsLayer { translationY = pull.value * .55f }, state = grid,
                     horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
                     item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                         Column {
                             ScreenTitle("Shelf", over = "${pc.name}’s  ·  ${items.size} item${if (items.size == 1) "" else "s"}")
-                            if (items.isEmpty()) Empty(Icons.Rounded.Inventory2, "The Shelf is empty", "Drop files on the island’s Shelf and they show up here. Pull down to look again")
+                            if (items.isEmpty()) Empty(Icons.Rounded.Inventory2, "The Shelf is empty", "")
                             else Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 if (ShelfUi.selecting) {
                                     GlassButton({ ShelfUi.selected = if (ShelfUi.selected.size == items.size) emptySet() else items.indices.toSet() }, Modifier.weight(1f)) { Text(if (ShelfUi.selected.size == items.size) "Select none" else "Select all", style = Type.bodyStrong) }
@@ -435,12 +434,12 @@ private var peekState: Triple<PeerView?, Map<Int, Transfer>, Set<String>>? = nul
                     }
                     Spacer(Modifier.height(10.dp))
                     Text(item.name, style = Type.headline, color = t.text, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 4.dp))
-                    Text((if (item.folder) "Folder  ·  " else "") + Hub.sizeText(item.size) + "  ·  on ${peekState?.first?.name ?: "your PC"}’s Shelf", style = Type.caption, color = t.muted, modifier = Modifier.padding(horizontal = 4.dp))
+                    Text((if (item.folder) "Folder  ·  " else "") + Hub.sizeText(item.size), style = Type.caption, color = t.muted, modifier = Modifier.padding(horizontal = 4.dp))
                 }
                 Spacer(Modifier.height(12.dp))
                 Column(Modifier.fillMaxWidth(.82f).glass(GlassShapes.card, GlassLevel.Sheet)) {
                     val wasTaken = item.name in (peekState?.third ?: emptySet())
-                    PeekAction(Icons.Rounded.Download, if (wasTaken) "Take again" else "Take it") { peekTake?.invoke(i, item); ShelfUi.peek = null }
+                    PeekAction(Icons.Rounded.Download, if (wasTaken) "Take again" else "Take") { peekTake?.invoke(i, item); ShelfUi.peek = null }
                     Hairline(16.dp)
                     PeekAction(Icons.Rounded.CheckCircleOutline, "Select") { ShelfUi.selecting = true; ShelfUi.selected = setOf(i); ShelfUi.peek = null }
                     if (wasTaken) { Hairline(16.dp); PeekAction(Icons.Rounded.FolderOpen, "Show in Downloads") { openReceived(context, Moment(2, item.name, "", 2, item.size, 0, emptyList())); ShelfUi.peek = null } }

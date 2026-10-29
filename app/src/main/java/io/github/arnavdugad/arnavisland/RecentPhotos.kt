@@ -47,7 +47,7 @@ object RecentPhotos {
     }
     private fun stop(context: Context) { observer?.let { runCatching { context.contentResolver.unregisterContentObserver(it) } }; observer = null }
 
-    private fun check(context: Context) {
+    @Synchronized private fun check(context: Context) {
         val link = Hub.link ?: return
         val pcs = Hub.peers.value.filter { it.paired && !it.phone && it.online && it.revision >= 8 }
         if (pcs.isEmpty()) return

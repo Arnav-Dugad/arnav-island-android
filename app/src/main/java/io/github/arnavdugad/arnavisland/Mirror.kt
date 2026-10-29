@@ -29,10 +29,12 @@ class Mirror : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         Hub.init(this); LiveCapture.start(this)
-        runCatching { activeNotifications }.getOrNull()?.forEach { LiveCapture.posted(this, it, currentRanking) }
+        runCatching { activeNotifications }.getOrNull()?.forEach { runCatching { LiveCapture.posted(this, it, currentRanking) } }
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification) {
+    // Any app's notification comes through here (on the main thread): one that can't be read is left out, never the app's end.
+    override fun onNotificationPosted(sbn: StatusBarNotification) { runCatching { posted(sbn) }.onFailure { android.util.Log.w("ArnavMirror", "notification skipped", it) } }
+    private fun posted(sbn: StatusBarNotification) {
         Hub.init(this)
         // 1.9: a live activity (a delivery, a ride, navigation, a timer, a download) also goes as notice 7; mirroring below is unchanged.
         LiveCapture.start(this); LiveCapture.posted(this, sbn, currentRanking)
@@ -75,7 +77,8 @@ class Mirror : NotificationListenerService() {
     }
 
     /** A notification the phone no longer shows (read, answered, a call picked up): its card leaves the island too. */
-    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+    override fun onNotificationRemoved(sbn: StatusBarNotification) { runCatching { removed(sbn) } }
+    private fun removed(sbn: StatusBarNotification) {
         LiveCapture.removed(sbn.key)
         synchronized(sent) { sent.remove(sbn.key) }
         val key = NoticeActions.removed(sbn.key) ?: return

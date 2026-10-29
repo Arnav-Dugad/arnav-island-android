@@ -66,9 +66,9 @@ object StatsWidgets {
     @Synchronized fun refresh(context: Context, force: Boolean = false) {
         val app = context.applicationContext; val ids = ids(app); if (ids.isEmpty()) return
         val pc = Hub.pc(); val s = Hub.pcStats.value.takeIf { pc != null && pc.online }
-        fun pct(v: Double) = if (v < 0) -1 else v.roundToInt().coerceIn(0, 100)
+        fun pct(v: Double) = if (v.isNaN() || v < 0) -1 else v.roundToInt().coerceIn(0, 100)
         val you = WidgetStyle.you(app)
-        val look = listOf(pc?.id, pc?.name, pc?.online, s?.let { pct(it.cpu) }, s?.let { pct(it.gpu) }, s?.let { pct(it.ramPercent) }, s?.download?.let { (it / 1e5).roundToInt() }, you).joinToString("|")
+        val look = listOf(pc?.id, pc?.name, pc?.online, s?.let { pct(it.cpu) }, s?.let { pct(it.gpu) }, s?.let { pct(it.ramPercent) }, s?.download?.takeIf { !it.isNaN() }?.let { (it / 1e5).roundToInt() }, you).joinToString("|")
         if (!force && look == drawn) return
         drawn = look
         val v = RemoteViews(app.packageName, if (you) R.layout.widget_stats_you else R.layout.widget_stats)
@@ -102,7 +102,7 @@ object FocusWidgets {
             v.setViewVisibility(R.id.w_clock, View.GONE); v.setViewVisibility(R.id.w_still, View.VISIBLE)
             val shown = f?.shown ?: 1500.0; val n = shown.toInt().coerceAtLeast(0)
             v.setTextViewText(R.id.w_still, if (n >= 3600) "%d:%02d:%02d".format(n / 3600, n / 60 % 60, n % 60) else "%02d:%02d".format(n / 60, n % 60))
-            v.setTextViewText(R.id.w_state, when { f == null -> "Start one on your PC or here"; f.finished -> "Done. A moment well spent"; f.shown > .5 && f.shown < f.duration - .5 || f.mode == 2 && f.shown > .5 -> "Paused"; else -> "Ready" })
+            v.setTextViewText(R.id.w_state, when { f == null -> "Not running"; f.finished -> "Done"; f.shown > .5 && f.shown < f.duration - .5 || f.mode == 2 && f.shown > .5 -> "Paused"; else -> "Ready" })
         }
         v.setImageViewResource(R.id.w_toggle, if (running) R.drawable.ic_w_pause_dark else R.drawable.ic_w_play_dark)
         v.setContentDescription(R.id.w_toggle, if (running) "Pause" else if (f != null && !f.finished && f.shown > .5) "Resume" else "Start")

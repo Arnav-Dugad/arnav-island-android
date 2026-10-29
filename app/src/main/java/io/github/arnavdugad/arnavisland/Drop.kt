@@ -112,9 +112,8 @@ data class ShareRequest(val uris: List<Uri>, val text: String?, val target: Stri
         if (request.uris.isNotEmpty()) {
             Previewed(request.uris)
             Spacer(Modifier.height(18.dp))
-            Text(if (started.isEmpty()) "Tap a PC to send it to its Shelf" else if (finished.size == started.size && finished.values.all { it }) "On its Shelf" else "Sending…", style = Type.caption, color = t.muted)
-            Spacer(Modifier.height(14.dp))
-            if (paired.isEmpty()) { Text("Pair with your PC first (Devices › Pair a PC)", style = Type.body, color = t.muted); return@GlassSheet }
+            if (started.isNotEmpty()) { Text(if (finished.size == started.size && finished.values.all { it }) "On its Shelf" else "Sending…", style = Type.caption, color = t.muted); Spacer(Modifier.height(14.dp)) }
+            if (paired.isEmpty()) { Text("Pair with your PC first", style = Type.body, color = t.muted); return@GlassSheet }
             // As AirDrop's row of people: each PC in its own colour, scrolling when there are many; all at once with several.
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
                 paired.forEach { p ->
@@ -123,7 +122,7 @@ data class ShareRequest(val uris: List<Uri>, val text: String?, val target: Stri
                 }
                 if (paired.count { it.online } > 1) Column(Modifier.width(88.dp).clip(RoundedCornerShape(18.dp)).clickable { paired.filter { it.online }.forEach { go(it) } }, horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(Modifier.size(78.dp), contentAlignment = Alignment.Center) { IconTile(Icons.Rounded.Devices, t.gray, Modifier.clip(CircleShape), size = 64.dp) }
-                    Spacer(Modifier.height(6.dp)); Text("All PCs", style = Type.caption, color = t.text); Text("At once", style = Type.caption, color = t.muted)
+                    Spacer(Modifier.height(6.dp)); Text("All PCs", style = Type.caption, color = t.text)
                 }
             }
         } else {
@@ -131,7 +130,7 @@ data class ShareRequest(val uris: List<Uri>, val text: String?, val target: Stri
             Spacer(Modifier.height(4.dp))
             Text(request.text?.lineSequence()?.firstOrNull()?.take(80).orEmpty(), style = Type.caption, color = t.muted, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
             Spacer(Modifier.height(18.dp))
-            if (paired.isEmpty()) { Text("Pair with your PC first (Devices › Pair a PC)", style = Type.body, color = t.muted); return@GlassSheet }
+            if (paired.isEmpty()) { Text("Pair with your PC first", style = Type.body, color = t.muted); return@GlassSheet }
             GlassPanel(Modifier.fillMaxWidth()) { Column {
                 paired.forEachIndexed { i, p ->
                     if (i > 0) Hairline()

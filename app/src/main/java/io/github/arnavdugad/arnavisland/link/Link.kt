@@ -52,7 +52,8 @@ class Link(
         val output: OutputStream = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
         fun send(frame: ByteArray) = Frames.write(output, frame)
         fun recv(): ByteArray = Frames.read(input)
-        fun timeout(ms: Int) { socket.soTimeout = ms }
+        // A socket closed meanwhile (a send stopped, the link stopping) throws here; its next read or write says so instead.
+        fun timeout(ms: Int) { runCatching { socket.soTimeout = ms } }
         fun close() = runCatching { socket.close() }
     }
     private class Live(@Volatile var socket: Socket? = null) { val stop = AtomicBoolean(false); val paused = AtomicBoolean(false) }
@@ -655,7 +656,7 @@ class Link(
         d.complete(0); return 0
     }
     private fun closedByPeer(c: Conn): Boolean {
-        val saved = c.socket.soTimeout
+        val saved = runCatching { c.socket.soTimeout }.getOrDefault(0)
         return try { c.socket.soTimeout = 1; c.input.mark(1); val b = c.input.read(); if (b < 0) true else { c.input.reset(); false } }
         catch (e: SocketTimeoutException) { false } catch (e: Exception) { true } finally { runCatching { c.socket.soTimeout = saved } }
     }

@@ -165,6 +165,7 @@ class PhoneCameraService : Service() {
         const val STOP = "io.github.arnavdugad.arnavisland.CAMERA_STOP"; const val FLIP = "io.github.arnavdugad.arnavisland.CAMERA_FLIP"
         @Volatile var instance: PhoneCameraService? = null; private set
     }
+    private var sessions = 0
     @Volatile private var running = false; @Volatile private var session: Link.ScreenSession? = null
     @Volatile internal var flipWanted = false; @Volatile private var feed: Feed? = null
     /** 1.9: another picture was chosen. */
@@ -190,6 +191,8 @@ class PhoneCameraService : Service() {
         }.onFailure { android.util.Log.w("ArnavCamera", "no foreground", it); PhoneCamera.asking.value = false; CamWire.fail("Couldn’t turn on the camera", "Open Arnav Island and try again"); stopSelf(); return START_NOT_STICKY }
         if (peer == null) { PhoneCamera.asking.value = false; finish(); return START_NOT_STICKY }
         running = true; done = false; instance = this
+        // Each start is its own session: an earlier one ending late (off and on again quickly) leaves this one be.
+        val mine = ++sessions
         held = runCatching { (360 - getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY).rotation * 90) % 360 }.getOrDefault(0)
         orientation = object : OrientationEventListener(this) {
             override fun onOrientationChanged(o: Int) {
@@ -201,7 +204,7 @@ class PhoneCameraService : Service() {
         thread(name = "phone-camera", isDaemon = true) {
             // Whatever goes wrong ends this camera (with a word why), never the app.
             try { stream(peer) } catch (e: Throwable) { android.util.Log.w("ArnavCamera", "camera failed", e); if (running) CamWire.fail("The camera stopped", "Couldn’t keep it on $pcName") }
-            finally { main.post { finish() } }
+            finally { main.post { if (mine == sessions) finish() } }
         }
         return START_NOT_STICKY
     }
@@ -456,7 +459,7 @@ class PhoneCameraService : Service() {
             android.util.Log.i("ArnavCamera", "ended: running=$running open=${s.open}, frame $number")
         } finally {
             // The camera first (it draws into the texture), then the GL step and the encoder.
-            this.feed = null; feed?.close(); cameraThread.quitSafely()
+            if (this.feed === feed) this.feed = null; feed?.close(); cameraThread.quitSafely()
             runCatching { surface?.release() }; runCatching { texture?.release() }; runCatching { painter?.release() }
             synchronized(PhoneCamera.previewLock) { runCatching { previewWindow?.let { egl?.destroy(it) } } }
             runCatching { window?.let { egl?.destroy(it) } }; runCatching { egl?.release() }

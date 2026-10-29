@@ -89,27 +89,27 @@ object MoreUi { var gemini by mutableStateOf(false); var clipboard by mutableSta
     fun copyHere(text: String) { context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Arnav Island", text)); Hub.banners.tryEmit(Banner(Banner.Kind.Clipboard, "Copied", text.lineSequence().first().take(60))) }
     fun pasteThere(text: String) { scope.launch { if (Hub.command(Proto.CMD_CLIP_SET, text.toByteArray())?.ok == true) Hub.banners.tryEmit(Banner(Banner.Kind.Clipboard, "On ${pc?.name}’s clipboard", text.lineSequence().first().take(60))) } }
     GlassSheet(visible, onDismiss, Modifier.heightIn(max = LocalConfiguration.current.screenHeightDp.dp * .9f)) {
-        SheetHeader("Clipboard", "What you’ve copied, both ways", onDismiss)
+        SheetHeader("Clipboard", null, onDismiss)
         Spacer(Modifier.height(8.dp))
         if (pc != null) Segmented(listOf("This phone", pc.name), side, { side = it }, Modifier.fillMaxWidth())
         Spacer(Modifier.height(10.dp))
-        SearchField(query, { query = it }, "Search what you copied")
+        SearchField(query, { query = it }, "Search")
         Spacer(Modifier.height(6.dp))
         val q = query.trim().lowercase()
         LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
             if (side == 0) {
                 val list = mine.filter { q.isEmpty() || q in it.text.lowercase() }
-                if (list.isEmpty()) item { Text(if (mine.isEmpty()) "What you copy shows here: here and on your PCs, while the app has seen it." else "Nothing matches", style = Type.body, color = t.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(24.dp)) }
+                if (list.isEmpty()) item { Text(if (mine.isEmpty()) "Nothing copied yet" else "Nothing matches", style = Type.body, color = t.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(24.dp)) }
                 items(list, key = { "${it.at}${it.text.hashCode()}" }) { c ->
                     GlassPanel(Modifier.fillMaxWidth()) { SwipeAway({ Hub.forgetClip(c) }) {
                         ClipRow(c.text, "${c.from}  ·  ${ago(c.at)}", c.pinned, null, onTap = { copyHere(c.text) }, onPin = { Hub.pinClip(c, !c.pinned) }, action = if (pc != null) "Paste on ${pc.name}" else null) { pasteThere(c.text) }
                     } }
                 }
             } else when {
-                !canPc -> item { Text("Update Arnav Island on ${pc?.name ?: "your PC"} to 0.27 to see its clipboard history here.", style = Type.body, color = t.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(24.dp)) }
+                !canPc -> item { Text("Needs island 0.27", style = Type.body, color = t.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(24.dp)) }
                 else -> {
                     val list = theirs.filter { q.isEmpty() || q in it.text.lowercase() }
-                    if (list.isEmpty()) item { Text("Nothing in ${pc?.name}’s history yet", style = Type.body, color = t.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(24.dp)) }
+                    if (list.isEmpty()) item { Text("Nothing copied yet", style = Type.body, color = t.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(24.dp)) }
                     items(list, key = { it.id }) { c ->
                         val thumb = remember(c.id) { c.thumb?.let { Art.bitmap(it, 160) } }
                         GlassPanel(Modifier.fillMaxWidth()) { SwipeAway({ Hub.pcClipOp(3, c) }) {
@@ -167,15 +167,15 @@ object MoreUi { var gemini by mutableStateOf(false); var clipboard by mutableSta
         Segmented(listOf("Name", "Newest", "Largest", "Kind"), sort, { sort = it; Hub.prefs.edit().putInt("filesSort", it).apply() }, Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
         when {
-            pc == null || !Hub.rev10(pc) -> Message(Icons.Rounded.SystemUpdate, "Update Arnav Island on ${pc?.name ?: "your PC"}", "Browsing its files needs version 0.27 or later.")
-            status == Proto.UNSUPPORTED -> Message(Icons.Rounded.Schedule, "Not on ${pc.name}’s island yet", "Browsing its files comes with a later island.")
-            status == Proto.NOT_ALLOWED -> Message(Icons.Rounded.Lock, "${pc.name} keeps its files to itself", "On the PC, turn on “My phone can browse this PC's files” in the island’s Settings › Privacy & productivity.")
+            pc == null || !Hub.rev10(pc) -> Message(Icons.Rounded.SystemUpdate, "Update Arnav Island on ${pc?.name ?: "your PC"}", "Needs version 0.27 or later.")
+            status == Proto.UNSUPPORTED -> Message(Icons.Rounded.Schedule, "Not supported on ${pc.name} yet", "")
+            status == Proto.NOT_ALLOWED -> Message(Icons.Rounded.Lock, "File browsing is off", "Turn on “My phone can browse this PC's files” in the island’s Settings.")
             page == null && loading -> Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { Radar(t.accent, Modifier.size(48.dp)) }
-            page == null -> Message(Icons.Rounded.ErrorOutline, "Couldn’t look", "${pc.name} didn’t answer. Try again in a moment.")
-            page!!.entries.isEmpty() -> Message(Icons.Rounded.FolderOpen, "Nothing here", "This folder is empty.")
+            page == null -> Message(Icons.Rounded.ErrorOutline, "Couldn’t load", "${pc.name} didn’t answer.")
+            page!!.entries.isEmpty() -> Message(Icons.Rounded.FolderOpen, "Empty folder", "")
             else -> LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), contentPadding = PaddingValues(bottom = 12.dp)) {
                 item { Text("${page!!.total} item${if (page!!.total == 1L) "" else "s"}", style = Type.caption, color = t.muted, modifier = Modifier.padding(start = 8.dp, bottom = 6.dp)) }
-                items(page!!.entries, key = { it.path }) { e ->
+                items(page!!.entries.distinctBy { "${it.folder}:${it.path}" }, key = { "${it.folder}:${it.path}" }) { e ->
                     FileRow(e, onOpen = { if (e.folder) stack = stack + e.path else { haptics.performHapticFeedback(HapticFeedbackType.Confirm); Hub.takeFromPc(e.path, e.name) } },
                         onTake = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); Hub.takeFromPc(e.path, e.name) })
                 }
@@ -210,8 +210,8 @@ private fun placeIcon(name: String): ImageVector = when (name.lowercase()) {
     val t = LocalTokens.current
     Column(Modifier.fillMaxWidth().padding(vertical = 36.dp, horizontal = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         IconTile(icon, t.blue, size = 54.dp); Spacer(Modifier.height(12.dp))
-        Text(title, style = Type.headline, color = t.text, textAlign = TextAlign.Center); Spacer(Modifier.height(4.dp))
-        Text(detail, style = Type.body, color = t.muted, textAlign = TextAlign.Center)
+        Text(title, style = Type.headline, color = t.text, textAlign = TextAlign.Center)
+        if (detail.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text(detail, style = Type.body, color = t.muted, textAlign = TextAlign.Center) }
     }
 }
 
@@ -222,7 +222,7 @@ private fun placeIcon(name: String): ImageVector = when (name.lowercase()) {
     var sort by remember { mutableIntStateOf(Hub.processSort) }
     LaunchedEffect(visible, sort, pc.id) { Hub.processSort = sort; if (visible && Hub.rev10(pc)) while (isActive) { Hub.refreshProcesses(); delay(2500) } }
     val missing by Hub.missing.collectAsState()
-    if (!Hub.rev10(pc) || Proto.CMD_PROCESSES in missing) { GlassPanel(Modifier.fillMaxWidth()) { Text(if (!Hub.rev10(pc)) "Update Arnav Island on ${pc.name} to 0.27 to see its apps here." else "${pc.name}’s island doesn’t list its apps yet; a later island adds them.", style = Type.caption, color = t.muted, modifier = Modifier.padding(16.dp)) }; return }
+    if (!Hub.rev10(pc) || Proto.CMD_PROCESSES in missing) { GlassPanel(Modifier.fillMaxWidth()) { Text(if (!Hub.rev10(pc)) "Needs island 0.27" else "Not supported on ${pc.name} yet", style = Type.caption, color = t.muted, modifier = Modifier.padding(16.dp)) }; return }
     GlassPanel(Modifier.fillMaxWidth()) {
         Column {
             Segmented(listOf("By CPU", "By memory"), sort, { sort = it }, Modifier.fillMaxWidth().padding(12.dp))
@@ -231,7 +231,7 @@ private fun placeIcon(name: String): ImageVector = when (name.lowercase()) {
             list.take(10).forEachIndexed { i, p ->
                 if (i > 0) Hairline(58.dp)
                 AppRow(p, icons[p.name], (if (sort == 0) p.cpu / top else p.memory / top).toFloat(), sort) {
-                    if (!p.protected && !p.island) onConfirm(Confirm("End ${p.name}?", "It’s asked to close first; anything unsaved in it may be lost.", "End task", true) { Hub.endTask(p) })
+                    if (!p.protected && !p.island) onConfirm(Confirm("End ${p.name}?", "Unsaved work may be lost.", "End task", true) { Hub.endTask(p) })
                     else Hub.banners.tryEmit(Banner(Banner.Kind.Info, "${p.name} keeps running", "Windows needs it"))
                 }
             }
@@ -264,7 +264,7 @@ private fun placeIcon(name: String): ImageVector = when (name.lowercase()) {
     val t = LocalTokens.current; val hour by Hub.hourTrail.collectAsState()
     if (hour.size < 6) return
     val minutes = ((hour.last().at - hour.first().at) / 60_000).coerceAtLeast(1)
-    Section(null, footer = "Kept on this phone, so it’s here next time too.") {
+    Section(null) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("The last ${if (minutes >= 59) "hour" else "$minutes min"}", style = Type.bodyStrong, color = t.text, modifier = Modifier.weight(1f))
@@ -297,7 +297,7 @@ private fun placeIcon(name: String): ImageVector = when (name.lowercase()) {
     var list by remember(visible) { mutableStateOf(all) }
     var dragging by remember { mutableStateOf<String?>(null) }; var offset by remember { mutableFloatStateOf(0f) }; var row by remember { mutableIntStateOf(1) }
     GlassSheet(visible, { Hub.setSections(list, pins); onDismiss() }, Modifier.heightIn(max = LocalConfiguration.current.screenHeightDp.dp * .9f)) {
-        SheetHeader("Island sections", "Hold one to move it; pin the ones you want first", { Hub.setSections(list, pins); onDismiss() })
+        SheetHeader("Island sections", "Hold to reorder", { Hub.setSections(list, pins); onDismiss() })
         Spacer(Modifier.height(8.dp))
         Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState())) {
             GlassPanel(Modifier.fillMaxWidth()) {
@@ -331,7 +331,7 @@ private fun placeIcon(name: String): ImageVector = when (name.lowercase()) {
                 }
             }
             Spacer(Modifier.height(10.dp))
-            Text("Reset to the usual order", style = Type.body, color = t.accent, modifier = Modifier.align(Alignment.CenterHorizontally).clip(CircleShape).clickable { list = IslandSections.map { it.first }; Hub.setSections(list, emptySet()) }.padding(12.dp))
+            Text("Reset order", style = Type.body, color = t.accent, modifier = Modifier.align(Alignment.CenterHorizontally).clip(CircleShape).clickable { list = IslandSections.map { it.first }; Hub.setSections(list, emptySet()) }.padding(12.dp))
         }
     }
 }
@@ -350,7 +350,7 @@ fun orderedSections(order: List<String>, pins: Set<String>): List<String> {
     val t = LocalTokens.current; val scope = rememberCoroutineScope()
     var down by remember(pc.id) { mutableStateOf<Double?>(null) }; var up by remember(pc.id) { mutableStateOf<Double?>(null) }; var running by remember { mutableStateOf(false) }; var failed by remember { mutableStateOf(false) }
     fun mbps(v: Double?) = v?.let { if (it >= 1e6) "%.1f".format(it / 1e6) else "%.2f".format(it / 1e6) } ?: "—"
-    Section("Speed", footer = if (!Hub.rev10(pc)) "Needs island 0.27 on ${pc.name}." else "Measured through the same sealed connection the app uses, a few seconds each way.") {
+    Section("Speed", footer = if (!Hub.rev10(pc)) "Needs island 0.27." else null) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -362,12 +362,12 @@ fun orderedSections(order: List<String>, pins: Set<String>): List<String> {
                     Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Rounded.North, null, tint = t.warn, modifier = Modifier.size(14.dp)); Text(" To ${pc.name}", style = Type.caption, color = t.muted) }
                 }
             }
-            if (failed) Text("The test stopped: the connection dropped", style = Type.caption, color = t.danger, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+            if (failed) Text("Connection dropped", style = Type.caption, color = t.danger, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             Spacer(Modifier.height(12.dp))
             GlassButton({ running = true; failed = false; down = null; up = null
                 scope.launch { val r = Hub.speedTest { d, u -> if (d != null) down = d; if (u != null) up = u }; if (r == null) failed = true else { down = r.first; up = r.second }; running = false } },
                 Modifier.fillMaxWidth(), enabled = !running && Hub.rev10(pc), contentPadding = PaddingValues(vertical = 13.dp)) {
-                if (running) { Radar(t.accent, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Measuring…", style = Type.bodyStrong) } else { Icon(Icons.Rounded.Speed, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Test the speed", style = Type.bodyStrong) }
+                if (running) { Radar(t.accent, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Measuring…", style = Type.bodyStrong) } else { Icon(Icons.Rounded.Speed, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Test speed", style = Type.bodyStrong) }
             }
         }
     }
@@ -379,12 +379,12 @@ private class Stop(val icon: ImageVector, val colour: @Composable () -> Color, v
 @Composable private fun TourSheet(visible: Boolean, onDismiss: () -> Unit) {
     val t = LocalTokens.current; val scope = rememberCoroutineScope()
     val stops = listOf(
-        Stop(Icons.Rounded.AutoAwesome, { t.blue }, "A new look", "Liquid glass, grouped lists and large titles, after Apple’s. The island at the top of the app is gone: what happens drops in from the top, like a notification.", null),
-        Stop(Icons.Rounded.DeliveryDining, { t.warn }, "Deliveries on your PC", "Swiggy, Zomato, Blinkit, rides, timers: what’s on its way shows live on your PC’s island, with its tracking line.", "Settings › On your PC’s island"),
-        Stop(Icons.Rounded.SpaceDashboard, { t.indigo }, "Your PC, at a glance", "The Island tab shows its apps, temperatures and the last hour. Arrange its sections, pin the ones you use.", "Island › Edit"),
-        Stop(Icons.Rounded.FolderOpen, { t.teal }, "Files, clipboard, screenshots", "Browse your PC’s files, see what you’ve copied on both, and take a screenshot of the PC from here.", "Remote › Quick actions"),
-        Stop(Icons.Rounded.Mic, { t.purple }, "Ask Gemini", "“Lock my PC”, “what’s playing on my PC?”: on phones where Gemini works with apps, your PC answers it too.", "Settings › On this phone › Use with Gemini"),
-        Stop(Icons.Rounded.Settings, { t.gray }, "Settings moved", "Settings have their own sheet with search: tap the gear on Devices.", "Devices › Settings"),
+        Stop(Icons.Rounded.AutoAwesome, { t.blue }, "A new look", "Clean, solid and simpler.", null),
+        Stop(Icons.Rounded.DeliveryDining, { t.warn }, "Deliveries on your PC", "Orders, rides and timers, live on your PC’s island.", "Settings › On your PC’s island"),
+        Stop(Icons.Rounded.SpaceDashboard, { t.indigo }, "Your PC, at a glance", "Apps, temperatures and the last hour. Arrange and pin sections.", "Island › Edit"),
+        Stop(Icons.Rounded.FolderOpen, { t.teal }, "Files, clipboard, screenshots", "Browse your PC’s files, see what you copied, take screenshots.", "Remote › Quick actions"),
+        Stop(Icons.Rounded.Mic, { t.purple }, "Ask Gemini", "“Lock my PC.” “What’s playing on my PC?”", "Settings › On this phone › Use with Gemini"),
+        Stop(Icons.Rounded.Settings, { t.gray }, "Settings moved", "Now in their own sheet, with search.", "Devices › Settings"),
     )
     val pager = rememberPagerState { stops.size }
     GlassSheet(visible, onDismiss, Modifier.heightIn(max = LocalConfiguration.current.screenHeightDp.dp * .8f)) {

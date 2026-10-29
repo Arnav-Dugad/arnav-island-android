@@ -76,7 +76,7 @@ import io.github.arnavdugad.arnavisland.link.PeerView
     fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
     val ready = pc.revision >= CamWire.REVISION
     val real = pc.revision >= CamWire.REVISION_CODEC
-    val needs = "Needs Arnav Island 0.26 or later on ${pc.name}"
+    val needs = "Needs island 0.26"
     var options by remember { mutableStateOf(false) }
     val uhd = remember(facing) { PhoneCamera.can4K(context, facing) }
     fun name(q: Int) = when (q) { PhoneCamera.HD -> "720p"; PhoneCamera.FULL_HD -> "1080p"; PhoneCamera.UHD -> "4K"; else -> "Auto" }
@@ -87,7 +87,7 @@ import io.github.arnavdugad.arnavisland.link.PeerView
             GlassRow(Icons.Rounded.Videocam, "Webcam",
                 detail = when {
                     camOn != null -> "On $camOn · $side camera${picture?.let { (w, h) -> " · ${minOf(w, h)}p" } ?: ""}"
-                    camBusy -> "Connecting…"; !ready -> needs; else -> "This phone as ${pc.name}’s camera"
+                    camBusy -> "Connecting…"; !ready -> needs; else -> null
                 },
                 trailing = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -110,39 +110,38 @@ import io.github.arnavdugad.arnavisland.link.PeerView
                     }
                 }
             }
-            Hint(if (real) "On ${pc.name}, pick “Arnav Island Phone Camera” in any app: it’s a real camera there on Windows 11. On Windows 10, capture its window with OBS"
-                else "On the PC, capture its window with OBS’s virtual camera, or any app that captures a window")
+            Hint(if (real) "On ${pc.name}, choose “Arnav Island Phone Camera”" else "On ${pc.name}, capture its window with OBS")
             Hairline()
             // 1.9: the camera's options, folded away.
             Row(Modifier.fillMaxWidth().clickable(role = Role.Button) { options = !options }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconTile(Icons.Rounded.Tune, t.gray)
                 Column(Modifier.weight(1f).padding(start = 14.dp)) {
                     Text("Camera options", style = Type.body, color = t.text)
-                    Text("${name(quality)} · starts on the $side${if (mirror) " · mirrored preview" else ""}", style = Type.caption, color = t.muted)
+                    Text("${name(quality)} · starts on the $side${if (mirror) " · mirrored" else ""}", style = Type.caption, color = t.muted)
                 }
                 FoldArrow(options)
             }
             AnimatedVisibility(options, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
                 Column {
-                    GlassRow(Icons.Rounded.HighQuality, "Picture", when (quality) { PhoneCamera.AUTO -> "1080p on the same Wi-Fi, else 720p"; PhoneCamera.UHD -> "Needs a fast network"; else -> "Its bit rate still follows the network" }, tint = t.purple)
+                    GlassRow(Icons.Rounded.HighQuality, "Picture", if (quality == PhoneCamera.UHD) "Needs a fast network" else null, tint = t.purple)
                     val choices = listOfNotNull(PhoneCamera.AUTO, PhoneCamera.HD, PhoneCamera.FULL_HD, PhoneCamera.UHD.takeIf { uhd || quality == PhoneCamera.UHD })
                     Segmented(choices.map(::name), choices.indexOf(quality).coerceAtLeast(0), { PhoneCamera.setQuality(choices[it]) }, Modifier.fillMaxWidth().padding(start = 60.dp, end = 16.dp, bottom = 10.dp))
                     Hairline()
-                    GlassRow(Icons.Rounded.Cameraswitch, "Lens", "The one it starts on", tint = t.teal, trailing = {
+                    GlassRow(Icons.Rounded.Cameraswitch, "Lens", tint = t.teal, trailing = {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             GlassChip("Front", selected = facing != CameraCharacteristics.LENS_FACING_BACK) { PhoneCamera.setLens(context, CameraCharacteristics.LENS_FACING_FRONT) }
                             GlassChip("Back", selected = facing == CameraCharacteristics.LENS_FACING_BACK) { PhoneCamera.setLens(context, CameraCharacteristics.LENS_FACING_BACK) }
                         }
                     })
                     Hairline()
-                    GlassRow(Icons.Rounded.Flip, "Mirror the preview", "Only here: ${pc.name} sees you as others do", tint = t.indigo, trailing = {
+                    GlassRow(Icons.Rounded.Flip, "Mirror preview", tint = t.indigo, trailing = {
                         GlassSwitch(mirror, { PhoneCamera.setMirror(it) })
                     })
                 }
             }
             Hairline()
             GlassRow(if (muted && micOn != null) Icons.Rounded.MicOff else Icons.Rounded.Mic, "Microphone",
-                detail = when { micOn != null -> (if (muted) "Muted on $micOn" else "On $micOn") + (if (micFormat.isNotEmpty()) " · $micFormat" else ""); micBusy -> "Connecting…"; !ready -> needs; else -> "This phone as ${pc.name}’s microphone" },
+                detail = when { micOn != null -> (if (muted) "Muted on $micOn" else "On $micOn") + (if (micFormat.isNotEmpty()) " · $micFormat" else ""); micBusy -> "Connecting…"; !ready -> needs; else -> null },
                 trailing = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (micOn != null) GlassIconButton(if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (muted) "Unmute" else "Mute",
@@ -159,7 +158,7 @@ import io.github.arnavdugad.arnavisland.link.PeerView
                     Box(Modifier.fillMaxHeight().fillMaxWidth(shown.coerceIn(0f, 1f)).clip(GlassShapes.capsule).background(t.good))
                 }
             }
-            Hint("On the PC, choose “CABLE Output” as the microphone (needs VB-CABLE)")
+            Hint("On the PC, choose “CABLE Output” (VB-CABLE)")
         }
     }
 }

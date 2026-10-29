@@ -1,6 +1,6 @@
 # Arnav Island for Android
 
-Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. It's a liquid-glass companion for the Windows island. It works on the same Wi-Fi, and from anywhere else too. You can:
+Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. It's a clean, Apple-style companion for the Windows island. It works on the same Wi-Fi, and from anywhere else too. You can:
 - control what plays on your PC, with its lyrics
 - move files and photos both ways
 - use the phone as the PC's trackpad and keyboard
@@ -57,11 +57,18 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 - **Two new widgets** (controls, each app's volume), a compressed microphone, the camera as a Windows camera, and pairing redone.
 - Needs the PC's island 0.27 for live activities, transfers that carry on, temperatures, the clipboard history, slides and the speed test.
 
+**Clean (1.10)**
+- **Solid, after Apple's own apps:** the glass is gone; grouped cards on Apple's grey (black in the dark), flat buttons, a full-width tab bar, solid rings.
+- **Less to read:** short labels, no explanations under every row.
+- **The Island tab holds still:** each core's box and the session's numbers no longer come and go, and rows for what a PC can't do yet no longer show and vanish.
+- **Crash fixes,** and a crash now leaves a report you can share (Settings › About).
+- With the PC's island 0.27.1, the phone as a camera works in other apps.
+
 **Handed over (1.7)**
-- **Share to your PC's Shelf in one tap:** your PCs are glass bubbles in the app's sheet, and they appear in Android's share sheet too. The island shows the picture while it arrives.
+- **Share to your PC's Shelf in one tap:** your PCs are bubbles in the app's sheet, and they appear in Android's share sheet too. The island shows the picture while it arrives.
 - **The photo you just took** shows on your PC's island, ready to paste there (Settings › On your PC’s island › Photos you take).
 - **Pages, where you were:** from your PC to the app's reader, and back, at the same scroll position.
-- **Quick Settings tiles** for your PC's screen and this phone on your PC. The liquid glass takes about half the work to draw.
+- **Quick Settings tiles** for your PC's screen and this phone on your PC.
 
 **The remote**
 - See what plays on your PC: its cover, title, artist and app.
@@ -103,14 +110,10 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 - **Shortcuts** (touch and hold the app icon): Photo to Shelf, Trackpad, Find my PC, Paste on PC.
 - **Music handoff:** a song continues here from where the PC was, and one tap sends it back.
 
-**Liquid glass**
-- Surfaces bend what is behind them at their edges, blur and saturate it, and catch a rim of light that moves as you tilt the phone. Refraction needs Android 13 or later; blur needs Android 12 or later.
-- Large titles scroll away into a glass navigation bar, and what just happened drops from the top like a notification.
+**The look**
+- Solid and clean, after Apple's own apps: grouped cards on Apple's grey (black in the dark), flat buttons, a full-width tab bar, and colour taken from what plays on your PC.
+- Large titles scroll away into the navigation bar, and what just happened drops from the top like a notification.
 - Sheets follow the back gesture, shrinking with your finger.
-- Light on the battery:
-  - The rim of light is drawn on its own, so tilting the phone never redraws the refraction.
-  - The light behind the glass stands still while the app is hidden, a sheet covers it, or the battery saver is on.
-- Prefer it plain? **Settings › Appearance › Liquid glass** turns it into solid surfaces.
 - Android's *Remove animations* is respected.
 
 **Updates itself**

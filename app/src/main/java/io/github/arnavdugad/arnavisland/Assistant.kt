@@ -166,7 +166,8 @@ object Assistant {
         if (Hub.islandReady(pc)) { Hub.refreshStats(); Hub.pcStats.value?.let { s ->
             val battery = when { s.battery < 0 -> ""; s.charging -> ", battery ${s.battery}% and charging"; else -> ", battery ${s.battery}%" +
                 (if (s.batteryMinutes > 0) " (about ${hours(s.batteryMinutes)} left)" else "") }
-            return Result(true, "$name: processor ${s.cpu.roundToInt()}%, memory ${s.ramPercent.roundToInt()}%$battery, ${s.diskFreeGiB.roundToInt()} GB free")
+            fun n(v: Double) = if (v.isNaN()) 0 else v.roundToInt()
+            return Result(true, "$name: processor ${n(s.cpu)}%, memory ${n(s.ramPercent)}%$battery, ${n(s.diskFreeGiB)} GB free")
         } }
         val s = Hub.refreshStatus() ?: return Result(false, "$name didn't answer")
         val battery = if (!s.batteryPresent) "" else ", battery ${s.battery}%" + if (s.charging) " and charging" else ""

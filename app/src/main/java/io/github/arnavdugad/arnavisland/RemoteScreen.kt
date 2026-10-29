@@ -130,14 +130,14 @@ private fun weatherIcon(w: String): ImageVector { val s = w.lowercase(); return 
         Spacer(Modifier.height(32.dp))
         Text("Your PC, in your hand", style = Type.title, color = t.text, textAlign = TextAlign.Center)
         Spacer(Modifier.height(10.dp))
-        Text("Control what plays on your PC, move files both ways, use it from here, and see this phone’s notifications on its island.",
+        Text("Music, files and more, from your phone.",
             style = Type.body, color = t.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp))
         Spacer(Modifier.height(28.dp))
         GlassButton({ Ui.pair() }, Modifier.fillMaxWidth(), prominent = true, contentPadding = PaddingValues(vertical = 16.dp)) { Icon(Icons.Rounded.Laptop, null); Spacer(Modifier.width(10.dp)); Text("Pair with your PC", style = Type.headline) }
         Section("On your PC") {
-            Step(1, "Open Arnav Island’s Settings › Privacy & productivity"); Hairline(56.dp)
+            Step(1, "Open Arnav Island’s Settings"); Hairline(56.dp)
             Step(2, "Turn on “Share with my PCs”"); Hairline(56.dp)
-            Step(3, "Pair here: on the same Wi-Fi, or anywhere by scanning the island’s QR code")
+            Step(3, "Pair here")
         }
     }
 }
@@ -158,7 +158,7 @@ private fun weatherIcon(w: String): ImageVector { val s = w.lowercase(); return 
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text("${pc.name} is away", style = Type.headline, color = t.text)
-                Text(seen?.let { "Last seen ${ago(it).lowercase()}" } ?: "Open Arnav Island there to connect", style = Type.caption, color = t.muted)
+                seen?.let { Text("Last seen ${ago(it).lowercase()}", style = Type.caption, color = t.muted) }
             }
             if (!machines[pc.id].isNullOrEmpty()) GlassButton({ Hub.wake(pc.id) }, prominent = true, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) { Icon(Icons.Rounded.PowerSettingsNew, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Wake", style = Type.bodyStrong) }
         }
@@ -185,8 +185,6 @@ private fun weatherIcon(w: String): ImageVector { val s = w.lowercase(); return 
                 Box(Modifier.size(96.dp).clip(RoundedCornerShape(22.dp)).background(Brush.linearGradient(listOf(t.accent.copy(alpha = .35f), t.accent2.copy(alpha = .25f)))), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.MusicNote, null, tint = Color.White, modifier = Modifier.size(44.dp)) }
                 Spacer(Modifier.height(16.dp))
                 Text(if (status == null) (error ?: "Connecting to ${pc.name}…") else "Not playing", style = Type.headline, color = t.text, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(4.dp))
-                Text(if (status == null) "What plays on your PC shows here" else "Play something on ${pc.name} and it shows here", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
             }
             return@GlassPanel
         }
@@ -245,7 +243,7 @@ private fun weatherIcon(w: String): ImageVector { val s = w.lowercase(); return 
             val duration = status.duration.coerceAtLeast(0.0)
             val position = seekAsked?.takeIf { now - it.second < 2500 }?.first ?: status.positionNow(now).let { if (playingAsked != null && !playing) status.position else it }
             var scrubbing by remember { mutableStateOf<Float?>(null) }
-            val fraction = scrubbing ?: if (duration > 0) (position / duration).toFloat() else 0f
+            val fraction = scrubbing ?: if (duration > 0) (position / duration).toFloat().takeIf { !it.isNaN() } ?: 0f else 0f
             // Scrubbing clicks at each lyric line.
             val ticks = remember(lyrics, duration) { lyrics?.lines?.takeIf { duration > 0 && lyrics.state == 2 && synced(it) }?.map { (it.time / duration).toFloat() } }
             GlassSlider(fraction, onChange = { scrubbing = it }, onDone = { f ->
@@ -350,14 +348,13 @@ private fun lerpColor(a: Color, b: Color, f: Float) = androidx.compose.ui.graphi
         if (final || System.currentTimeMillis() - lastSent > 110) { lastSent = System.currentTimeMillis(); scope.launch { Hub.command(Proto.CMD_VOLUME, byteArrayOf((v * 100 + .5f).toInt().toByte()), quiet = !final) } }
     }
     val outputs by Hub.outputs.collectAsState(); val apps by Hub.mixer.collectAsState(); val icons by Hub.mixerIcons.collectAsState()
-    Section("Sound on ${pc.name}", footer = if (Hub.prefs.getBoolean("volumeKeys", true)) "This phone’s volume buttons turn it too, while the Remote shows." else null) {
+    Section("Sound on ${pc.name}") {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             VolumeDial(volume, status.muted, onChange = { send(it, false) }, onDone = { send(it, true) },
                 onMute = { scope.launch { Hub.command(Proto.CMD_MUTE, byteArrayOf(2)); Hub.refreshStatus() } }, size = 156.dp, description = "Volume on ${pc.name}")
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 RollingNumber(if (status.muted) "Muted" else "${(volume * 100 + .5f).toInt()}%", Type.title, t.text)
-                Text("Twist the dial; tap its middle to mute", style = Type.caption, color = t.muted)
                 Spacer(Modifier.height(10.dp))
                 // 1.5: a step down and up (5% each; held, they keep going).
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -384,7 +381,7 @@ private fun lerpColor(a: Color, b: Color, f: Float) = androidx.compose.ui.graphi
             Spacer(Modifier.height(6.dp))
         } else if (pc.revision in 1..8) {
             Hairline(16.dp)
-            Text("Update Arnav Island on ${pc.name} to 0.26 for each app’s own volume.", style = Type.caption, color = t.muted, modifier = Modifier.padding(16.dp))
+            Text("App volumes need island 0.26", style = Type.caption, color = t.muted, modifier = Modifier.padding(16.dp))
         }
     }
 }
@@ -425,7 +422,7 @@ private fun lerpColor(a: Color, b: Color, f: Float) = androidx.compose.ui.graphi
     SectionLabel("Recently played") {
         GlassChip("Loved", icon = Icons.Rounded.Favorite, selected = loved, iconTint = t.pink) { loved = !loved }
     }
-    if (shown.isEmpty()) { Text("Tap the heart on a song you love and it stays here.", style = Type.caption, color = t.muted, modifier = Modifier.padding(start = 18.dp)); return }
+    if (shown.isEmpty()) { Text("No loved songs", style = Type.caption, color = t.muted, modifier = Modifier.padding(start = 18.dp)); return }
     LazyRow(Modifier.fillMaxWidth().padding(horizontal = 0.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(horizontal = 2.dp)) {
         items(shown.take(40), key = { it.key }) { song ->
             val cover = remember(song.key) { song.cover?.let { Art.bitmap(it, 200) } }
@@ -450,12 +447,12 @@ private fun lerpColor(a: Color, b: Color, f: Float) = androidx.compose.ui.graphi
     SectionLabel("Quick actions")
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Pair {
-            GlassTile(Icons.Rounded.ContentPaste, "Paste on PC", "Your clipboard, there", Modifier.weight(1f).fillMaxHeight(), tint = t.indigo) {
+            GlassTile(Icons.Rounded.ContentPaste, "Paste on PC", "", Modifier.weight(1f).fillMaxHeight(), tint = t.indigo) {
                 val text = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
-                if (text.isBlank()) Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Your clipboard is empty", "Copy something first"))
+                if (text.isBlank()) Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Your clipboard is empty"))
                 else scope.launch { if (Hub.command(Proto.CMD_CLIP_SET, text.toByteArray())?.ok == true) Hub.banners.tryEmit(Banner(Banner.Kind.Clipboard, "On ${pc.name}’s clipboard", text.lineSequence().first().take(60))) }
             }
-            GlassTile(Icons.Rounded.ContentCopy, "Copy from PC", "${pc.name}’s clipboard, here", Modifier.weight(1f).fillMaxHeight(), tint = t.purple) {
+            GlassTile(Icons.Rounded.ContentCopy, "Copy from PC", "", Modifier.weight(1f).fillMaxHeight(), tint = t.purple) {
                 scope.launch {
                     val reply = Hub.command(Proto.CMD_CLIP_GET) ?: return@launch; if (!reply.ok) return@launch
                     val p = reply.payload; val n = if (p.size >= 4) ByteBuffer.wrap(p, 0, 4).order(ByteOrder.LITTLE_ENDIAN).int else 0
@@ -466,17 +463,17 @@ private fun lerpColor(a: Color, b: Color, f: Float) = androidx.compose.ui.graphi
             }
         }
         Pair {
-            GlassTile(Icons.Rounded.Language, "Open a link", "In ${pc.name}’s browser", Modifier.weight(1f).fillMaxHeight(), tint = t.blue) { Ui.link = true }
-            GlassTile(Icons.Rounded.Lock, "Lock ${pc.name}", "Right away", Modifier.weight(1f).fillMaxHeight(), tint = t.gray) {
+            GlassTile(Icons.Rounded.Language, "Open a link", "", Modifier.weight(1f).fillMaxHeight(), tint = t.blue) { Ui.link = true }
+            GlassTile(Icons.Rounded.Lock, "Lock ${pc.name}", "", Modifier.weight(1f).fillMaxHeight(), tint = t.gray) {
                 scope.launch { if (Hub.command(Proto.CMD_LOCK)?.ok == true) Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Locked ${pc.name}")) }
             }
         }
         Pair {
-            GlassTile(Icons.Rounded.Mouse, "Trackpad", "And the keyboard", Modifier.weight(1f).fillMaxHeight(), tint = t.teal) {
+            GlassTile(Icons.Rounded.Mouse, "Trackpad", "", Modifier.weight(1f).fillMaxHeight(), tint = t.teal) {
                 if (pc.revision < 3 && pc.online) Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${pc.name}", "The trackpad needs version 0.20 or later")) else Ui.trackpad = TRACKPAD_PAD
             }
             // 1.8: point the phone and the pointer follows (#65).
-            GlassTile(Icons.Rounded.Gesture, "Air mouse", "Point and it follows", Modifier.weight(1f).fillMaxHeight(), tint = t.blue) {
+            GlassTile(Icons.Rounded.Gesture, "Air mouse", "", Modifier.weight(1f).fillMaxHeight(), tint = t.blue) {
                 if (pc.revision < 3 && pc.online) Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${pc.name}", "The air mouse needs version 0.20 or later")) else Ui.trackpad = TRACKPAD_AIR
             }
         }
@@ -484,28 +481,28 @@ private fun lerpColor(a: Color, b: Color, f: Float) = androidx.compose.ui.graphi
         val missing by Hub.missing.collectAsState()
         val files = pc.revision >= 10 && Proto.CMD_FILES !in missing; val shot = pc.revision >= 10 && Proto.CMD_SCREENSHOT !in missing
         Pair {
-            GlassTile(Icons.Rounded.ContentPasteSearch, "Clipboard", "What you’ve copied, both ways", Modifier.weight(1f).fillMaxHeight(), tint = t.indigo) { Ui.clipboard() }
-            if (files) GlassTile(Icons.Rounded.FolderOpen, "${pc.name}’s files", "Browse and bring them here", Modifier.weight(1f).fillMaxHeight(), tint = t.blue) { MoreUi.files = "" }
+            GlassTile(Icons.Rounded.ContentPasteSearch, "Clipboard", "", Modifier.weight(1f).fillMaxHeight(), tint = t.indigo) { Ui.clipboard() }
+            if (files) GlassTile(Icons.Rounded.FolderOpen, "${pc.name}’s files", "", Modifier.weight(1f).fillMaxHeight(), tint = t.blue) { MoreUi.files = "" }
             else GlassTile(Icons.Rounded.Lan, "Connection", quality(pc).text.substringBefore("  ·"), Modifier.weight(1f).fillMaxHeight(), tint = qualityColor(quality(pc).kind)) { Ui.connection = pc.id }
         }
         if (files || shot) Pair {
-            if (shot) GlassTile(Icons.Rounded.Screenshot, "Screenshot", "Of ${pc.name}, here", Modifier.weight(1f).fillMaxHeight(), tint = t.gray) { Hub.screenshot(0) }
+            if (shot) GlassTile(Icons.Rounded.Screenshot, "Screenshot", "", Modifier.weight(1f).fillMaxHeight(), tint = t.gray) { Hub.screenshot(0) }
             if (files) GlassTile(Icons.Rounded.Lan, "Connection", quality(pc).text.substringBefore("  ·"), Modifier.weight(1f).fillMaxHeight(), tint = qualityColor(quality(pc).kind)) { Ui.connection = pc.id }
             if (!shot || !files) Spacer(Modifier.weight(1f))
         }
         Pair {
             // 1.8: slides, a laser and a timer (#64).
-            GlassTile(Icons.Rounded.Slideshow, "Present", "Slides, laser, timer", Modifier.weight(1f).fillMaxHeight(), tint = t.warn) { Ui.presenter = true }
-            GlassTile(Icons.Rounded.NotificationsActive, "Find ${pc.name}", "It chimes and lights up", Modifier.weight(1f).fillMaxHeight(), tint = t.pink) { scope.launch { Hub.ringPc() } }
+            GlassTile(Icons.Rounded.Slideshow, "Present", "", Modifier.weight(1f).fillMaxHeight(), tint = t.warn) { Ui.presenter = true }
+            GlassTile(Icons.Rounded.NotificationsActive, "Find ${pc.name}", "", Modifier.weight(1f).fillMaxHeight(), tint = t.pink) { scope.launch { Hub.ringPc() } }
         }
         // 1.6: screens, either way.
         val showing by PhoneScreen.showing.collectAsState()
         Pair {
-            GlassTile(Icons.Rounded.DesktopWindows, "${pc.name}’s screen", "Here, and touch it", Modifier.weight(1f).fillMaxHeight(), tint = t.indigo) {
+            GlassTile(Icons.Rounded.DesktopWindows, "${pc.name}’s screen", "", Modifier.weight(1f).fillMaxHeight(), tint = t.indigo) {
                 if (pc.revision < 7 && pc.online) Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${pc.name}", "Its screen needs version 0.24 or later"))
                 else context.startActivity(Intent(context, PcScreenActivity::class.java).putExtra("peer", pc.id))
             }
-            GlassTile(Icons.Rounded.CastConnected, if (showing != null) "Stop showing" else "This phone there", if (showing != null) "On $showing now" else "In a window on ${pc.name}", Modifier.weight(1f).fillMaxHeight(), tint = t.purple) {
+            GlassTile(Icons.Rounded.CastConnected, if (showing != null) "Stop showing" else "This phone there", if (showing != null) "On $showing" else "", Modifier.weight(1f).fillMaxHeight(), tint = t.purple) {
                 when {
                     showing != null -> PhoneScreen.stop(context)
                     pc.revision < 7 && pc.online -> Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${pc.name}", "Showing this phone needs version 0.24 or later"))
@@ -518,7 +515,7 @@ private fun lerpColor(a: Color, b: Color, f: Float) = androidx.compose.ui.graphi
         }
     }
     // 1.8: this phone's camera and microphone, for the PC (#67).
-    SectionLabel("This phone as ${pc.name}’s camera and mic")
+    SectionLabel("Camera & mic")
     CameraMicCard(pc, Modifier.fillMaxWidth())
 }
 
@@ -542,7 +539,7 @@ private fun lerpColor(a: Color, b: Color, f: Float) = androidx.compose.ui.graphi
         Spacer(Modifier.height(16.dp))
         Text(s.title, style = Type.title2, color = t.text, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(listOf(s.artist, s.app).filter { it.isNotBlank() }.joinToString("  ·  "), style = Type.body, color = t.muted, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text("Heard on ${s.pc.ifBlank { "your PC" }}  ·  ${if (s.plays == 1) "once" else "${s.plays} times"}  ·  ${ago(s.last).lowercase()}", style = Type.caption, color = t.faint, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
+        Text("${if (s.plays == 1) "Played once" else "Played ${s.plays} times"}  ·  ${ago(s.last).lowercase()}", style = Type.caption, color = t.faint, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(20.dp))
         GlassButton({ Hub.replay(s); onDismiss() }, Modifier.fillMaxWidth(), prominent = true, enabled = pc?.online == true, contentPadding = PaddingValues(vertical = 15.dp)) { Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("Play on ${pc?.name ?: "your PC"}", style = Type.headline) }
         Spacer(Modifier.height(10.dp))
@@ -566,8 +563,8 @@ private fun lerpColor(a: Color, b: Color, f: Float) = androidx.compose.ui.graphi
             if (pb.repeatKnown) GlassButton({ Hub.setRepeat((pb.repeat + 1) % 3) }, Modifier.weight(1f), prominent = pb.repeat > 0) { Icon(if (pb.repeat == 1) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(when (pb.repeat) { 1 -> "One"; 2 -> "All"; else -> "Repeat" }, style = Type.bodyStrong) }
         }
         when {
-            (pc?.revision ?: 0) < 9 -> Text("Update Arnav Island on ${pc?.name ?: "your PC"} to 0.26 to see what plays next.", style = Type.body, color = t.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(20.dp))
-            pb == null || !pb.islandPlayer -> Text("Windows doesn’t share what plays next from ${status?.app?.ifBlank { null } ?: "this app"}. Up next shows for music the island plays from your library.", style = Type.body, color = t.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(20.dp))
+            (pc?.revision ?: 0) < 9 -> Text("Needs island 0.26", style = Type.body, color = t.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(20.dp))
+            pb == null || !pb.islandPlayer -> Text("Not available for ${status?.app?.ifBlank { null } ?: "this app"}", style = Type.body, color = t.muted, textAlign = TextAlign.Center, modifier = Modifier.padding(20.dp))
             pb.upNext.isEmpty() -> Text("Nothing after this one", style = Type.body, color = t.muted, modifier = Modifier.padding(20.dp))
             else -> androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false)) {
                 items(pb.upNext.size) { i -> val n = pb.upNext[i]
