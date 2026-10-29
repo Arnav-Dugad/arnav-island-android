@@ -19,6 +19,8 @@ object Notify {
     const val LINK = 1; const val PAIR = 2; const val MUSIC = 3; const val RING = 4; const val UPDATE = 5; const val PHOTO = 6
     const val OFFER = 1000; const val RECEIVED = 5000
     // Also taken: 7 the PC's music player (PcMedia.ID), 8 the PC's focus clock (FocusLive.ID).
+    /** 1.8: this phone as a PC's webcam (PhoneCamera) and microphone (PhoneMic), on their own channel. */
+    const val CAMERA = 11; const val MIC = 12; const val CH_CAMERA_MIC = "camera_mic"
     private const val CH_LINK = "link"; private const val CH_FILES = "files"; private const val CH_RING = "ring"; private const val CH_UPDATES = "updates"; private const val CH_MUSIC = "music"
 
     fun channels(context: Context) {
@@ -30,6 +32,7 @@ object Notify {
             NotificationChannel(CH_RING, "Find my phone", NotificationManager.IMPORTANCE_HIGH).apply { description = "When a PC rings this phone"; setSound(null, null); enableVibration(false); setBypassDnd(true) },
             NotificationChannel(CH_UPDATES, "Updates", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "New versions of Arnav Island" },
             NotificationChannel(PcMedia.CHANNEL, "Your PC’s music", NotificationManager.IMPORTANCE_LOW).apply { description = "What plays on your PC, with its controls, on the lock screen and in quick settings"; setShowBadge(false) },
+            NotificationChannel(CH_CAMERA_MIC, "Camera and microphone for a PC", NotificationManager.IMPORTANCE_LOW).apply { description = "While a PC uses this phone’s camera or microphone"; setShowBadge(false) },
         ))
     }
     private fun allowed(context: Context) = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED

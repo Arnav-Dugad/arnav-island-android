@@ -1,0 +1,38 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent">
+    <ImageView android:id="@+id/w_bg" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY"
+        android:src="@drawable/widget_you" android:importantForAccessibility="no" />
+    <LinearLayout android:id="@+id/w_open" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="horizontal" android:padding="12dp">
+        <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+            <FrameLayout android:layout_width="56dp" android:layout_height="56dp">
+                <ProgressBar android:id="@+id/w_phone_ring" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="match_parent"
+                    android:indeterminate="false" android:max="100" android:progress="64" android:progressDrawable="@drawable/widget_you_ring_cpu" />
+                <TextView android:id="@+id/w_phone_pct" android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center" android:text="64%"
+                    android:textColor="@color/widget_you_text" android:textSize="16sp" android:fontFamily="sans-serif-light" android:maxLines="1" />
+            </FrameLayout>
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:orientation="horizontal" android:gravity="center_vertical">
+                <ImageView android:id="@+id/w_phone_bolt" android:layout_width="11dp" android:layout_height="11dp" android:layout_marginEnd="3dp" android:visibility="gone"
+                    android:src="@drawable/ic_w_bolt" android:tint="@color/widget_you_accent" android:contentDescription="Charging" />
+                <TextView android:id="@+id/w_phone_name" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="THIS PHONE"
+                    android:textColor="@color/widget_you_accent" android:textSize="10sp" android:letterSpacing="0.06" android:maxLines="1" android:ellipsize="end" android:textStyle="bold" />
+            </LinearLayout>
+            <TextView android:id="@+id/w_phone_line" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="1dp" android:gravity="center" android:text="Lasts until 11 pm"
+                android:textColor="@color/widget_you_muted" android:textSize="10.5sp" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical" android:gravity="center">
+            <FrameLayout android:layout_width="56dp" android:layout_height="56dp">
+                <ProgressBar android:id="@+id/w_pc_ring" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="match_parent"
+                    android:indeterminate="false" android:max="100" android:progress="82" android:progressDrawable="@drawable/widget_you_ring_gpu" />
+                <TextView android:id="@+id/w_pc_pct" android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center" android:text="82%"
+                    android:textColor="@color/widget_you_text" android:textSize="16sp" android:fontFamily="sans-serif-light" android:maxLines="1" />
+            </FrameLayout>
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:orientation="horizontal" android:gravity="center_vertical">
+                <ImageView android:id="@+id/w_pc_bolt" android:layout_width="11dp" android:layout_height="11dp" android:layout_marginEnd="3dp" android:visibility="gone"
+                    android:src="@drawable/ic_w_bolt" android:tint="@color/widget_you_accent" android:contentDescription="Charging" />
+                <TextView android:id="@+id/w_pc_name" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="STUDIO PC"
+                    android:textColor="@color/widget_you_accent" android:textSize="10sp" android:letterSpacing="0.06" android:maxLines="1" android:ellipsize="end" android:textStyle="bold" />
+            </LinearLayout>
+            <TextView android:id="@+id/w_pc_line" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="1dp" android:gravity="center" android:text="3 h 10 min left"
+                android:textColor="@color/widget_you_muted" android:textSize="10.5sp" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

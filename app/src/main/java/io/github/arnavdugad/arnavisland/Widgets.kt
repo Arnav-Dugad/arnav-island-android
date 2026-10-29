@@ -53,7 +53,7 @@ class FocusWidget : AppWidgetProvider() {
 /** 1.5: the widgets' style: the glass (in the cover's colours), or Material You (the wallpaper's palette, Android 12 and later). */
 object WidgetStyle {
     fun you(context: Context) = android.os.Build.VERSION.SDK_INT >= 31 && Hub.prefs.getBoolean("widgetsYou", false)
-    fun set(context: Context, you: Boolean) { Hub.prefs.edit().putBoolean("widgetsYou", you).apply(); PcWidgets.refresh(context, force = true); StatsWidgets.refresh(context, force = true); FocusWidgets.refresh(context) }
+    fun set(context: Context, you: Boolean) { Hub.prefs.edit().putBoolean("widgetsYou", you).apply(); PcWidgets.refresh(context, force = true); StatsWidgets.refresh(context, force = true); FocusWidgets.refresh(context); WidgetFeeds.refresh(context, force = true) }
     fun open(context: Context, code: Int, what: String? = "island") = PendingIntent.getActivity(context, code,
         Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP).apply { what?.let { putExtra("open", it) } },
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -148,19 +148,28 @@ object PcWidgets {
     /** The widget's glass: the app's own when nothing plays, else deep in the cover's colour, lit by its two brightest. */
     private fun backdrop(context: Context, m: AppWidgetManager, id: Int, v: RemoteViews, tint: ArtColors?, tallDp: Int) {
         if (tint == null) { v.setImageViewResource(R.id.w_bg, R.drawable.widget_glass); return }
-        val density = context.resources.displayMetrics.density
+        val (wDp, hDp) = sizeOf(m, id, tallDp)
+        v.setImageViewBitmap(R.id.w_bg, glass(context, wDp, hDp, tint))
+        if (tallDp > 60) v.setTextColor(R.id.w_where, alpha(tint.vivid, .85f))
+    }
+    /** A widget's size on the home screen (dp): Android 12's exact sizes when it gives them, else the portrait size. */
+    internal fun sizeOf(m: AppWidgetManager, id: Int, tallDp: Int, wideDp: Int = 250): Pair<Float, Float> {
         val o = m.getAppWidgetOptions(id)
-        // Its size on the home screen: Android 12's exact sizes when it gives them, else the portrait size.
         val exact = if (android.os.Build.VERSION.SDK_INT >= 31) runCatching {
             @Suppress("DEPRECATION") o.getParcelableArrayList<android.util.SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES)?.firstOrNull()
         }.getOrNull() else null
-        val wDp = exact?.width ?: o.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH).toFloat().takeIf { it > 0 } ?: 250f
+        val wDp = exact?.width ?: o.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH).toFloat().takeIf { it > 0 } ?: wideDp.toFloat()
         val hDp = exact?.height ?: o.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT).toFloat().takeIf { it > 0 } ?: tallDp.toFloat()
+        return wDp to hDp
+    }
+    internal fun alpha(color: Int, a: Float) = (color and 0xFFFFFF) or ((a * 255).toInt().coerceIn(0, 255) shl 24)
+    /** The glass in [tint]'s colours, drawn at [wDp] x [hDp]. */
+    internal fun glass(context: Context, wDp: Float, hDp: Float, tint: ArtColors): Bitmap {
+        val density = context.resources.displayMetrics.density
         // At most twice the dp size: sharp enough for a soft glow, and well within what a widget may carry.
         val scale = minOf(density, 2f); val w = (wDp * scale).toInt().coerceIn(40, 1400); val h = (hDp * scale).toInt().coerceIn(40, 1400)
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888); val c = Canvas(out)
         val r = 28f * scale; val box = RectF(0f, 0f, w.toFloat(), h.toFloat())
-        fun alpha(color: Int, a: Float) = (color and 0xFFFFFF) or ((a * 255).toInt().coerceIn(0, 255) shl 24)
         fun lift(color: Int, by: Float): Int { val hsv = FloatArray(3); android.graphics.Color.colorToHSV(color, hsv); hsv[2] = (hsv[2] + by).coerceIn(0f, 1f); return android.graphics.Color.HSVToColor(hsv) }
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         paint.shader = android.graphics.LinearGradient(0f, 0f, 0f, h.toFloat(), alpha(lift(tint.deep, .07f), .95f), alpha(tint.deep, .97f), Shader.TileMode.CLAMP)
@@ -173,8 +182,7 @@ object PcWidgets {
         c.restoreToCount(saved)
         paint.shader = null; paint.style = Paint.Style.STROKE; paint.strokeWidth = scale; paint.color = alpha(0xFFFFFF, .24f)
         c.drawRoundRect(RectF(scale / 2, scale / 2, w - scale / 2, h - scale / 2), r, r, paint)
-        v.setImageViewBitmap(R.id.w_bg, out)
-        if (tallDp > 60) v.setTextColor(R.id.w_where, alpha(tint.vivid, .85f))
+        return out
     }
 
     private fun nowPlaying(context: Context, pc: PeerView?, s: PcStatus?, you: Boolean): RemoteViews = RemoteViews(context.packageName, if (you) R.layout.widget_pc_you else R.layout.widget_pc).apply {

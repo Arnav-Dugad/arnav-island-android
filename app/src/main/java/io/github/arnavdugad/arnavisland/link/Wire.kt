@@ -13,8 +13,10 @@ import java.io.OutputStream
 object Proto {
     const val VERSION = 2
     /** Revision 4 (1.3, island 0.21): remote and notices connections stay open for more; the relay has a direct path. Revision 5 (1.4, island 0.22): the whole island. Revision 6 (1.5, island 0.23): the PC's battery, each core, and the PC asking this phone. Revision 7 (1.6, island 0.24): screens either way. Revision 8 (1.7, island 0.25): offers with a picture,
-     * photos just taken, pages handed over where they were scrolled to. */
-    const val REVISION = 8
+     * photos just taken, pages handed over where they were scrolled to. Revision 9 (1.8, island 0.26): shuffle, repeat and
+     * up next, the PC's apps each with its volume, its sound's levels, its adapters (to wake it), paused transfers, and
+     * this phone's camera and microphone on the PC. */
+    const val REVISION = 9
     const val TCP_PORT = 47820
     const val UDP_PORT = 47821
     val MAGIC = byteArrayOf('A'.code.toByte(), 'R'.code.toByte(), 'N'.code.toByte(), 'V'.code.toByte())
@@ -29,6 +31,8 @@ object Proto {
     // Frames inside a transfer (all sealed).
     const val FRAME_OFFER = 1; const val FRAME_DATA = 1; const val FRAME_END = 2; const val FRAME_HEADER = 3; const val FRAME_BATCH_END = 4
     const val FRAME_MUSIC = 5; const val FRAME_SHELF = 6; const val FRAME_TAKE = 7
+    /** Revision 9: a sender that paused says so every few seconds (one byte), so the receiver keeps waiting. */
+    const val FRAME_HOLD = 8
     // Revision 2.
     const val FRAME_REQUEST = 0x20; const val FRAME_REPLY = 0x21
     const val FRAME_NOTICE = 0x30; const val FRAME_NOTICE_ACK = 0x31
@@ -71,6 +75,14 @@ object Proto {
     const val QUERY_PHOTO = 3; const val QUERY_PAGE = 4
     /** Revision 8: a web page to open on the PC where it was scrolled to (f32 how far down, its address, its title). */
     const val CMD_PAGE = 19
+    /**
+     * Revision 9 (island 0.26), each answered [version 1, ...]: 20 playback (u8 op: 0 read, 1 shuffle u8, 2 repeat u8, 3 play
+     * up next u16; answers u8 flags (1 shuffle known, 2 shuffle on, 4 repeat known, 8 the island's own player), u8 repeat,
+     * u16 n and n x (title, artist, f64 seconds)); 21 mixer (u8 op: 0 read u8 icons, 1 volume u32 pid u8 percent, 2 mute u32
+     * pid u8; answers u8 n and n x (u32 pid, name, u8 volume, u8 peak, u8 flags 1 muted 2 system 4 active, u32 n PNG)); 22
+     * levels (u8 level, u8 resting, u8 n bands); 23 machine (u8 n x (6-byte MAC, name, IPv4, u8 prefix)).
+     */
+    const val CMD_PLAYBACK = 20; const val CMD_MIXER = 21; const val CMD_LEVELS = 22; const val CMD_MACHINE = 23
     /** An offer's flags: 1 a folder, 2 for the Shelf; revision 8: 4 with a picture, 8 a photo the PC asked for. */
     const val OFFER_FOLDER = 1; const val OFFER_SHELF = 2; const val OFFER_PICTURE = 4; const val OFFER_ASKED = 8
     // Remote answers.

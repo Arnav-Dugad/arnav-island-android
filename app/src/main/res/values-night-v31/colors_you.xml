@@ -12,4 +12,5 @@
     <color name="widget_you_ring_cpu">@android:color/system_accent1_200</color>
     <color name="widget_you_ring_gpu">@android:color/system_accent2_200</color>
     <color name="widget_you_ring_ram">@android:color/system_accent3_200</color>
+    <color name="widget_you_dim">@android:color/system_neutral2_400</color>
 </resources>

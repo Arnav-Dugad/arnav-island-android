@@ -1,6 +1,29 @@
 package io.github.arnavdugad.arnavisland
 
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.rounded.CenterFocusStrong
+import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.TouchApp
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -121,13 +144,20 @@ class InputLink(private val peer: String, private val internet: Boolean, private
     fun close() { queue.close(); runCatching { session?.close() } }
 }
 
+/** Where the trackpad sheet opens: the pad, the air mouse, or the keyboard. */
+const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS = 2
+
 /**
- * The phone as the PC's trackpad and keyboard. One finger moves the pointer (faster the faster it goes), a tap clicks,
- * two fingers scroll and a two-finger tap right-clicks; a double tap held down drags. Below: the two buttons, the keys
- * a phone's keyboard lacks, and a field whose typing goes straight to the PC.
+ * The phone as the PC's trackpad, air mouse and keyboard, one at a time under a segmented control ([start] picks the
+ * first). Trackpad: one finger moves the pointer (faster the faster it goes), a tap clicks, two fingers scroll and a
+ * two-finger tap right-clicks; a double tap held down drags; below, the two buttons, the keys a phone's keyboard lacks,
+ * and a field whose typing goes straight to the PC. Air mouse: point the phone while holding the clutch. Keyboard: the
+ * field, focused, and every key.
  */
-@Composable fun TrackpadSheet(visible: Boolean, pc: PeerView?, onDismiss: () -> Unit) {
-    val t = LocalTokens.current
+@Composable fun TrackpadSheet(visible: Boolean, pc: PeerView?, start: Int = TRACKPAD_PAD, onDismiss: () -> Unit) {
+    val t = LocalTokens.current; val reduced = LocalReduced.current
+    var mode by remember { mutableIntStateOf(start) }
+    LaunchedEffect(visible, start) { if (visible) mode = start }
     GlassSheet(visible, onDismiss, Modifier.fillMaxHeight(.93f)) {
         if (pc == null) { Text("Pair with your PC first", style = Type.body, color = t.muted); return@GlassSheet }
         val scope = rememberCoroutineScope()
@@ -136,24 +166,138 @@ class InputLink(private val peer: String, private val internet: Boolean, private
         val state by input.state.collectAsState()
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Trackpad", style = Type.title, color = t.text)
+                Text(when (mode) { TRACKPAD_AIR -> "Air mouse"; TRACKPAD_KEYS -> "Keyboard"; else -> "Trackpad" }, style = Type.title, color = t.text)
                 Text(when (state) { 0 -> "Connecting to ${pc.name}…"; 1 -> "Controlling ${pc.name}${if (pc.internet) "  ·  ${if (pc.path == 2) "direct" else "through the relay"}" else ""}"
                     else -> "Couldn’t connect. On the island: Settings › Privacy & productivity › My phone can control this PC" }, style = Type.caption, color = if (state == 2) t.danger else t.muted, maxLines = 3)
             }
             LiveDot(state == 1)
         }
-        Spacer(Modifier.height(14.dp))
-        Pad(input, Modifier.fillMaxWidth().weight(1f))
-        Spacer(Modifier.height(10.dp))
-        Row(Modifier.fillMaxWidth().height(54.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MouseButton("Left click", Modifier.weight(1f)) { input.frame(Link.buttonFrame(0, if (it) 1 else 0)) }
-            MouseButton("Right click", Modifier.weight(1f)) { input.frame(Link.buttonFrame(1, if (it) 1 else 0)) }
+        Spacer(Modifier.height(12.dp))
+        Segmented(listOf("Trackpad", "Air mouse", "Keyboard"), mode, { mode = it }, Modifier.fillMaxWidth())
+        Spacer(Modifier.height(12.dp))
+        AnimatedContent(mode, Modifier.fillMaxWidth().weight(1f), transitionSpec = {
+            if (reduced) EnterTransition.None togetherWith ExitTransition.None
+            else { val way = if (targetState > initialState) 1 else -1
+                (fadeIn(tween(220, 60)) + slideInHorizontally(spring(dampingRatio = .86f, stiffness = 420f)) { it / 8 * way }) togetherWith (fadeOut(tween(120)) + slideOutHorizontally(tween(180)) { -it / 8 * way }) }
+        }, label = "Mode") { m ->
+            Column(Modifier.fillMaxSize()) {
+                when (m) {
+                    TRACKPAD_AIR -> AirPad(input, visible)
+                    TRACKPAD_KEYS -> KeyboardPane(input, pc.name)
+                    else -> {
+                        Pad(input, Modifier.fillMaxWidth().weight(1f))
+                        Spacer(Modifier.height(12.dp))
+                        ClickButtons(input)
+                        Spacer(Modifier.height(12.dp))
+                        Keys(input)
+                        Spacer(Modifier.height(12.dp))
+                        Typing(input, pc.name)
+                    }
+                }
+            }
         }
-        Spacer(Modifier.height(10.dp))
-        Keys(input)
-        Spacer(Modifier.height(10.dp))
-        Typing(input, pc.name)
     }
+}
+
+
+/** Left and right click, held while the finger is on them. */
+@Composable private fun ClickButtons(input: InputLink) {
+    Row(Modifier.fillMaxWidth().height(56.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        MouseButton("Left click", Modifier.weight(1f)) { input.frame(Link.buttonFrame(0, if (it) 1 else 0)) }
+        MouseButton("Right click", Modifier.weight(1f)) { input.frame(Link.buttonFrame(1, if (it) 1 else 0)) }
+    }
+}
+
+/**
+ * The air mouse: a big clutch (the pointer follows the phone only while it is held, so you can reset your wrist like
+ * lifting a mouse), a strip to scroll beside it, the two buttons, and its sensitivity. Its sensors listen only while
+ * this shows.
+ */
+@Composable private fun ColumnScope.AirPad(input: InputLink, visible: Boolean) {
+    val t = LocalTokens.current; val haptics = LocalHapticFeedback.current; val reduced = LocalReduced.current
+    var held by remember { mutableStateOf(false) }
+    // Where the clutch's light sits: it trails the pointer's motion and springs back home when let go.
+    var dot by remember { mutableStateOf(Offset.Zero) }
+    val mouse = rememberAirMouse(visible) { x, y -> input.move(x, y); if (!reduced) dot = Offset((dot.x * .94f + x * .5f).coerceIn(-90f, 90f), (dot.y * .94f + y * .5f).coerceIn(-90f, 90f)) }
+    var sensitivity by remember { mutableFloatStateOf(mouse.sensitivity) }
+    LaunchedEffect(held) { if (!held && dot != Offset.Zero) { val from = dot; animate(1f, 0f, animationSpec = spring(dampingRatio = .55f, stiffness = 300f)) { v, _ -> dot = from * v } } }
+    if (!mouse.available) {
+        Box(Modifier.fillMaxWidth().weight(1f).glass(GlassShapes.card, GlassLevel.Control).padding(24.dp), contentAlignment = Alignment.Center) {
+            Text("This phone has no gyroscope, so it can’t point. The trackpad works the same way.", style = Type.body, color = t.muted, textAlign = TextAlign.Center)
+        }
+        return
+    }
+    Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        val glow by springy(if (held) 1f else 0f, .7f, 420f)
+        val scale by springy(if (held) .985f else 1f, .55f, 600f)
+        Box(Modifier.weight(1f).fillMaxHeight().graphicsLayerScale(scale).glass(GlassShapes.card, GlassLevel.Control, if (held) t.accent else Color.Unspecified)
+            .semantics { contentDescription = "Hold to move the pointer" }
+            .whileHeld { h ->
+                if (h != held) { held = h; mouse.engaged = h; haptics.performHapticFeedback(if (h) HapticFeedbackType.LongPress else HapticFeedbackType.SegmentTick) }
+            }, contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
+                val c = center + Offset(dot.x.dp.toPx(), dot.y.dp.toPx()); val r = (70f + 40f * glow).dp.toPx()
+                drawCircle(Brush.radialGradient(listOf(t.accent.copy(alpha = .1f + .32f * glow), Color.Transparent), c, r), r, c)
+                if (glow > .01f) drawCircle(Color.White.copy(alpha = .55f * glow), 7.dp.toPx(), c)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(20.dp)) {
+                Icon(Icons.Rounded.TouchApp, null, tint = if (held) t.text else t.faint, modifier = Modifier.size(36.dp))
+                Spacer(Modifier.height(10.dp))
+                Text(if (held) "Moving" else "Hold to move", style = Type.headline, color = if (held) t.text else t.muted)
+                Spacer(Modifier.height(4.dp))
+                Text(if (held) "Point at the screen" else "Point the phone at your PC, then hold here", style = Type.caption, color = t.faint, textAlign = TextAlign.Center)
+            }
+        }
+        ScrollStrip(input, Modifier.width(60.dp).fillMaxHeight())
+    }
+    Spacer(Modifier.height(12.dp))
+    ClickButtons(input)
+    Spacer(Modifier.height(12.dp))
+    Column(Modifier.fillMaxWidth().glass(GlassShapes.tile, GlassLevel.Control)) {
+        GlassRow(Icons.Rounded.Speed, "Sensitivity", trailing = { Text("${(sensitivity * 100).roundToInt()}%", style = Type.body.copy(fontFeatureSettings = "tnum"), color = t.muted) })
+        GlassSlider(sensitivity, { sensitivity = it; mouse.sensitivity = it }, { Hub.prefs.edit().putFloat(AirMouse.PREF, it).apply() },
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 6.dp), description = "Pointer sensitivity")
+        Hairline()
+        GlassRow(Icons.Rounded.CenterFocusStrong, "Recenter", "Hold the phone still a moment: clears any drift", onClick = { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); mouse.recenter() })
+    }
+}
+
+/** A strip to scroll by dragging along it, with ridges that roll under the finger and a tick every wheel notch. */
+@Composable private fun ScrollStrip(input: InputLink, modifier: Modifier) {
+    val t = LocalTokens.current; val haptics = LocalHapticFeedback.current; val density = LocalDensity.current
+    var rolled by remember { mutableFloatStateOf(0f) }
+    var active by remember { mutableStateOf(false) }
+    Box(modifier.glass(GlassShapes.capsule, GlassLevel.Control, if (active) t.accent else Color.Unspecified)
+        .semantics { contentDescription = "Scroll" }
+        .pointerInput(input) {
+            val dp = density.density; var notch = 0f
+            detectVerticalDragGestures(onDragStart = { active = true; haptics.performHapticFeedback(HapticFeedbackType.SegmentTick) }, onDragEnd = { active = false }, onDragCancel = { active = false }) { c, dy ->
+                // The content follows the finger, as on the pad: 120 a notch every 20 dp.
+                c.consume(); val wheel = dy / dp * 6f; input.scroll(wheel, 0f); rolled += dy
+                notch += abs(wheel); if (notch >= 120f) { notch -= 120f; haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick) }
+            }
+        }, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize().padding(vertical = 34.dp)) {
+            val gap = 12.dp.toPx(); val w = 18.dp.toPx(); val h = size.height
+            var y = ((rolled % gap) + gap) % gap
+            while (y < h) {
+                val edge = (minOf(y, h - y) / (h * .25f)).coerceIn(0f, 1f)
+                drawLine(t.muted.copy(alpha = (.15f + .35f * (if (active) 1f else .6f)) * edge), Offset(center.x - w / 2, y), Offset(center.x + w / 2, y), 1.6.dp.toPx(), StrokeCap.Round)
+                y += gap
+            }
+        }
+        Icon(Icons.Rounded.KeyboardArrowUp, null, tint = t.faint, modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp).size(20.dp))
+        Icon(Icons.Rounded.KeyboardArrowDown, null, tint = t.faint, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp).size(20.dp))
+    }
+}
+
+/** The keyboard: the field, focused so the phone's keyboard rises, and every key the phone's keyboard lacks. */
+@Composable private fun ColumnScope.KeyboardPane(input: InputLink, pcName: String) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { delay(280); runCatching { focus.requestFocus() } }
+    Typing(input, pcName, focus = focus)
+    SectionLabel("Keys")
+    Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) { Keys(input, wrap = true) }
 }
 
 @Composable private fun Pad(input: InputLink, modifier: Modifier) {
@@ -229,7 +373,7 @@ class InputLink(private val peer: String, private val internet: Boolean, private
     Box(modifier.fillMaxHeight().graphicsLayerScale(scale).glass(GlassShapes.inner, GlassLevel.Control, if (pressed) t.accent else Color.Unspecified)
         .semantics { contentDescription = label }
         .pointerInput(Unit) { detectTapGestures(onPress = { pressed = true; haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); onState(true); tryAwaitRelease(); pressed = false; onState(false) }) },
-        contentAlignment = Alignment.Center) { Text(label, style = Type.caption, color = if (pressed) t.text else t.muted) }
+        contentAlignment = Alignment.Center) { Text(label, style = Type.bodyStrong, color = if (pressed) t.text else t.muted) }
 }
 private fun Modifier.graphicsLayerScale(s: Float) = this.then(Modifier.graphicsLayer { scaleX = s; scaleY = s })
 
@@ -237,7 +381,7 @@ private fun Modifier.graphicsLayerScale(s: Float) = this.then(Modifier.graphicsL
 private class Key(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector? = null, val send: () -> Unit)
 
 /** The keys a phone keyboard doesn't have, and a few shortcuts. */
-@Composable fun Keys(input: Typist) {
+@Composable fun Keys(input: Typist, wrap: Boolean = false) {
     val t = LocalTokens.current; val haptics = LocalHapticFeedback.current
     val keys = listOf(
         Key("Esc") { input.key(Vk.ESCAPE) }, Key("Tab") { input.key(Vk.TAB) },
@@ -249,15 +393,16 @@ private class Key(val label: String, val icon: androidx.compose.ui.graphics.vect
         Key("Desktop") { input.key(0x44, Vk.WIN) }, Key("Home") { input.key(Vk.HOME) }, Key("End") { input.key(Vk.END) },
         Key("Page up") { input.key(Vk.PRIOR) }, Key("Page down") { input.key(Vk.NEXT) },
     )
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        keys.forEach { k ->
-            val icon = k.icon
-            if (icon == null) GlassChip(k.label) { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); k.send() }
-            else Box(Modifier.size(46.dp, 32.dp).glass(GlassShapes.capsule, GlassLevel.Control)
-                .clickable(role = androidx.compose.ui.semantics.Role.Button) { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); k.send() }
-                .semantics { contentDescription = k.label }, contentAlignment = Alignment.Center) { Icon(icon, null, tint = t.muted, modifier = Modifier.size(20.dp)) }
-        }
+    val key: @Composable (Key) -> Unit = { k ->
+        val icon = k.icon
+        if (icon == null) GlassChip(k.label, if (wrap) Modifier.heightIn(min = 40.dp) else Modifier) { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); k.send() }
+        else Box(Modifier.size(if (wrap) 52.dp else 46.dp, if (wrap) 40.dp else 32.dp).glass(GlassShapes.capsule, GlassLevel.Control)
+            .clickable(role = Role.Button) { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); k.send() }
+            .semantics { contentDescription = k.label }, contentAlignment = Alignment.Center) { Icon(icon, null, tint = t.muted, modifier = Modifier.size(20.dp)) }
     }
+    // 1.8: wrapped into rows on the keyboard page, a row that scrolls sideways elsewhere.
+    if (wrap) FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) { keys.forEach { key(it) } }
+    else Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { keys.forEach { key(it) } }
 }
 
 /** Typing goes straight to the PC: letters as they are typed, corrections as backspaces, Enter as Enter. */

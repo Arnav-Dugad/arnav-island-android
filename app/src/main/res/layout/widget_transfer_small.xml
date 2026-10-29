@@ -1,0 +1,20 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent">
+    <ImageView android:id="@+id/w_bg" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY"
+        android:src="@drawable/widget_glass" android:importantForAccessibility="no" />
+    <LinearLayout android:id="@+id/w_open" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="horizontal"
+        android:gravity="center_vertical" android:paddingStart="14dp" android:paddingEnd="14dp" android:paddingTop="6dp" android:paddingBottom="6dp">
+        <ImageView android:id="@+id/w_dir" android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_w_send" android:tint="#B3FFFFFF" android:importantForAccessibility="no" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="10dp" android:orientation="vertical">
+            <TextView android:id="@+id/w_where" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" android:text=""
+                android:textColor="#80FFFFFF" android:textSize="10sp" android:maxLines="1" />
+            <TextView android:id="@+id/w_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Holiday photos"
+                android:textColor="#FFFFFFFF" android:textSize="13sp" android:fontFamily="sans-serif-medium" android:maxLines="1" android:ellipsize="middle" />
+            <ProgressBar android:id="@+id/w_bar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="3dp" android:layout_marginTop="4dp"
+                android:indeterminate="false" android:max="1000" android:progress="420" android:progressDrawable="@drawable/widget_bar" />
+            <TextView android:id="@+id/w_detail" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="42%  ·  3.2 MB/s  ·  12 s left"
+                android:textColor="#B3FFFFFF" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <TextView android:id="@+id/w_more" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" android:text=""
+            android:textColor="#B3FFFFFF" android:textSize="10sp" android:maxLines="1" />
+    </LinearLayout>
+</FrameLayout>

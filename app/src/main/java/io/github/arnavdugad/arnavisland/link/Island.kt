@@ -45,6 +45,15 @@ data class CommandResults(val final: Boolean, val rows: List<CommandRow>)
 /** What running one did: 0 done, 1 needs a yes first ([message] asks), 2 failed, 3 the results changed. */
 data class CommandOutcome(val outcome: Int, val message: String)
 data class AudioOutput(val id: String, val name: String, val current: Boolean, val form: Int)
+/** Revision 9: shuffle and repeat (0 off, 1 one, 2 all) as the PC's player reports them, and what plays next (the island's own player only). */
+data class Playback(val shuffleKnown: Boolean, val shuffle: Boolean, val repeatKnown: Boolean, val islandPlayer: Boolean, val repeat: Int, val upNext: List<UpNext>)
+data class UpNext(val title: String, val artist: String, val duration: Double)
+/** Revision 9: an app making sound on the PC: its volume and its level now (0..100), and a small PNG of its icon when asked. */
+class MixerApp(val pid: Long, val name: String, val volume: Int, val peak: Int, val muted: Boolean, val system: Boolean, val active: Boolean, val icon: ByteArray?)
+/** Revision 9: how loud the PC plays (0..1) and its spectrum, low to high (0..1 each). */
+class Levels(val level: Float, val resting: Boolean, val bands: List<Float>)
+/** Revision 9: one of the PC's network adapters: its hardware address, name, IPv4 address and prefix length. */
+class Adapter(val mac: ByteArray, val name: String, val ipv4: String, val prefix: Int)
 
 object IslandWire {
     // The island's controls (remoteControls), and its CommandKind numbers the phone draws icons for.
@@ -112,4 +121,25 @@ object IslandWire {
         return List(r.u8() ?: return null) { AudioOutput(r.string(2048) ?: return null, r.string(1024) ?: return null, (r.u8() ?: return null) != 0, r.i8() ?: return null) }
     }
     fun value(p: ByteArray): Int? = Reader(p).i32()
+    fun playback(p: ByteArray): Playback? {
+        val r = Reader(p); if (r.u8() != 1) return null; val flags = r.u8() ?: return null; val repeat = r.u8() ?: return null
+        val next = List(r.u16() ?: return null) { UpNext(r.string(4096) ?: return null, r.string(4096) ?: return null, r.f64() ?: return null) }
+        return Playback(flags and 1 != 0, flags and 2 != 0, flags and 4 != 0, flags and 8 != 0, repeat, next)
+    }
+    fun mixer(p: ByteArray): List<MixerApp>? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        return List(r.u8() ?: return null) {
+            val pid = r.u32() ?: return null; val name = r.string(2048) ?: return null; val volume = r.u8() ?: return null; val peak = r.u8() ?: return null; val flags = r.u8() ?: return null
+            val icon = r.blob(64 * 1024) ?: return null
+            MixerApp(pid, name, volume.coerceIn(0, 100), peak.coerceIn(0, 100), flags and 1 != 0, flags and 2 != 0, flags and 4 != 0, icon.takeIf { it.isNotEmpty() })
+        }
+    }
+    fun levels(p: ByteArray): Levels? {
+        val r = Reader(p); if (r.u8() != 1) return null; val level = r.u8() ?: return null; val resting = (r.u8() ?: return null) != 0
+        return Levels(level / 255f, resting, List(r.u8() ?: return null) { (r.u8() ?: return null) / 255f })
+    }
+    fun machine(p: ByteArray): List<Adapter>? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        return List(r.u8() ?: return null) { Adapter(r.bytes(6) ?: return null, r.string(1024) ?: return null, r.string(64) ?: return null, r.u8() ?: return null) }
+    }
 }

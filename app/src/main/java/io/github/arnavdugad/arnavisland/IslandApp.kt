@@ -6,5 +6,6 @@ class IslandApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Hub.init(this); Notify.channels(this); Updates.init(this); Updates.schedule(this)
+        WidgetFeeds.start(this)
     }
 }

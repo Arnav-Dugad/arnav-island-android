@@ -72,6 +72,8 @@ class LinkService : Service() {
                 val pc = Hub.pc()
                 PcMedia.update(this@LinkService, pc, s)
                 PcWidgets.refresh(this@LinkService)
+                // 1.8: the song as a live update (Android 16).
+                LiveUpdates.song(this@LinkService, pc, s)
             }
         }
         // While the app isn't on screen, the PC's status is asked here (for the player and the widgets): often while
@@ -81,7 +83,7 @@ class LinkService : Service() {
             while (isActive) {
                 var wait = 15_000L
                 val pc = Hub.pc()
-                val wanted = PcMedia.enabled() || PcWidgets.any(this@LinkService)
+                val wanted = PcMedia.enabled() || PcWidgets.any(this@LinkService) || LiveUpdates.songOn()
                 if (Hub.visible) wait = 4_000L
                 else if (wanted && pc != null && pc.online && pc.remote) {
                     val s = Hub.refreshStatus(); val lit = power?.isInteractive != false
@@ -100,6 +102,19 @@ class LinkService : Service() {
                 delay(if (wanted) 5_000L else 20_000L)
             }
         }
+        // 1.8: transfers as a live update, at most about twice a second.
+        jobs += Hub.scope.launch {
+            combine(Hub.transfers, Hub.queue) { m, q -> m to q.size }.collectLatest { (m, waiting) -> LiveUpdates.transfers(this@LinkService, m, waiting); delay(500) }
+        }
+        // 1.8: the PC's alerts: its numbers every 20 s while any alert is on (the Island tab reads them itself while it shows).
+        jobs += Hub.scope.launch {
+            var lastRead = 0L
+            launch { Hub.pcStats.collect { lastRead = System.currentTimeMillis() } }
+            while (isActive) {
+                if (Alerts.any() && Hub.islandReady() && System.currentTimeMillis() - lastRead > 15_000) Hub.refreshStats()
+                delay(20_000)
+            }
+        }
         // The phone's details, when they change (checked each minute).
         jobs += Hub.scope.launch { while (isActive) { delay(60_000); Hub.sendDetails() } }
     }
@@ -110,6 +125,7 @@ class LinkService : Service() {
             DECLINE -> Hub.offers.value.firstOrNull { it.transfer == transfer }?.let { Hub.answer(it, false) }
             NOT_NOW -> Hub.music.value?.takeIf { it.transfer == transfer }?.let { Hub.answerMusic(it, false) }
             STOP_RING -> Ringer.stop(this)
+            PAUSE -> Hub.pause(transfer, true); RESUME -> Hub.pause(transfer, false); CANCEL -> Hub.cancel(transfer)
             STOP -> { stopSelf(); return START_NOT_STICKY }
         }
         return if (Hub.prefs.getBoolean("reachable", true)) START_STICKY else START_NOT_STICKY
@@ -118,11 +134,13 @@ class LinkService : Service() {
         jobs.forEach { it.cancel() }; jobs.clear()
         runCatching { unregisterReceiver(battery) }; runCatching { unregisterReceiver(hotspot) }; runCatching { multicast?.release() }
         network?.let { cb -> runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(cb) } }
-        PcMedia.clear(this)
+        PcMedia.clear(this); LiveUpdates.transfers(this, emptyMap(), 0); LiveUpdates.song(this, null, null)
         Hub.stop(); super.onDestroy()
     }
     companion object {
         const val ACCEPT = "accept"; const val DECLINE = "decline"; const val PLAY_HERE = "play"; const val NOT_NOW = "notnow"; const val STOP_RING = "stopring"; const val STOP = "stop"
+        /** 1.8: a transfer's live update's buttons. */
+        const val PAUSE = "pause"; const val RESUME = "resume"; const val CANCEL = "cancel"
         /** Starts the link (from the app on screen, or at boot); a no-op when Android refuses a start from the background. */
         fun start(context: Context) { runCatching { ContextCompat.startForegroundService(context, Intent(context, LinkService::class.java)) } }
         fun stop(context: Context) { runCatching { context.stopService(Intent(context, LinkService::class.java)) } }

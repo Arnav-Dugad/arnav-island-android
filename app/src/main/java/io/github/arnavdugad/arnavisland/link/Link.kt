@@ -53,7 +53,7 @@ class Link(
         fun timeout(ms: Int) { socket.soTimeout = ms }
         fun close() = runCatching { socket.close() }
     }
-    private class Live(@Volatile var socket: Socket? = null) { val stop = AtomicBoolean(false) }
+    private class Live(@Volatile var socket: Socket? = null) { val stop = AtomicBoolean(false); val paused = AtomicBoolean(false) }
 
     var displayName = cleanName(name)
     private var id = ByteArray(0)
@@ -466,6 +466,19 @@ class Link(
     private fun stopped(t: Int) = live[t]?.stop?.get() ?: true
     private fun finish(t: Int) { live.remove(t); decisions.remove(t) }
     fun cancel(transfer: Int) { live[transfer]?.let { it.stop.set(true); decisions[transfer]?.complete(0); runCatching { it.socket?.close() } } }
+    /** 1.8: holds a transfer where it is (true) or lets it carry on. A send to a revision-9 PC keeps the connection with a
+     * hold frame every few seconds; one coming here simply isn't read meanwhile (the PC waits up to ten minutes). */
+    fun pause(transfer: Int, paused: Boolean) { live[transfer]?.paused?.set(paused) }
+    fun paused(transfer: Int) = live[transfer]?.paused?.get() == true
+    /** Waits while [transfer] is paused (until it's resumed or stopped), calling [hold] every 9 s meanwhile. */
+    private fun waitWhilePaused(transfer: Int, hold: (() -> Boolean)? = null): Boolean {
+        var held = System.currentTimeMillis()
+        while (live[transfer]?.paused?.get() == true && !stopped(transfer)) {
+            Thread.sleep(150); val now = System.currentTimeMillis()
+            if (hold != null && now - held >= 9_000) { if (!hold()) return false; held = now }
+        }
+        return !stopped(transfer)
+    }
 
     // ---- progress ----
     private inner class Progress(val transfer: Int, val peer: String, val name: String, val title: String, val total: Long, val outgoing: Boolean) {
@@ -508,14 +521,15 @@ class Link(
         if (reply[0].toInt() != 1) return "$name declined it"
         c.timeout(30_000)
         val progress = Progress(transfer, peer, name, title, total, true)
-        for (item in items) if (!streamFile(c, ss, item, progress, transfer)) return if (stopped(transfer)) "You stopped it" else "The transfer to $name didn't finish"
+        val hold = (target(peer).first?.revision ?: 0) >= 9
+        for (item in items) if (!streamFile(c, ss, item, progress, transfer, hold)) return if (stopped(transfer)) "You stopped it" else "The transfer to $name didn't finish"
         c.timeout(60_000)
         val ack = if (sealed(c, ss, byteArrayOf(Proto.FRAME_BATCH_END.toByte()))) opened(c, ss) else null
         if (ack == null || ack.size != 1 || ack[0].toInt() != 1) return "The transfer to $name didn't finish"
         return null
     }
     /** One file into the sealed stream: its header, its data in chunks, then its size and SHA-256. */
-    private fun streamFile(c: Conn, ss: Session, item: Source, progress: Progress, transfer: Int): Boolean {
+    private fun streamFile(c: Conn, ss: Session, item: Source, progress: Progress, transfer: Int, hold: Boolean = false): Boolean {
         if (!sealed(c, ss, Bytes().u8(Proto.FRAME_HEADER).u64(item.size).text(item.rel).build())) return false
         val hash = MessageDigest.getInstance("SHA-256"); var done = 0L
         val ok = runCatching {
@@ -523,6 +537,8 @@ class Link(
                 val buffer = ByteArray(Proto.CHUNK)
                 while (done < item.size) {
                     if (stopped(transfer)) return@use false
+                    // 1.8: paused: a revision-9 PC hears a hold frame now and then, so it keeps waiting.
+                    if (paused(transfer) && !waitWhilePaused(transfer, if (hold) ({ sealed(c, ss, byteArrayOf(Proto.FRAME_HOLD.toByte())) }) else null)) return@use false
                     val want = minOf(Proto.CHUNK.toLong(), item.size - done).toInt(); var got = 0
                     while (got < want) { val n = input.read(buffer, got, want - got); if (n < 0) break; got += n }
                     if (got != want) return@use false
@@ -602,6 +618,7 @@ class Link(
         val hash = MessageDigest.getInstance("SHA-256"); var got = 0L; var done = false
         try {
             while (!stopped(transfer)) {
+                if (paused(transfer) && !waitWhilePaused(transfer)) break
                 val f = opened(c, ss) ?: break; if (f.isEmpty()) break
                 when {
                     f[0].toInt() == Proto.FRAME_DATA -> { val n = f.size - 1; if (got + n > size) break; sink.out.write(f, 1, n); hash.update(f, 1, n); got += n; progress.add(n.toLong()) }
@@ -766,6 +783,17 @@ class Link(
     fun closeIsland(peer: String): Boolean = ask(peer, Proto.CMD_ISLAND, byteArrayOf(1)) != null
     /** Revision 6: the PC's battery in full (the island keeps reading it quickly while this phone asks, and for 12 s after). */
     fun battery(peer: String): PcBattery? = ask(peer, Proto.CMD_BATTERY)?.let { IslandWire.battery(it) }
+    // ---- revision 9 (island 0.26) ----
+    /** Shuffle, repeat and what plays next: read ([op] 0), or changed (1 shuffle, 2 repeat, 3 play an up-next item) with [arg]. */
+    fun playback(peer: String, op: Int = 0, arg: ByteArray = ByteArray(0)): Playback? = ask(peer, Proto.CMD_PLAYBACK, Bytes().u8(op).raw(arg).build())?.let { IslandWire.playback(it) }
+    /** The PC's apps making sound, each with its own volume: read (with their icons when [icons]). */
+    fun mixer(peer: String, icons: Boolean): List<MixerApp>? = ask(peer, Proto.CMD_MIXER, byteArrayOf(0, if (icons) 1 else 0))?.let { IslandWire.mixer(it) }
+    fun mixerVolume(peer: String, pid: Long, percent: Int): List<MixerApp>? = ask(peer, Proto.CMD_MIXER, Bytes().u8(1).u32(pid).u8(percent.coerceIn(0, 100)).build())?.let { IslandWire.mixer(it) }
+    fun mixerMute(peer: String, pid: Long, muted: Boolean): List<MixerApp>? = ask(peer, Proto.CMD_MIXER, Bytes().u8(2).u32(pid).u8(if (muted) 1 else 0).build())?.let { IslandWire.mixer(it) }
+    /** How loud the PC plays right now, and its spectrum (the PC listens only while this phone asks). */
+    fun levels(peer: String): Levels? = ask(peer, Proto.CMD_LEVELS)?.let { IslandWire.levels(it) }
+    /** The PC's network adapters (their hardware addresses), for waking it from this phone. */
+    fun machine(peer: String): List<Adapter>? = ask(peer, Proto.CMD_MACHINE)?.let { IslandWire.machine(it) }
 
     // ---- revision 4: connections kept for more ----
     /** A remote (or notices) connection kept open, the path it went by (3 this network, 2 direct, 1 relay) and when last used. */

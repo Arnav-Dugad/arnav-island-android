@@ -1,0 +1,20 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent">
+    <ImageView android:id="@+id/w_bg" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY"
+        android:src="@drawable/widget_you" android:importantForAccessibility="no" />
+    <LinearLayout android:id="@+id/w_open" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical"
+        android:gravity="center_vertical" android:padding="14dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:id="@+id/w_dir" android:layout_width="12dp" android:layout_height="12dp" android:src="@drawable/ic_w_send" android:tint="@color/widget_you_accent" android:importantForAccessibility="no" />
+            <TextView android:id="@+id/w_where" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="6dp" android:text="SENDING TO STUDIO PC"
+                android:textColor="@color/widget_you_accent" android:textSize="10sp" android:letterSpacing="0.06" android:maxLines="1" android:ellipsize="end" android:textStyle="bold" />
+            <TextView android:id="@+id/w_more" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="and 2 more"
+                android:textColor="@color/widget_you_muted" android:textSize="10.5sp" android:maxLines="1" />
+        </LinearLayout>
+        <TextView android:id="@+id/w_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Holiday photos"
+            android:textColor="@color/widget_you_text" android:textSize="15sp" android:fontFamily="sans-serif-medium" android:maxLines="1" android:ellipsize="middle" />
+        <ProgressBar android:id="@+id/w_bar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="5dp" android:layout_marginTop="8dp"
+            android:indeterminate="false" android:max="1000" android:progress="420" android:progressDrawable="@drawable/widget_you_bar" />
+        <TextView android:id="@+id/w_detail" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="42%  ·  3.2 MB/s  ·  12 s left"
+            android:textColor="@color/widget_you_muted" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" />
+    </LinearLayout>
+</FrameLayout>

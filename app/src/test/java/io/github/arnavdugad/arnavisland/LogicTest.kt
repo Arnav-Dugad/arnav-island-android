@@ -65,10 +65,27 @@ class LogicTest {
         assertEquals(0, detent(0f)); assertEquals(20, detent(1f)); assertEquals(10, detent(.5f)); assertEquals(1, detent(.049f)); assertEquals(20, detent(1.3f))
     }
 
-    @Test fun the_sky_is_read_from_the_island_words() {
-        assertEquals(Sky.Rain, skyOf("14° Rain")); assertEquals(Sky.Drizzle, skyOf("9° Drizzle")); assertEquals(Sky.Storm, skyOf("21° Thunderstorm"))
-        assertEquals(Sky.Snow, skyOf("-2° Snow")); assertEquals(Sky.Fog, skyOf("5° Fog")); assertEquals(Sky.None, skyOf("18° Partly cloudy"))
-        assertEquals(Sky.None, skyOf("")); assertEquals(Sky.None, skyOf("25° Clear"))
+    @Test fun a_wake_packet_is_ff_then_the_address_sixteen_times() {
+        val mac = byteArrayOf(0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E)
+        val p = Wake.magic(mac)
+        assertEquals(102, p.size); for (i in 0 until 6) assertEquals(0xFF.toByte(), p[i])
+        for (k in 0 until 16) for (i in 0 until 6) assertEquals(mac[i], p[6 + k * 6 + i])
+        assertEquals("192.168.1.255", Wake.subnetBroadcast("192.168.1.20", 24)); assertEquals("10.0.15.255", Wake.subnetBroadcast("10.0.12.7", 22))
+        assertEquals(null, Wake.subnetBroadcast("nonsense", 24)); assertEquals(null, Wake.subnetBroadcast("10.0.0.1", 32))
+    }
+
+    @Test fun revision_nine_answers_are_read() {
+        val b = io.github.arnavdugad.arnavisland.link.Bytes()
+        val pb = io.github.arnavdugad.arnavisland.link.IslandWire.playback(b.u8(1).u8(1 or 2 or 4 or 8).u8(2).u16(1).string("Song").string("Artist").f64(201.5).build())!!
+        assertEquals(true, pb.shuffleKnown); assertEquals(true, pb.shuffle); assertEquals(2, pb.repeat); assertEquals(true, pb.islandPlayer); assertEquals("Song", pb.upNext.single().title); assertEquals(201.5, pb.upNext.single().duration, 1e-9)
+        val apps = io.github.arnavdugad.arnavisland.link.IslandWire.mixer(io.github.arnavdugad.arnavisland.link.Bytes().u8(1).u8(1).u32(4242).string("Spotify").u8(60).u8(33).u8(1 or 4).blob(ByteArray(0)).build())!!
+        assertEquals(4242L, apps.single().pid); assertEquals(60, apps.single().volume); assertEquals(true, apps.single().muted); assertEquals(true, apps.single().active); assertEquals(null, apps.single().icon)
+        val levels = io.github.arnavdugad.arnavisland.link.IslandWire.levels(io.github.arnavdugad.arnavisland.link.Bytes().u8(1).u8(255).u8(0).u8(2).u8(0).u8(255).build())!!
+        assertEquals(1f, levels.level, 1e-6f); assertEquals(false, levels.resting); assertEquals(listOf(0f, 1f), levels.bands)
+        val nics = io.github.arnavdugad.arnavisland.link.IslandWire.machine(io.github.arnavdugad.arnavisland.link.Bytes().u8(1).u8(1).raw(byteArrayOf(1, 2, 3, 4, 5, 6)).string("Ethernet").string("192.168.1.9").u8(24).build())!!
+        assertEquals("Ethernet", nics.single().name); assertEquals(24, nics.single().prefix)
+        // A cut-short answer reads as nothing rather than as garbage.
+        assertEquals(null, io.github.arnavdugad.arnavisland.link.IslandWire.playback(byteArrayOf(1, 3)))
     }
 
     @Test fun the_ring_screen_beats_with_the_vibration() {

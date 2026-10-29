@@ -30,6 +30,11 @@
     <!-- Scanning the island's pairing QR code, only while the scanner shows; nothing it sees is kept. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- 1.8: this phone as a PC's webcam and microphone, only while you turn them on (a notification shows while they are). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!-- The camera app, for a photo taken for a PC's Shelf. -->
     <queries>
@@ -125,6 +130,15 @@
             android:name=".PhoneScreenService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+        <!-- 1.8: this phone as a PC's webcam and microphone. -->
+        <service
+            android:name=".PhoneCameraService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
+        <service
+            android:name=".PhoneMicService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
         <service
             android:name=".ControlService"
             android:exported="true"
@@ -175,6 +189,34 @@
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_focus_info" />
         </receiver>
+        <!-- 1.8: the lyrics, both batteries and transfers widgets. -->
+        <receiver android:name=".LyricsWidget" android:exported="false" android:label="@string/widget_lyrics_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_lyrics_info" />
+        </receiver>
+        <receiver android:name=".BatteriesWidget" android:exported="false" android:label="@string/widget_batteries_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_batteries_info" />
+        </receiver>
+        <receiver android:name=".TransferWidget" android:exported="false" android:label="@string/widget_transfer_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_transfer_info" />
+        </receiver>
+        <!-- 1.8: the app's ambient light as a live wallpaper. -->
+        <service
+            android:name=".AmbientWallpaper"
+            android:exported="true"
+            android:label="@string/wallpaper_label"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter><action android:name="android.service.wallpaper.WallpaperService" /></intent-filter>
+            <meta-data android:name="android.service.wallpaper" android:resource="@xml/ambient_wallpaper" />
+        </service>
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

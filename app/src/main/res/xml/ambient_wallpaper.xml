@@ -1,0 +1,5 @@
+<!-- 1.8: the app's ambient light as a live wallpaper, in the colours of what plays on your PC. -->
+<wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
+    android:thumbnail="@drawable/wallpaper_ambient_thumb"
+    android:description="@string/wallpaper_description"
+    android:author="@string/app_name" />

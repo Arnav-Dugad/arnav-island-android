@@ -56,6 +56,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private val share = mutableStateOf<ShareRequest?>(null)
@@ -94,6 +95,17 @@ class MainActivity : ComponentActivity() {
     override fun onResume() { super.onResume(); Hub.visible = true; Hub.sendBattery(); runCatching { window.addOnFrameMetricsAvailableListener(frameMetrics, android.os.Handler(metricsThread.looper)) } }
     override fun onPause() { Hub.visible = false; runCatching { window.removeOnFrameMetricsAvailableListener(frameMetrics) }; super.onPause() }
     override fun onStop() { super.onStop(); if (!Hub.prefs.getBoolean("reachable", true) && !isChangingConfigurations) LinkService.stop(this) }
+    /** 1.8: the volume keys go to whoever has asked for them (the PC's sound on the Remote, slides in the presenter). */
+    private var volumeTaken = false
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val up = event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP
+        if (up || event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN) {
+            val handler = VolumeKeys.handler
+            if (event.action == android.view.KeyEvent.ACTION_DOWN && handler != null) { volumeTaken = handler(up); if (volumeTaken) return true }
+            else if (event.action == android.view.KeyEvent.ACTION_UP && volumeTaken) { volumeTaken = false; return true }
+        }
+        return super.dispatchKeyEvent(event)
+    }
     /** Android lets the app read the clipboard only while it has the focus: a new copy goes to the PC now (universal clipboard, or Paste on PC). */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
@@ -166,12 +178,32 @@ private fun newPhoto(context: Context): Uri {
     return FileProvider.getUriForFile(context, "${context.packageName}.files", file)
 }
 
+/** The app's look: the theme (0 automatic, 1 dark, 2 light) and whether the glass is on. */
+data class Look(val appearance: Int, val glass: Boolean)
+
+/**
+ * 1.8: the sheets the whole app shares, drawn over every tab and the tab bar: Settings, a PC's details, its connection,
+ * the alerts, the presenter, and the rest. Any screen opens one by setting it here.
+ */
+object Ui {
+    var settings by mutableStateOf(false); var pc by mutableStateOf<String?>(null); var connection by mutableStateOf<String?>(null)
+    var alerts by mutableStateOf(false); var presenter by mutableStateOf(false); var updates by mutableStateOf(false); var hotspot by mutableStateOf(false)
+    var link by mutableStateOf(false); var trackpad by mutableStateOf<Int?>(null); var song by mutableStateOf<Song?>(null); var upNext by mutableStateOf(false)
+    var pairing by mutableStateOf(false); var pairStart by mutableIntStateOf(PAIR_NEARBY)
+    fun pair(start: Int = PAIR_NEARBY) { pairStart = start; pairing = true }
+}
+
 @Composable private fun App(share: ShareRequest?, onShareDone: () -> Unit, opened: String?, onOpened: () -> Unit, link: io.github.arnavdugad.arnavisland.link.PairLink?, onLinkDone: () -> Unit, onDark: (Boolean) -> Unit) {
     val context = LocalContext.current
-    var look by remember { mutableStateOf(Look(Hub.prefs.getInt("appearance", 0), Hub.prefs.getBoolean("glass", true), Hub.prefs.getBoolean("weatherGlass", true))) }
+    var look by remember { mutableStateOf(Look(Hub.prefs.getInt("appearance", 0), Hub.prefs.getBoolean("glass", true))) }
     val dark = when (look.appearance) { 1 -> true; 2 -> false; else -> isSystemInDarkTheme() }
     LaunchedEffect(dark) { onDark(dark) }
-    val reduced = remember { runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false) }
+    // Android's "Remove animations", read again whenever the app comes back.
+    var reduced by remember { mutableStateOf(false) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        reduced = runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
+        onPauseOrDispose { }
+    }
     val saver = rememberPowerSave()
     val peers by Hub.peers.collectAsState(); val selected by Hub.selected.collectAsState()
     // 1.7: your PCs in Android's share sheet, kept to the paired ones and their names.
@@ -190,8 +222,8 @@ private fun newPhoto(context: Context): Uri {
     val coverKey = status?.coverHash?.contentHashCode() ?: 0
     val cover = remember(coverKey, status?.cover != null) { status?.cover?.let { Art.bitmap(it, 720) } }
     val art = remember(cover) { cover?.let { Art.colors(it) } }
-    val accent by animateColorAsState(art?.let { Color(it.vivid) } ?: Mint, tween(900), label = "Accent")
-    val accent2 by animateColorAsState(art?.let { Color(it.second) } ?: Periwinkle, tween(900), label = "Accent2")
+    val accent by animateColorAsState(art?.let { Color(it.vivid) } ?: SystemBlue, tween(900), label = "Accent")
+    val accent2 by animateColorAsState(art?.let { Color(it.second) } ?: SystemIndigo, tween(900), label = "Accent2")
     val deep by animateColorAsState(art?.let { Color(it.deep) } ?: Color(0xFF0B1220), tween(900), label = "Deep")
     val tokens = tokens(dark, accent, accent2, deep)
     // Without the glass, nothing follows the tilt: the sensor stays off.
@@ -213,19 +245,12 @@ private fun newPhoto(context: Context): Uri {
         Updates.check()
     }
 
-    var pairing by remember { mutableStateOf(false) }
-    var pairStart by remember { mutableIntStateOf(PAIR_NEARBY) }
-    var linkOpen by remember { mutableStateOf(false) }
-    var updatesOpen by remember { mutableStateOf(false) }
-    var trackpadOpen by remember { mutableStateOf(false) }
-    var islandOpen by remember { mutableStateOf(false) }
-    var hotspotOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val tabs = listOf(TabItem("Remote", Icons.Rounded.Laptop), TabItem("Island", Icons.Rounded.Dashboard), TabItem("Send", Icons.AutoMirrored.Rounded.Send), TabItem("Shelf", Icons.Rounded.Inventory2), TabItem("Devices", Icons.Rounded.Devices))
+    val tabs = listOf(TabItem("Remote", Icons.Rounded.PlayCircle), TabItem("Island", Icons.Rounded.SpaceDashboard), TabItem("Send", Icons.AutoMirrored.Rounded.Send), TabItem("Shelf", Icons.Rounded.Inventory2), TabItem("Devices", Icons.Rounded.Devices))
     val pager = rememberPagerState { tabs.size }
-    LaunchedEffect(pairCode) { if (pairCode != null) pairing = true }
-    LaunchedEffect(link) { if (link != null) { Hub.pairWithCode(link.code, link.key); pairStart = PAIR_FINDING; pairing = true; onLinkDone() } }
-    LaunchedEffect(status?.available) { if (status?.available != true) islandOpen = false }
+    val bars = remember { List(tabs.size) { TopBar() } }
+    LaunchedEffect(pairCode) { if (pairCode != null) Ui.pairing = true }
+    LaunchedEffect(link) { if (link != null) { Hub.pairWithCode(link.code, link.key); Ui.pair(PAIR_FINDING); onLinkDone() } }
 
     // A photo for a PC's Shelf: the camera app takes it, then it goes.
     var photo by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Uri?>(null) }
@@ -236,32 +261,32 @@ private fun newPhoto(context: Context): Uri {
         if (ok) shoot() else { Hub.photoFor = null; Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "The camera isn’t allowed", "Allow it in Settings › Apps › Arnav Island › Permissions")) }
     }
     fun takePhoto() {
-        if (pc == null && Hub.photoFor == null) { pairing = true; return }
+        if (pc == null && Hub.photoFor == null) { Ui.pair(); return }
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) cameraAllowed.launch(Manifest.permission.CAMERA) else shoot()
     }
     val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { uris -> pc?.let { Hub.send(it.id, uris) } }
     fun open(what: String) {
         when (what) {
-            "pair" -> { pairStart = PAIR_NEARBY; pairing = true }; "pair_code" -> { pairStart = PAIR_TYPE; pairing = true }; "pair_scan" -> { pairStart = PAIR_SCAN; pairing = true }
-            "updates" -> updatesOpen = true; "music_play" -> Hub.music.value?.let { Hub.answerMusic(it, true, context) }
-            "camera" -> takePhoto(); "trackpad" -> if (pc != null) trackpadOpen = true else pairing = true
-            "findpc" -> scope.launch { Hub.ringPc() }; "island" -> scope.launch { pager.animateScrollToPage(PAGE_ISLAND) }
-            "send_photos" -> if (pc != null) pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) else pairing = true
+            "pair" -> Ui.pair(); "pair_code" -> Ui.pair(PAIR_TYPE); "pair_scan" -> Ui.pair(PAIR_SCAN)
+            "updates" -> Ui.updates = true; "music_play" -> Hub.music.value?.let { Hub.answerMusic(it, true, context) }
+            "camera" -> takePhoto(); "trackpad" -> if (pc != null) Ui.trackpad = TRACKPAD_PAD else Ui.pair()
+            "findpc" -> scope.launch { Hub.ringPc() }
+            "island" -> scope.launch { pager.animateScrollToPage(PAGE_ISLAND) }; "remote" -> scope.launch { pager.animateScrollToPage(0) }
+            "send" -> scope.launch { pager.animateScrollToPage(PAGE_SEND) }
+            "send_photos" -> if (pc != null) pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) else Ui.pair()
         }
     }
     LaunchedEffect(opened) { if (opened != null) { open(opened); onOpened() } }
     val openNow by rememberUpdatedState<(String) -> Unit> { what -> open(what) }
     LaunchedEffect(Unit) { Hub.requests.collect { openNow(it) } }
-    val banner by rememberBanner()
+    val banner = rememberBanner()
 
     CompositionLocalProvider(LocalTokens provides tokens, LocalReduced provides reduced, LocalTilt provides { tilt.value }, LocalGlassOn provides look.glass) {
         MaterialTheme(colorScheme = if (dark) darkColorScheme(primary = accent) else lightColorScheme(primary = accent)) {
             val ambient = rememberLayerBackdrop(); val screen = rememberLayerBackdrop()
             val floating = remember(ambient, screen) { GlassBackdrops(ambient, screen) }
             val content = remember(ambient) { GlassBackdrops(ambient, ambient) }
-            BoxWithConstraints(Modifier.fillMaxSize()) {
-                val density = LocalDensity.current
-                val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding(); val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            Box(Modifier.fillMaxSize()) {
                 // 1.7: a finger on the screen (and a fling's settling after) holds the ambient light still.
                 val touchScope = rememberCoroutineScope(); var release by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
                 Box(Modifier.fillMaxSize().layerBackdrop(screen).pointerInput(Unit) {
@@ -276,52 +301,46 @@ private fun newPhoto(context: Context): Uri {
                     AmbientBackground(tokens.accent, tokens.accent2, tokens.deep, status?.playing == true, Modifier.layerBackdrop(ambient), still = saver)
                     CompositionLocalProvider(LocalGlass provides content) {
                         val insets = WindowInsets.systemBars.asPaddingValues()
-                        val padding = PaddingValues(top = insets.calculateTopPadding() + 58.dp, bottom = insets.calculateBottomPadding() + if (playingHere != null) 180.dp else 104.dp)
+                        val padding = PaddingValues(top = insets.calculateTopPadding() + NavBarHeight, bottom = insets.calculateBottomPadding() + if (playingHere != null) 172.dp else 100.dp)
                         HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
                             when (page) {
-                                0 -> RemoteScreen(pc, status, statusError, cover, lyrics, { pairing = true }, { linkOpen = true }, { trackpadOpen = true }, padding)
-                                PAGE_ISLAND -> IslandScreen(pc, pager.currentPage == PAGE_ISLAND, { pairing = true }, padding)
-                                PAGE_SEND -> SendScreen(pc, peers, transfers, moments, { takePhoto() }, { pairing = true }, padding)
-                                PAGE_SHELF -> ShelfScreen(pc, transfers, pager.currentPage == PAGE_SHELF, { pairing = true }, padding)
-                                else -> DevicesScreen(peers, pc, running, failure, internet, look, { next ->
-                                    look = next; Hub.prefs.edit().putInt("appearance", next.appearance).putBoolean("glass", next.glass).putBoolean("weatherGlass", next.weather).apply()
-                                }, { pairStart = PAIR_NEARBY; pairing = true }, { pairStart = PAIR_SCAN; pairing = true }, { updatesOpen = true }, { hotspotOpen = true }, padding)
+                                0 -> RemoteScreen(pc, status, statusError, cover, lyrics, bars[0], pager.currentPage == 0 && !Ui.presenter && Ui.trackpad == null, padding)
+                                PAGE_ISLAND -> IslandScreen(pc, pager.currentPage == PAGE_ISLAND, bars[PAGE_ISLAND], padding)
+                                PAGE_SEND -> SendScreen(pc, peers, transfers, moments, bars[PAGE_SEND], { takePhoto() }, padding)
+                                PAGE_SHELF -> ShelfScreen(pc, transfers, pager.currentPage == PAGE_SHELF, bars[PAGE_SHELF], padding)
+                                else -> DevicesScreen(peers, pc, running, failure, internet, bars[4], padding)
                             }
                         }
                     }
                 }
-                // Content fades out under the status bar and the island, as it scrolls up.
-                Box(Modifier.fillMaxWidth().height(top + 64.dp)
-                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(tokens.deep.copy(alpha = if (dark) .92f else .8f).compositeOverBlack(dark), Color.Transparent))))
-                // The weather where the PC is, on the glass; and files in flight, between this phone's island and the PC.
-                if (look.weather) WeatherGlass(skyOf(status?.weather.orEmpty()))
-                val h = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
-                HandoffParticles(transfers, Offset(.5f, with(density) { (top + 27.dp).toPx() } / h), Offset(.5f, with(density) { (maxHeight - bottom - 130.dp).toPx() } / h))
                 CompositionLocalProvider(LocalGlass provides floating) {
-                    // The island opened: a tap anywhere else (or back) folds it away.
-                    if (islandOpen) {
-                        Box(Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null) { islandOpen = false })
-                        BackHandler { islandOpen = false }
-                    }
-                    MiniIsland(status, cover, pc?.name, pc?.online == true, banner, transfers.values.maxByOrNull { it.id },
-                        { if (islandOpen) islandOpen = false else if (status?.available == true && banner == null) islandOpen = true else scope.launch { pager.animateScrollToPage(if (transfers.isNotEmpty()) PAGE_SEND else 0) } },
-                        Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp, start = 16.dp, end = 16.dp), expanded = islandOpen, internet = pc?.internet == true, quality = pc?.let { quality(it) })
+                    // The navigation bar of the page in view (the nearer one while swiping between two).
+                    NavBar(bars[(pager.currentPage + pager.currentPageOffsetFraction).roundToInt().coerceIn(0, tabs.lastIndex)], Modifier.align(Alignment.TopCenter))
                     GlassTabBar(tabs, pager.currentPage + pager.currentPageOffsetFraction, { scope.launch { pager.animateScrollToPage(it) } },
-                        Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 22.dp, vertical = 14.dp).widthIn(max = 460.dp).fillMaxWidth())
+                        Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp).widthIn(max = 460.dp).fillMaxWidth())
                     androidx.compose.animation.AnimatedVisibility(playingHere != null, Modifier.align(Alignment.BottomCenter),
                         enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut()) {
-                        playingHere?.let { PlayingHere(it, Modifier.navigationBarsPadding().padding(start = 22.dp, end = 22.dp, bottom = 92.dp).widthIn(max = 460.dp).fillMaxWidth()) }
+                        playingHere?.let { PlayingHere(it, Modifier.navigationBarsPadding().padding(start = 20.dp, end = 20.dp, bottom = 88.dp).widthIn(max = 460.dp).fillMaxWidth()) }
                     }
-                    PairSheet(pairing, peers, pairCode, pairResult, { pairing = false }, start = pairStart)
+                    PairSheet(Ui.pairing, peers, pairCode, pairResult, { Ui.pairing = false }, start = Ui.pairStart)
                     OfferSheet(offers.firstOrNull())
                     MusicSheet(music, transfers)
-                    LinkSheet(linkOpen, pc) { linkOpen = false }
-                    TrackpadSheet(trackpadOpen, pc) { trackpadOpen = false }
+                    LinkSheet(Ui.link, pc) { Ui.link = false }
+                    TrackpadSheet(Ui.trackpad != null, pc, Ui.trackpad ?: TRACKPAD_PAD) { Ui.trackpad = null }
+                    PresenterSheet(Ui.presenter, pc) { Ui.presenter = false }
                     IslandSheets()
-                    HotspotSheet(hotspotOpen) { hotspotOpen = false }
-                    UpdatesSheet(updatesOpen) { updatesOpen = false }
+                    RemoteSheets(pc)
+                    ShelfSheets()
+                    SettingsSheet(Ui.settings, look, { next -> look = next; Hub.prefs.edit().putInt("appearance", next.appearance).putBoolean("glass", next.glass).apply() }) { Ui.settings = false }
+                    PcSheet(Ui.pc?.let { id -> peers.firstOrNull { it.id == id } }) { Ui.pc = null }
+                    ConnectionSheet(Ui.connection?.let { id -> peers.firstOrNull { it.id == id } }) { Ui.connection = null }
+                    AlertsSheet(Ui.alerts) { Ui.alerts = false }
+                    HotspotSheet(Ui.hotspot) { Ui.hotspot = false }
+                    UpdatesSheet(Ui.updates) { Ui.updates = false }
                     ShareSheet(share, peers, pc, onShareDone)
                     WhatsNewSheet(whatsNew) { whatsNew = null }
+                    // What just happened, dropping from the top as iOS's notifications do.
+                    TopBanner(banner, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(horizontal = 10.dp, vertical = 6.dp).widthIn(max = 520.dp))
                     RingOverlay(ringing)
                 }
             }
@@ -331,6 +350,3 @@ private fun newPhoto(context: Context): Uri {
 
 /** The pager's pages (Remote is 0, Devices last). */
 private const val PAGE_ISLAND = 1; private const val PAGE_SEND = 2; private const val PAGE_SHELF = 3
-
-/** The top fade's colour: the deep ambient colour, darkened for the dark theme. */
-private fun Color.compositeOverBlack(dark: Boolean): Color = if (dark) androidx.compose.ui.graphics.lerp(this, Color.Black, .55f).copy(alpha = alpha) else this

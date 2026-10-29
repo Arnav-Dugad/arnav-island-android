@@ -64,22 +64,37 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * A glass sheet rising from the bottom over a dimmed screen. It follows the finger down and closes past a point, or
- * with back, or a tap outside it.
+ * A glass sheet rising from the bottom over a dimmed screen, as iOS's do. It follows the finger down and closes past a
+ * point, or with a tap outside it, or with back. 1.8: the back gesture is predictive: as the finger moves the sheet
+ * shrinks back, sinks and leans away from the edge it came from, and the screen behind brightens; let go and it goes,
+ * cancel and it springs back.
  */
 @Composable fun GlassSheet(visible: Boolean, onDismiss: () -> Unit, modifier: Modifier = Modifier, dismissible: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     val t = LocalTokens.current; val density = LocalDensity.current; val scope = rememberCoroutineScope()
     val drag = remember { Animatable(0f) }
-    LaunchedEffect(visible) { if (visible) drag.snapTo(0f) }
-    if (visible) { BackHandler(enabled = dismissible) { onDismiss() }; DisposableEffect(Unit) { Scene.sheets++; onDispose { Scene.sheets-- } } }
-    AnimatedVisibility(visible, enter = fadeIn(tween(220)), exit = fadeOut(tween(220))) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (t.dark) .5f else .28f)).clickable(remember { MutableInteractionSource() }, null, enabled = dismissible) { onDismiss() })
+    val back = remember { Animatable(0f) }; var edge by remember { mutableIntStateOf(0) }
+    val dismiss by rememberUpdatedState(onDismiss)
+    LaunchedEffect(visible) { if (visible) { drag.snapTo(0f); back.snapTo(0f) } }
+    if (visible) {
+        androidx.activity.compose.PredictiveBackHandler(enabled = dismissible) { progress ->
+            try { progress.collect { e -> edge = e.swipeEdge; back.snapTo(e.progress) }; dismiss() }
+            catch (_: kotlin.coroutines.cancellation.CancellationException) { scope.launch { back.animateTo(0f, spring(dampingRatio = .75f, stiffness = 420f)) } }
+        }
+        DisposableEffect(Unit) { Scene.sheets++; onDispose { Scene.sheets-- } }
     }
-    AnimatedVisibility(visible, enter = slideInVertically(spring(dampingRatio = .8f, stiffness = 340f)) { it } + fadeIn(), exit = slideOutVertically(tween(260)) { it } + fadeOut(tween(200)),
+    AnimatedVisibility(visible, enter = fadeIn(tween(220)), exit = fadeOut(tween(220))) {
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = 1f - back.value * .45f }.background(Color.Black.copy(alpha = if (t.dark) .5f else .26f)).clickable(remember { MutableInteractionSource() }, null, enabled = dismissible) { onDismiss() })
+    }
+    AnimatedVisibility(visible, enter = slideInVertically(spring(dampingRatio = .84f, stiffness = 360f)) { it } + fadeIn(), exit = slideOutVertically(tween(260)) { it } + fadeOut(tween(200)),
         modifier = Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-            Column(modifier.fillMaxWidth().padding(10.dp).navigationBarsPadding().imePadding()
+            Column(modifier.fillMaxWidth().padding(8.dp).navigationBarsPadding().imePadding()
                 .offset { IntOffset(0, drag.value.roundToInt()) }
+                .graphicsLayer {
+                    val b = back.value; val s = 1f - .1f * b
+                    scaleX = s; scaleY = s; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(.5f, 1f)
+                    translationY = b * 36.dp.toPx(); translationX = (if (edge == androidx.activity.BackEventCompat.EDGE_LEFT) 1f else -1f) * b * 14.dp.toPx()
+                }
                 .glass(GlassShapes.sheet, GlassLevel.Sheet)
                 .clickable(remember { MutableInteractionSource() }, null) {}
                 .pointerInput(dismissible) {
@@ -88,12 +103,25 @@ import kotlin.math.sin
                         change.consume(); scope.launch { drag.snapTo((drag.value + amount).coerceAtLeast(0f)) }
                     }
                 }
-                .padding(horizontal = 22.dp).padding(top = 10.dp, bottom = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.size(40.dp, 5.dp).clip(CircleShape).background(t.faint.copy(alpha = .5f)))
+                .padding(horizontal = 20.dp).padding(top = 8.dp, bottom = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.size(36.dp, 5.dp).clip(CircleShape).background(t.faint.copy(alpha = .55f)))
                 Spacer(Modifier.height(14.dp))
                 CompositionLocalProvider(LocalGlass provides null) { content() }
             }
         }
+    }
+}
+
+/** A sheet's header, as iOS's: its title, a line under it, and a close button at the right. */
+@Composable fun SheetHeader(title: String, subtitle: String? = null, onClose: (() -> Unit)? = null, leading: @Composable (() -> Unit)? = null) {
+    val t = LocalTokens.current
+    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        leading?.let { it(); Spacer(Modifier.width(10.dp)) }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = Type.title2, color = t.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (subtitle != null) Text(subtitle, style = Type.caption, color = t.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        if (onClose != null) GlassIconButton(Icons.Rounded.Close, "Close", onClose, size = 34.dp, iconSize = 17.dp)
     }
 }
 

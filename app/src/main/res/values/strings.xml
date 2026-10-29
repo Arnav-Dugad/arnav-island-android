@@ -23,4 +23,12 @@
     <string name="sc_find_long">Ring your PC</string>
     <string name="sc_paste">Paste on PC</string>
     <string name="sc_paste_long">Put your clipboard on the PC</string>
+    <string name="widget_lyrics_label">Lyrics from your PC</string>
+    <string name="widget_lyrics_description">The line your PC’s song is at, and the next one, in time with the music</string>
+    <string name="widget_batteries_label">Both batteries</string>
+    <string name="widget_batteries_description">This phone’s battery and your PC’s, side by side, with how long each lasts</string>
+    <string name="widget_transfer_label">Transfers</string>
+    <string name="widget_transfer_description">What’s moving between this phone and your PC, and the last thing that did</string>
+    <string name="wallpaper_label">Arnav Island light</string>
+    <string name="wallpaper_description">The app’s drifting light behind your home screen, in the colours of what plays on your PC</string>
 </resources>

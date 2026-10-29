@@ -37,9 +37,20 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 - **Your PC's screen, here:** up to 1440p at 60 frames a second on the same Wi-Fi, still smooth over the internet. Tap to click, drag, scroll with two fingers, pinch to zoom, and type.
 - **This phone's screen on your PC,** in a floating window there. With **Settings › Accessibility › Control from your PC** on, the PC's clicks and typing work here too.
 
+**All of it, in glass (1.8)**
+- **A new look, after Apple's:** liquid glass throughout, grouped lists, large titles that scroll into a glass bar, and sheets that follow the back gesture.
+- **The Remote:** the music's live levels, shuffle, repeat and up next, love a song, recently played, where the sound plays from, each app's own volume, and the volume buttons turn your PC's sound.
+- **The Island tab** is a dashboard: overview, performance with each core, battery, sound, controls, focus, alerts and more, each section folding away, with a row to jump between them.
+- **Alerts** when your PC works hard, runs short of memory or space, or its battery runs low or fills.
+- **Pause a transfer**, reorder what waits, swipe one off Recent; on the Shelf, select several, take all, peek, and pull to refresh.
+- **Settings** in their own sheet with search; what's left to set up; each PC's own name, colour and icon, when it was last seen, its connection in full, and **Wake** it from the phone.
+- **Present** (slides, a laser, a timer), the **air mouse**, and this phone as your PC's **camera or microphone**.
+- **New widgets** (lyrics, both batteries, transfers), a **live wallpaper**, and **live updates** on Android 16.
+- Needs the PC's island 0.26 for shuffle, repeat, each app's volume, the levels, Wake, pausing and the camera and microphone.
+
 **Handed over (1.7)**
 - **Share to your PC's Shelf in one tap:** your PCs are glass bubbles in the app's sheet, and they appear in Android's share sheet too. The island shows the picture while it arrives.
-- **The photo you just took** shows on your PC's island, ready to paste there (Devices › Photos you take).
+- **The photo you just took** shows on your PC's island, ready to paste there (Settings › On your PC’s island › Photos you take).
 - **Pages, where you were:** from your PC to the app's reader, and back, at the same scroll position.
 - **Quick Settings tiles** for your PC's screen and this phone on your PC. The liquid glass takes about half the work to draw.
 
@@ -85,12 +96,12 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 
 **Liquid glass**
 - Surfaces bend what is behind them at their edges, blur and saturate it, and catch a rim of light that moves as you tilt the phone. Refraction needs Android 13 or later; blur needs Android 12 or later.
-- The island at the top melts open into the song's card, widens for transfers, and drops open to say what happened. Files in flight stream through it as light.
-- Rain, snow or fog on the glass when that's the weather where your PC is.
+- Large titles scroll away into a glass navigation bar, and what just happened drops from the top like a notification.
+- Sheets follow the back gesture, shrinking with your finger.
 - Light on the battery:
   - The rim of light is drawn on its own, so tilting the phone never redraws the refraction.
   - The light behind the glass stands still while the app is hidden, a sheet covers it, or the battery saver is on.
-- Prefer it plain? **Devices › Appearance › Liquid glass** turns it into solid surfaces.
+- Prefer it plain? **Settings › Appearance › Liquid glass** turns it into solid surfaces.
 - Android's *Remove animations* is respected.
 
 **Updates itself**
@@ -101,22 +112,22 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
   3. installed
 
   On Android 12 or later, once the app has installed its first update, later ones install without asking.
-- **Devices › Release history** lists every version and what it brought.
+- **Settings › Updates › Release history** lists every version and what it brought.
 
 ## Getting started
 
-1. On your PC, install [Arnav Island](https://github.com/Arnav-Dugad/arnav-island/releases/latest) 0.20.1 or later. Turn on **Settings › Privacy & productivity › Share with my PCs**. Versions 0.19 and 0.20 work too, without the features marked later in these notes.
+1. On your PC, install [Arnav Island](https://github.com/Arnav-Dugad/arnav-island/releases/latest) 0.26 or later. Turn on **Settings › Privacy & productivity › Share with my PCs**. Versions from 0.19 work too, without the features marked later in these notes.
 2. On your phone, download the APK from [Releases](https://github.com/Arnav-Dugad/arnav-island-android/releases/latest) and open it. Android asks once to allow installs from your browser.
 3. Pair:
    - **On the same Wi-Fi:** tap **Devices › Pair a PC**, then your PC on the radar. Check that both show the same six digits, and confirm on both.
    - **Anywhere:** on the PC, open the island's **Shelf › Nearby › Pair with a code**. On the phone, tap **Devices › Scan the QR code** and point it at the island, then choose **Pair** on the PC. Or tap **Type the code instead**.
 
-To see your notifications and calls on the island, turn on **Devices › Your notifications**. Android asks you to allow notification access. For the phone to stay reachable everywhere, tap **Devices › Always reachable › Allow**.
+To see your notifications and calls on the island, turn on **Settings › On your PC’s island › Your notifications**. Android asks you to allow notification access. For the phone to stay reachable everywhere, tap **Settings › Connection › Run in the background › Allow** (or Fix on Devices).
 
 ## Privacy and security
 
 - **On the same Wi-Fi**, everything goes directly between your devices.
-- **On different networks**, it passes through free public MQTT brokers over TLS. The app stays on all three (broker.hivemq.com, broker.emqx.io and test.mosquitto.org), so it always shares one with your PC. Everything is sealed end to end before it leaves your device. The broker sees only random-looking topic names and encrypted bytes. It can't read or change what they carry. Turn this off with **Devices › Reach my PCs anywhere**.
+- **On different networks**, it passes through free public MQTT brokers over TLS. The app stays on all three (broker.hivemq.com, broker.emqx.io and test.mosquitto.org), so it always shares one with your PC. Everything is sealed end to end before it leaves your device. The broker sees only random-looking topic names and encrypted bytes. It can't read or change what they carry. Turn this off with **Settings › Connection › Reach my PCs anywhere**.
 - There are no accounts, analytics or ads, and nothing is stored in a cloud.
 - Devices pair once, with the island's QR code or its typed code. The QR code also names the PC's key, and the phone refuses any other device that answers it.
 - The camera is used only while the QR scanner is open. Nothing it sees is kept or sent.

@@ -1,0 +1,16 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent">
+    <ImageView android:id="@+id/w_bg" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY"
+        android:src="@drawable/widget_glass" android:importantForAccessibility="no" />
+    <LinearLayout android:id="@+id/w_open" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical"
+        android:gravity="center_vertical" android:paddingStart="14dp" android:paddingEnd="14dp" android:paddingTop="8dp" android:paddingBottom="8dp">
+        <TextView android:id="@+id/w_where" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" android:text="LYRICS"
+            android:textColor="#80FFFFFF" android:textSize="10sp" android:maxLines="1" />
+        <TextView android:id="@+id/w_line" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+            android:gravity="center_vertical|start" android:text="Every light in the city is ours tonight" android:textColor="#FFFFFFFF" android:fontFamily="sans-serif-medium"
+            android:maxLines="2" android:ellipsize="end" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="12sp" android:autoSizeMaxTextSize="17sp" android:autoSizeStepGranularity="1sp" />
+        <TextView android:id="@+id/w_next" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" android:text=""
+            android:textColor="#73FFFFFF" android:textSize="12sp" android:maxLines="1" />
+        <TextView android:id="@+id/w_song" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Night Drive  ·  The Island"
+            android:textColor="#B3FFFFFF" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+    </LinearLayout>
+</FrameLayout>

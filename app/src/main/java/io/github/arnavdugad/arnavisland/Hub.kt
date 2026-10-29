@@ -30,6 +30,12 @@ import io.github.arnavdugad.arnavisland.link.FocusState
 import io.github.arnavdugad.arnavisland.link.IslandWire
 import io.github.arnavdugad.arnavisland.link.Bytes
 import io.github.arnavdugad.arnavisland.link.safeName
+import io.github.arnavdugad.arnavisland.link.Playback
+import io.github.arnavdugad.arnavisland.link.MixerApp
+import io.github.arnavdugad.arnavisland.link.Levels
+import io.github.arnavdugad.arnavisland.link.Adapter
+import io.github.arnavdugad.arnavisland.link.hex
+import io.github.arnavdugad.arnavisland.link.unhex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,13 +45,26 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.ui.graphics.asImageBitmap
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
 /** A transfer under way, either way. rate: bytes a second, smoothed. */
 data class Transfer(val id: Int, val peer: String, val name: String, val title: String, val done: Long, val total: Long, val outgoing: Boolean,
-                    val rate: Double = 0.0, val sampledAt: Long = 0, val sampledDone: Long = 0)
+                    val rate: Double = 0.0, val sampledAt: Long = 0, val sampledDone: Long = 0, val paused: Boolean = false)
+
+/** 1.8: a send waiting its turn (one transfer to a PC at a time): what, how much, and who asked for it. */
+class Queued(val id: Long, val peer: String, val name: String, val sources: List<Source>, val title: String, val size: Long, val toShelf: Boolean, val preview: ByteArray?, val ask: Int, val onStarted: (Int) -> Unit)
+
+/** 1.8: a song heard on a PC, for the Remote's history: its small cover (a JPEG), when it was first and last heard, how often, and whether it's loved. */
+data class Song(val key: String, val title: String, val artist: String, val app: String, val pc: String, val cover: ByteArray?, val first: Long, val last: Long, val plays: Int, val loved: Boolean) {
+    override fun equals(other: Any?) = other is Song && key == other.key && last == other.last && plays == other.plays && loved == other.loved
+    override fun hashCode() = key.hashCode()
+}
+
+/** 1.8: how a PC looks here: its own name (null: the one it gives), colour and icon. */
+data class PcLook(val name: String?, val color: Int, val icon: Int)
 
 /** Something that happened between this phone and a PC, for the Send tab's history. kind: 0 received, 1 sent, 2 taken from a Shelf. */
 data class Moment(val kind: Int, val title: String, val from: String, val count: Int, val size: Long, val at: Long, val uris: List<String>)
@@ -97,6 +116,8 @@ object Hub {
         app = context.applicationContext
         selected.value = prefs.getString("pc", null)
         moments.value = loadMoments()
+        looks.value = loadLooks(); lastSeen.value = loadSeen(); machines.value = loadMachines()
+        scope.launch { history.value = loadHistory() }
     }
 
     fun phoneName(): String = runCatching { Settings.Global.getString(app.contentResolver, "device_name") }.getOrNull()?.takeIf { it.isNotBlank() } ?: Build.MODEL
@@ -112,7 +133,7 @@ object Hub {
         starting = l
         if (!l.start()) { starting = null; failure.value = l.failure ?: "The link couldn't start"; return null }
         link = l; starting = null; running.value = true; failure.value = null
-        peers.value = l.peers(); pickDefault()
+        peers.value = dressed(l.peers()); pickDefault()
         return l
     }
     @Synchronized fun stop() { link?.stop(); link = null; running.value = false; internet.value = false; peers.value = emptyList() }
@@ -132,11 +153,12 @@ object Hub {
     private fun onEvent(e: LinkEvent) {
         when (e) {
             is LinkEvent.Peers -> {
-                peers.value = e.peers; pickDefault(); internet.value = (link ?: starting)?.internet == true
+                peers.value = dressed(e.peers); pickDefault(); internet.value = (link ?: starting)?.internet == true
+                seen(e.peers)
                 // A PC that just came online hears this phone's battery and details at once.
                 val online = e.peers.filter { it.paired && it.online && it.remote }.map { it.id }.toSet()
                 val arrived = synchronized(lastOnline) { val a = online - lastOnline; lastOnline.clear(); lastOnline.addAll(online); a }
-                if (arrived.isNotEmpty()) { sendBattery(force = true); sendDetails(force = true); sendHotspot(arrived = true) }
+                if (arrived.isNotEmpty()) { sendBattery(force = true); sendDetails(force = true); sendHotspot(arrived = true); arrived.forEach { learnMachine(it) } }
             }
             is LinkEvent.PairCode -> { codePairing.value = null; pairCode.value = e; if (!visible) Notify.pairing(app, e) }
             is LinkEvent.Paired -> {
@@ -150,7 +172,7 @@ object Hub {
             }
             is LinkEvent.Progress -> transfers.update { map ->
                 val now = System.currentTimeMillis(); val old = map[e.transfer]
-                var t = old?.copy(done = e.done, total = e.total, title = e.title) ?: Transfer(e.transfer, e.peer, e.name, e.title, e.done, e.total, e.outgoing, sampledAt = now, sampledDone = e.done)
+                var t = old?.copy(done = e.done, total = e.total, title = e.title) ?: Transfer(e.transfer, e.peer, e.name, e.title, e.done, e.total, e.outgoing, sampledAt = now, sampledDone = e.done, paused = link?.paused(e.transfer) == true)
                 if (old != null && now - old.sampledAt >= 300 && e.done >= old.sampledDone) {
                     val speed = (e.done - old.sampledDone) * 1000.0 / (now - old.sampledAt)
                     t = t.copy(rate = if (old.rate > 0) old.rate * .7 + speed * .3 else speed, sampledAt = now, sampledDone = e.done)
@@ -164,12 +186,12 @@ object Hub {
                 Notify.received(app, e)
             }
             is LinkEvent.Sent -> {
-                transfers.update { it - e.transfer }; outcomes.tryEmit(e.transfer to true)
+                transfers.update { it - e.transfer }; outcomes.tryEmit(e.transfer to true); next(e.peer)
                 remember(Moment(1, e.title, e.name, e.count, e.size, System.currentTimeMillis(), emptyList()))
                 banners.tryEmit(Banner(Banner.Kind.Sent, "Sent ${e.title}", "To ${e.name}  ·  ${sizeText(e.size)}"))
             }
             is LinkEvent.Failed -> {
-                if (e.outgoing) outcomes.tryEmit(e.transfer to false)
+                if (e.outgoing) { outcomes.tryEmit(e.transfer to false); scope.launch { delay(50); next(e.peer) } }
                 transfers.update { it - e.transfer }; offers.update { list -> list.filterNot { it.transfer == e.transfer } }; Notify.cancel(app, Notify.OFFER + e.transfer)
                 if (music.value?.transfer == e.transfer) music.value = null
                 if (e.detail != "You stopped it") banners.tryEmit(Banner(Banner.Kind.Failed, if (e.title.isEmpty()) "Couldn't share" else "Couldn't share ${e.title}", e.detail))
@@ -238,11 +260,14 @@ object Hub {
     fun answer(offer: LinkEvent.Offer, accept: Boolean) { link?.answer(offer.transfer, accept); offers.update { list -> list.filterNot { it.transfer == offer.transfer } }; Notify.cancel(app, Notify.OFFER + offer.transfer) }
     fun cancel(transfer: Int) { link?.cancel(transfer) }
 
-    /** Files from other apps (content URIs) to a PC, in one transfer; [toShelf]: onto its island's Shelf (a photo taken for it). */
+    /**
+     * Files from other apps (content URIs) to a PC, in one transfer; [toShelf]: onto its island's Shelf (a photo taken for
+     * it). 1.8: one transfer to a PC at a time: while one is under way, the next waits its turn in [queue].
+     */
     fun send(peer: String, uris: List<Uri>, toShelf: Boolean = false, ask: Int = 0, onStarted: (Int) -> Unit = {}) {
         if (uris.isEmpty()) return
         scope.launch {
-            val l = link ?: run { banners.tryEmit(Banner(Banner.Kind.Failed, "Not connected", "Open Arnav Island and try again")); return@launch }
+            if (link == null) { banners.tryEmit(Banner(Banner.Kind.Failed, "Not connected", "Open Arnav Island and try again")); return@launch }
             val sources = uris.mapNotNull { sourceOf(it) }
             if (sources.isEmpty()) { banners.tryEmit(Banner(Banner.Kind.Failed, "Couldn't read those files")); return@launch }
             val names = sources.map { it.rel }
@@ -250,11 +275,33 @@ object Hub {
             val target = peers.value.firstOrNull { it.id == peer }
             // 1.7: a picture of the first one, for the island to show as it arrives.
             val preview = Previews.of(app, uris[0])
-            val id = l.send(peer, sources, title, toShelf = toShelf, preview = preview, ask = ask)
-            transfers.update { it + (id to Transfer(id, peer, target?.name ?: "your PC", title, 0, sources.sumOf { s -> s.size }, true, sampledAt = System.currentTimeMillis())) }
-            onStarted(id)
+            val item = Queued(System.nanoTime(), peer, target?.name ?: "your PC", sources, title, sources.sumOf { s -> s.size }, toShelf, preview, ask, onStarted)
+            val busy = synchronized(queue) { val b = transfers.value.values.any { it.outgoing && it.peer == peer } || queue.value.any { it.peer == peer }; if (b) queue.update { it + item }; b }
+            if (!busy) start(item)
         }
     }
+    /** 1.8: sends waiting their turn, in order. */
+    val queue = MutableStateFlow<List<Queued>>(emptyList())
+    private fun start(q: Queued) {
+        val l = link ?: return
+        val id = l.send(q.peer, q.sources, q.title, toShelf = q.toShelf, preview = q.preview, ask = q.ask)
+        transfers.update { it + (id to Transfer(id, q.peer, q.name, q.title, 0, q.size, true, sampledAt = System.currentTimeMillis())) }
+        q.onStarted(id)
+    }
+    /** The next send waiting for [peer], once the one before has ended. */
+    private fun next(peer: String) {
+        val q = synchronized(queue) {
+            if (transfers.value.values.any { it.outgoing && it.peer == peer }) return
+            queue.value.firstOrNull { it.peer == peer }?.also { n -> queue.update { list -> list.filterNot { it.id == n.id } } }
+        } ?: return
+        start(q)
+    }
+    /** Moves a waiting send from one place in the queue to another. */
+    fun moveQueued(from: Int, to: Int) = queue.update { list -> if (from !in list.indices || to !in list.indices) list else list.toMutableList().apply { add(to, removeAt(from)) } }
+    fun dropQueued(id: Long) = queue.update { list -> list.filterNot { it.id == id } }
+    /** Pauses or resumes a transfer (with PCs on island 0.26 or later, which wait for it). */
+    fun pause(transfer: Int, paused: Boolean) { link?.pause(transfer, paused); transfers.update { m -> m[transfer]?.let { m + (transfer to it.copy(paused = paused, rate = 0.0)) } ?: m } }
+    fun canPause(t: Transfer) = (peers.value.firstOrNull { it.id == t.peer }?.revision ?: 0) >= 9
     private fun sourceOf(uri: Uri): Source? = runCatching {
         val resolver = app.contentResolver
         var name: String? = null; var size = -1L
@@ -281,6 +328,8 @@ object Hub {
             Moment(o.getInt("k"), o.getString("t"), o.getString("f"), o.getInt("c"), o.getLong("s"), o.getLong("a"), (0 until u.length()).map { u.getString(it) }) }
     }.getOrDefault(emptyList())
     fun clearMoments() { moments.value = emptyList(); saveMoments() }
+    /** 1.8: one moment taken out of the history. */
+    fun forgetMoment(m: Moment) { moments.update { list -> list.filterNot { it.at == m.at && it.title == m.title } }; saveMoments() }
 
     // ---- the remote ----
     /** One remote command to the chosen PC; null (with a banner saying why) when it couldn't be done. */
@@ -303,8 +352,176 @@ object Hub {
         if (!p.remote) { statusError.value = "Update Arnav Island on ${p.name} for the remote"; return@withContext null }
         val previous = status.value?.takeIf { it.pcName.isNotEmpty() }
         val s = l.status(p.id, previous?.coverHash, previous)
-        if (s == null) statusError.value = l.lastRemoteError ?: "${p.name} didn't answer" else { statusError.value = null; status.value = s; lyricsFor(p, s) }
+        if (s == null) statusError.value = l.lastRemoteError ?: "${p.name} didn't answer" else { statusError.value = null; status.value = s; lyricsFor(p, s); heard(p, s, previous); playbackFor(p, s, previous) }
         s
+    }
+
+    // ---- 1.8: your PCs, as you name them ----
+    val looks = MutableStateFlow<Map<String, PcLook>>(emptyMap())
+    fun pcLook(id: String?): PcLook = id?.let { looks.value[it] } ?: PcLook(null, ((id?.hashCode() ?: 0) and 0x7fffffff) % 6, 0)
+    fun setPcLook(id: String, look: PcLook) {
+        looks.update { it + (id to look) }
+        runCatching { val o = JSONObject(); looks.value.forEach { (k, v) -> o.put(k, JSONObject().put("n", v.name ?: "").put("c", v.color).put("i", v.icon)) }; prefs.edit().putString("looks", o.toString()).apply() }
+        link?.let { peers.value = dressed(it.peers()) }
+    }
+    private fun loadLooks(): Map<String, PcLook> = runCatching {
+        val o = JSONObject(prefs.getString("looks", "{}")); o.keys().asSequence().associateWith { k -> val v = o.getJSONObject(k); PcLook(v.optString("n").takeIf { it.isNotBlank() }, v.optInt("c"), v.optInt("i")) }
+    }.getOrDefault(emptyMap())
+    /** The devices as the link has them, with the names you gave them. */
+    private fun dressed(list: List<PeerView>) = list.map { p -> looks.value[p.id]?.name?.let { p.copy(name = it) } ?: p }
+
+    // ---- 1.8: when each PC was last here, and how its connection has gone ----
+    val lastSeen = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val rttTrail = MutableStateFlow<Map<String, List<Pair<Long, Double>>>>(emptyMap())
+    @Volatile private var seenSaved = 0L
+    private fun seen(list: List<PeerView>) {
+        val now = System.currentTimeMillis(); val here = list.filter { it.paired && it.online }
+        if (here.isNotEmpty()) lastSeen.update { it + here.associate { p -> p.id to now } }
+        val left = list.any { p -> p.paired && !p.online && (lastSeen.value[p.id] ?: 0) > seenSaved }
+        if (left || now - seenSaved > 120_000) { seenSaved = now; runCatching { val o = JSONObject(); lastSeen.value.forEach { (k, v) -> o.put(k, v) }; prefs.edit().putString("seen", o.toString()).apply() } }
+        val rtts = here.filter { it.internet && it.rtt > 0 }
+        if (rtts.isNotEmpty()) rttTrail.update { m -> m + rtts.associate { p -> p.id to ((m[p.id] ?: emptyList()) + (now to p.rtt)).takeLast(120) } }
+    }
+    private fun loadSeen(): Map<String, Long> = runCatching { val o = JSONObject(prefs.getString("seen", "{}")); o.keys().asSequence().associateWith { o.getLong(it) } }.getOrDefault(emptyMap())
+    /** Asks the link to find its paths again (the relays, discovery and a direct path), for the connection's details. */
+    fun retest() { link?.networkChanged() }
+
+    // ---- 1.8: waking a PC (its adapters, learnt from it while it was here) ----
+    val machines = MutableStateFlow<Map<String, List<Adapter>>>(emptyMap())
+    private fun learnMachine(peer: String) {
+        val p = peers.value.firstOrNull { it.id == peer } ?: return; if (p.revision < 9 || p.phone) return
+        scope.launch {
+            val list = link?.machine(peer)?.takeIf { it.isNotEmpty() } ?: return@launch
+            machines.update { it + (peer to list) }
+            runCatching {
+                val o = JSONObject(); machines.value.forEach { (k, v) -> o.put(k, JSONArray(v.map { a -> JSONObject().put("m", a.mac.hex()).put("n", a.name).put("a", a.ipv4).put("p", a.prefix) })) }
+                prefs.edit().putString("machines", o.toString()).apply()
+            }
+        }
+    }
+    private fun loadMachines(): Map<String, List<Adapter>> = runCatching {
+        val o = JSONObject(prefs.getString("machines", "{}"))
+        o.keys().asSequence().associateWith { k -> val a = o.getJSONArray(k); (0 until a.length()).mapNotNull { i -> val v = a.getJSONObject(i); v.getString("m").unhex()?.let { m -> Adapter(m, v.optString("n"), v.optString("a"), v.optInt("p")) } } }
+    }.getOrDefault(emptyMap())
+    fun canWake(peer: String?) = peer != null && !machines.value[peer].isNullOrEmpty()
+    /** Wakes a PC on this network (its adapters must allow Wake-on-LAN): a magic packet to each of its addresses. */
+    fun wake(peer: String) {
+        val p = peers.value.firstOrNull { it.id == peer }; val list = machines.value[peer]
+        if (list.isNullOrEmpty()) { banners.tryEmit(Banner(Banner.Kind.Failed, "Can't wake ${p?.name ?: "it"} yet", "It's learnt once the PC has island 0.26 and is here")); return }
+        scope.launch {
+            val sent = Wake.send(list)
+            banners.tryEmit(if (sent) Banner(Banner.Kind.Info, "Waking ${p?.name ?: "your PC"}", "If it allows Wake-on-LAN, it starts in a moment") else Banner(Banner.Kind.Failed, "Couldn't send the wake signal", "Join the PC's network first"))
+        }
+    }
+
+    // ---- 1.8: what you've heard on your PCs, and loved ----
+    val history = MutableStateFlow<List<Song>>(emptyList())
+    private fun historyFile() = File(app.filesDir, "history.json")
+    private fun heard(p: PeerView, s: PcStatus, previous: PcStatus?) {
+        if (!s.available || s.title.isBlank()) return
+        val key = (s.title + "\t" + s.artist).lowercase(); val now = System.currentTimeMillis()
+        val same = previous?.available == true && previous.title == s.title && previous.artist == s.artist
+        val old = history.value.firstOrNull { it.key == key }
+        if (same && old != null && now - old.last < 60_000) return
+        val cover = old?.cover ?: s.cover?.let { c -> runCatching { Art.bitmap(c, 160)?.let { b -> java.io.ByteArrayOutputStream().also { b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, it) }.toByteArray() } }.getOrNull() }
+        val song = Song(key, s.title, s.artist, s.app, p.name, cover, old?.first ?: now, now, (old?.plays ?: 0) + if (same) 0 else 1, old?.loved ?: false)
+        history.update { list -> (listOf(song) + list.filterNot { it.key == key }).take(80) }
+        saveHistory()
+    }
+    fun love(key: String, loved: Boolean) { history.update { list -> list.map { if (it.key == key) it.copy(loved = loved) else it } }; saveHistory() }
+    /** Loves what plays now (it joins the history if it isn't there yet). */
+    fun loveNow(loved: Boolean) { val s = status.value ?: return; val p = pc() ?: return; heard(p, s, null); love((s.title + "\t" + s.artist).lowercase(), loved) }
+    fun forgetSong(key: String) { history.update { list -> list.filterNot { it.key == key } }; saveHistory() }
+    fun clearHistory() { history.update { list -> list.filter { it.loved } }; saveHistory() }
+    private fun saveHistory() = scope.launch {
+        runCatching {
+            val a = JSONArray(); history.value.forEach { h -> a.put(JSONObject().put("k", h.key).put("t", h.title).put("a", h.artist).put("p", h.app).put("c", h.pc).put("f", h.first).put("l", h.last).put("n", h.plays).put("v", h.loved)
+                .put("i", h.cover?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) } ?: "")) }
+            historyFile().writeText(a.toString())
+        }
+    }
+    private fun loadHistory(): List<Song> = runCatching {
+        val a = JSONArray(historyFile().takeIf { it.exists() }?.readText() ?: "[]")
+        (0 until a.length()).map { i -> val o = a.getJSONObject(i)
+            Song(o.getString("k"), o.getString("t"), o.optString("a"), o.optString("p"), o.optString("c"), o.optString("i").takeIf { it.isNotEmpty() }?.let { android.util.Base64.decode(it, android.util.Base64.NO_WRAP) },
+                o.getLong("f"), o.getLong("l"), o.optInt("n", 1), o.optBoolean("v")) }
+    }.getOrDefault(emptyList())
+    /**
+     * Plays a song from the history on the PC: from the island's own music when it has it (its command bar finds it),
+     * else as a search in the PC's browser, in the service it last played in.
+     */
+    fun replay(song: Song) {
+        val p = pc() ?: return
+        scope.launch {
+            if (islandReady(p)) {
+                val r = queryCommands("play ${song.title}")
+                val i = r?.rows?.indexOfFirst { it.kind == 40 } ?: -1
+                if (r != null && i >= 0 && runCommand("play ${song.title}", i, r.rows[i].title, false)?.outcome == 0) { banners.tryEmit(Banner(Banner.Kind.Music, "Playing ${song.title}", "On ${p.name}")); return@launch }
+            }
+            val q = java.net.URLEncoder.encode(listOf(song.title, song.artist).filter { it.isNotBlank() }.joinToString(" "), "UTF-8")
+            val url = when {
+                song.app.contains("spotify", true) -> "https://open.spotify.com/search/$q"
+                song.app.contains("apple", true) || song.app.contains("itunes", true) -> "https://music.apple.com/search?term=$q"
+                song.app.contains("youtube music", true) -> "https://music.youtube.com/search?q=$q"
+                else -> "https://www.youtube.com/results?search_query=$q"
+            }
+            if (command(Proto.CMD_OPEN, url.toByteArray())?.ok == true) banners.tryEmit(Banner(Banner.Kind.Music, "Finding ${song.title}", "On ${p.name}, in its browser"))
+        }
+    }
+    /** Looks a song up on this phone: in its music app (as music handed over is), else on the web. */
+    fun searchHere(context: Context, song: Song) = playFromSearch(context, Handoff(song.title, song.artist, app = song.app))
+
+    // ---- 1.8: shuffle, repeat and up next (island 0.26) ----
+    val playback = MutableStateFlow<Playback?>(null)
+    @Volatile private var playbackAsked = 0L
+    private fun playbackFor(p: PeerView, s: PcStatus, previous: PcStatus?) {
+        if (p.revision < 9 || !s.available) { playback.value = null; return }
+        val now = System.currentTimeMillis()
+        if (previous?.title == s.title && now - playbackAsked < 4_000) return
+        playbackAsked = now; scope.launch { playback.value = link?.playback(p.id) }
+    }
+    private fun playbackOp(op: Int, arg: ByteArray, seen: (Playback) -> Playback) {
+        playback.update { it?.let(seen) }
+        scope.launch { val p = pc() ?: return@launch; link?.playback(p.id, op, arg)?.let { playback.value = it } ?: banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't change that")) }
+    }
+    fun setShuffle(on: Boolean) = playbackOp(1, byteArrayOf(if (on) 1 else 0)) { it.copy(shuffle = on) }
+    fun setRepeat(mode: Int) = playbackOp(2, byteArrayOf(mode.toByte())) { it.copy(repeat = mode) }
+    fun playUpNext(index: Int) = playbackOp(3, Bytes().u16(index).build()) { it.copy(upNext = it.upNext.drop(index + 1)) }
+
+    // ---- 1.8: the PC's apps, each with its volume, and its sound's levels (island 0.26) ----
+    val mixer = MutableStateFlow<List<MixerApp>>(emptyList())
+    val mixerIcons = MutableStateFlow<Map<String, androidx.compose.ui.graphics.ImageBitmap>>(emptyMap())
+    private val mixerAsked = HashMap<Long, Long>()
+    suspend fun refreshMixer() = withContext(Dispatchers.IO) {
+        val p = pc()?.takeIf { it.online && it.revision >= 9 } ?: return@withContext
+        // Icons only for apps not seen yet.
+        val icons = mixer.value.isEmpty() || mixer.value.any { it.name !in mixerIcons.value }
+        val list = link?.mixer(p.id, icons) ?: return@withContext
+        val now = System.currentTimeMillis()
+        // What a finger just set stays until the PC agrees.
+        mixer.value = list.map { a -> val asked = mixer.value.firstOrNull { it.pid == a.pid }; if (asked != null && now - (mixerAsked[a.pid] ?: 0) < 1500) MixerApp(a.pid, a.name, asked.volume, a.peak, asked.muted, a.system, a.active, a.icon) else a }
+        val fresh = list.filter { it.icon != null && it.name !in mixerIcons.value }
+        if (fresh.isNotEmpty()) mixerIcons.update { m -> m + fresh.mapNotNull { a -> runCatching { android.graphics.BitmapFactory.decodeByteArray(a.icon, 0, a.icon!!.size)?.let { bmp -> a.name to bmp.asImageBitmap() } }.getOrNull() } }
+    }
+    fun setAppVolume(pid: Long, percent: Int, final: Boolean) {
+        mixerAsked[pid] = System.currentTimeMillis()
+        mixer.update { list -> list.map { if (it.pid == pid) MixerApp(it.pid, it.name, percent, it.peak, it.muted, it.system, it.active, it.icon) else it } }
+        val p = pc() ?: return; scope.launch { link?.mixerVolume(p.id, pid, percent)?.takeIf { final }?.let { mixer.value = it } }
+    }
+    fun setAppMute(pid: Long, muted: Boolean) {
+        mixerAsked[pid] = System.currentTimeMillis()
+        mixer.update { list -> list.map { if (it.pid == pid) MixerApp(it.pid, it.name, it.volume, it.peak, muted, it.system, it.active, it.icon) else it } }
+        val p = pc() ?: return; scope.launch { link?.mixerMute(p.id, pid, muted)?.let { mixer.value = it } }
+    }
+    val levels = MutableStateFlow<Levels?>(null)
+    suspend fun refreshLevels() = withContext(Dispatchers.IO) { val p = pc()?.takeIf { it.online && it.revision >= 9 } ?: return@withContext; levels.value = link?.levels(p.id) }
+
+    // ---- 1.8: the phone's volume keys, for the PC's sound ----
+    /** One step (5%) of the PC's volume up or down, shown at once and then on the PC. */
+    fun volumeStep(up: Boolean) {
+        val s = status.value ?: return
+        val v = (s.volume + if (up) 5 else -5).coerceIn(0, 100); status.value = s.copy(volume = v, muted = false)
+        scope.launch { command(Proto.CMD_VOLUME, byteArrayOf(v.toByte()), quiet = true) }
     }
 
     // ---- 1.4: this phone's hotspot on the PC's island ----
@@ -355,7 +572,7 @@ object Hub {
         if (withStats) l.stats(p.id)?.let { s ->
             // A new PC starts its trail afresh; otherwise each poll adds a point (five minutes of them, for scrubbing).
             if (trailPc != p.id) { trailPc = p.id; statsTrail.value = emptyList() }
-            pcStats.value = s; statsCache[p.id] = s; val now = System.currentTimeMillis()
+            pcStats.value = s; statsCache[p.id] = s; val now = System.currentTimeMillis(); Alerts.check(app, p, s)
             statsTrail.value = (statsTrail.value + StatsPoint(now, s.cpu.toFloat(), s.gpu.toFloat(), s.download.toFloat(), s.upload.toFloat())).takeLast(300)
         }
         l.controls(p.id)?.let { pcControls.value = it; controlsAt = System.currentTimeMillis() }
@@ -417,7 +634,7 @@ object Hub {
     /** 1.5: just the PC's numbers (for the stats widget while the app isn't on screen). */
     suspend fun refreshStats() = withContext(Dispatchers.IO) {
         val l = link ?: return@withContext; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext
-        l.stats(p.id)?.let { pcStats.value = it; statsCache[p.id] = it }
+        l.stats(p.id)?.let { pcStats.value = it; statsCache[p.id] = it; Alerts.check(app, p, it) }
     }
     /** 1.5: each PC's numbers as last read (the Island tab's carousel shows its neighbours with them). */
     private val statsCache = java.util.concurrent.ConcurrentHashMap<String, PcStats>()

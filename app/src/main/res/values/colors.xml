@@ -17,4 +17,5 @@
     <color name="widget_you_ring_cpu">#FFA5D8C5</color>
     <color name="widget_you_ring_gpu">#FF8FA8FF</color>
     <color name="widget_you_ring_ram">#FF5FD98A</color>
+    <color name="widget_you_dim">#73FFFFFF</color>
 </resources>
