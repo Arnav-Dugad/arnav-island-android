@@ -188,10 +188,45 @@ abstract class PcFunctions : AppFunctionService() {
     suspend fun pcStatus(): PcReply = go(Assistant.STATUS)
 
     /**
+     * Opens an app on the user's Windows PC from its Start menu ("open Spotify on my PC", "launch Steam").
+     *
+     * @param appName The app, as the user said it ("Spotify", "Visual Studio Code", "Steam").
+     * @return What happened, to say to the user.
+     */
+    @AppFunctionDeclaration(isDescribedByKDoc = true)
+    suspend fun openAppOnPc(appName: String): PcReply {
+        if (appName.isBlank()) throw AppFunctionInvalidArgumentException("appName is empty")
+        return go(Assistant.OPEN_APP, "app" to appName)
+    }
+
+    /**
+     * Tells which apps are using the most memory, or the most processor, on the user's Windows PC (the top three), as when
+     * the user asks "what's using my PC's memory" or "what's slowing my PC down".
+     *
+     * @param by "MEMORY" for memory (RAM), "CPU" for the processor.
+     * @return The answer, to say to the user.
+     */
+    @AppFunctionDeclaration(isDescribedByKDoc = true)
+    suspend fun topAppsOnPc(@AppFunctionStringValueConstraint(enumValues = ["MEMORY", "CPU"]) by: String): PcReply = go(Assistant.TOP_APPS, "by" to by.lowercase())
+
+    /**
+     * Mutes or unmutes one app's sound on the user's Windows PC ("mute Discord"), leaving the rest of the PC's sound as it is.
+     *
+     * @param appName The app, as the user said it ("Discord", "Spotify", "Chrome").
+     * @param muted True to mute that app, false to turn its sound back on.
+     * @return What happened, to say to the user.
+     */
+    @AppFunctionDeclaration(isDescribedByKDoc = true)
+    suspend fun muteAppOnPc(appName: String, muted: Boolean = true): PcReply {
+        if (appName.isBlank()) throw AppFunctionInvalidArgumentException("appName is empty")
+        return go(if (muted) Assistant.MUTE_APP else Assistant.UNMUTE_APP, "app" to appName)
+    }
+
+    /**
      * Runs anything else on the user's Windows PC through its Arnav Island command bar, which understands short commands
-     * in plain words: "open spotify", "timer 10", "volume 30", "dark mode on", "focus 25", "empty recycle bin", a sum
-     * like "15% of 240", an app, file or setting to open. Use it for any PC request no other function covers. When the
-     * reply needs confirmation, ask the user its message and, if they agree, call again with confirmed = true.
+     * in plain words: "timer 10", "volume 30", "dark mode on", "focus 25", "empty recycle bin", a sum like "15% of 240",
+     * a file or setting to open. Use it for any PC request no other function covers. When the reply needs confirmation,
+     * ask the user its message and, if they agree, call again with confirmed = true.
      *
      * @param text The command, as the user said it, without words like "on my PC".
      * @param confirmed True only after the user agreed to the question a previous call asked.

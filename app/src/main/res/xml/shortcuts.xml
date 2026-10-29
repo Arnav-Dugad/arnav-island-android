@@ -1,4 +1,9 @@
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
+    <!-- 1.11: PC Voice, a touch and hold away. -->
+    <shortcut android:shortcutId="voice" android:enabled="true" android:icon="@mipmap/ic_voice"
+        android:shortcutShortLabel="@string/pc_voice" android:shortcutLongLabel="@string/sc_voice_long">
+        <intent android:action="android.intent.action.MAIN" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.PcVoiceActivity" />
+    </shortcut>
     <shortcut android:shortcutId="camera" android:enabled="true" android:icon="@drawable/ic_sc_camera"
         android:shortcutShortLabel="@string/sc_camera" android:shortcutLongLabel="@string/sc_camera_long">
         <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.MainActivity">

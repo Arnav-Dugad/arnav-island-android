@@ -93,12 +93,16 @@ class LinkService : Service() {
             }
         }
         // 1.5: the stats widget: as the Island tab reads the numbers, and every 5 s while the screen is on otherwise.
-        jobs += Hub.scope.launch { Hub.pcStats.collectLatest { StatsWidgets.refresh(this@LinkService) } }
+        jobs += Hub.scope.launch { Hub.pcStats.collectLatest { StatsWidgets.refresh(this@LinkService); PerfWidgets.refresh(this@LinkService) } }
+        // 1.11: the performance widget, from the same numbers and the PC's temperatures.
+        jobs += Hub.scope.launch { Hub.sensors.collectLatest { PerfWidgets.refresh(this@LinkService) } }
+        jobs += Hub.scope.launch { Hub.peers.collectLatest { PerfWidgets.refresh(this@LinkService) } }
         jobs += Hub.scope.launch {
             val power = getSystemService(PowerManager::class.java)
             while (isActive) {
-                val wanted = StatsWidgets.ids(this@LinkService).isNotEmpty() && power?.isInteractive != false && !Hub.visible
-                if (wanted && Hub.islandReady()) Hub.refreshStats()
+                val perf = PerfWidgets.ids(this@LinkService).isNotEmpty()
+                val wanted = (StatsWidgets.ids(this@LinkService).isNotEmpty() || perf) && power?.isInteractive != false && !Hub.visible
+                if (wanted && Hub.islandReady()) Hub.refreshStats(sensors = perf)
                 delay(if (wanted) 5_000L else 20_000L)
             }
         }

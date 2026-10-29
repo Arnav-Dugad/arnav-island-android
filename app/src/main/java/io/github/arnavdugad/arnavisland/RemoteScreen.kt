@@ -480,16 +480,16 @@ private fun lerpColor(a: Color, b: Color, f: Float) = androidx.compose.ui.graphi
         // 1.9: the clipboard's history both ways, the PC's files and a screenshot of it (island 0.27).
         val missing by Hub.missing.collectAsState()
         val files = pc.revision >= 10 && Proto.CMD_FILES !in missing; val shot = pc.revision >= 10 && Proto.CMD_SCREENSHOT !in missing
-        Pair {
-            GlassTile(Icons.Rounded.ContentPasteSearch, "Clipboard", "", Modifier.weight(1f).fillMaxHeight(), tint = t.indigo) { Ui.clipboard() }
-            if (files) GlassTile(Icons.Rounded.FolderOpen, "${pc.name}’s files", "", Modifier.weight(1f).fillMaxHeight(), tint = t.blue) { MoreUi.files = "" }
-            else GlassTile(Icons.Rounded.Lan, "Connection", quality(pc).text.substringBefore("  ·"), Modifier.weight(1f).fillMaxHeight(), tint = qualityColor(quality(pc).kind)) { Ui.connection = pc.id }
-        }
-        if (files || shot) Pair {
-            if (shot) GlassTile(Icons.Rounded.Screenshot, "Screenshot", "", Modifier.weight(1f).fillMaxHeight(), tint = t.gray) { Hub.screenshot(0) }
-            if (files) GlassTile(Icons.Rounded.Lan, "Connection", quality(pc).text.substringBefore("  ·"), Modifier.weight(1f).fillMaxHeight(), tint = qualityColor(quality(pc).kind)) { Ui.connection = pc.id }
-            if (!shot || !files) Spacer(Modifier.weight(1f))
-        }
+        // 1.11: and its apps, to open one there (island 0.28). Two to a row, whichever the PC has.
+        val apps = pc.revision >= 11 && Proto.CMD_APPS !in missing
+        val tiles = listOfNotNull<@Composable RowScope.() -> Unit>(
+            if (apps) ({ GlassTile(Icons.Rounded.Apps, "Apps", "", Modifier.weight(1f).fillMaxHeight(), tint = t.blue) { MoreUi.apps = true } }) else null,
+            { GlassTile(Icons.Rounded.ContentPasteSearch, "Clipboard", "", Modifier.weight(1f).fillMaxHeight(), tint = t.indigo) { Ui.clipboard() } },
+            if (files) ({ GlassTile(Icons.Rounded.FolderOpen, "${pc.name}’s files", "", Modifier.weight(1f).fillMaxHeight(), tint = t.blue) { MoreUi.files = "" } }) else null,
+            if (shot) ({ GlassTile(Icons.Rounded.Screenshot, "Screenshot", "", Modifier.weight(1f).fillMaxHeight(), tint = t.gray) { Hub.screenshot(0) } }) else null,
+            { GlassTile(Icons.Rounded.Lan, "Connection", quality(pc).text.substringBefore("  ·"), Modifier.weight(1f).fillMaxHeight(), tint = qualityColor(quality(pc).kind)) { Ui.connection = pc.id } },
+        )
+        tiles.chunked(2).forEach { row -> Pair { row.forEach { it() }; if (row.size == 1) Spacer(Modifier.weight(1f)) } }
         Pair {
             // 1.8: slides, a laser and a timer (#64).
             GlassTile(Icons.Rounded.Slideshow, "Present", "", Modifier.weight(1f).fillMaxHeight(), tint = t.warn) { Ui.presenter = true }

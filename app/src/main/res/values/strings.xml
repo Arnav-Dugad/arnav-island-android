@@ -8,6 +8,8 @@
     <string name="widget_actions_description">Lock your PC, ring it, send photos, take one for its Shelf, paste on it</string>
     <string name="widget_stats_label">Your PC’s numbers</string>
     <string name="widget_stats_description">Your PC’s processor, graphics and memory, live</string>
+    <string name="widget_perf_label">Your PC’s performance</string>
+    <string name="widget_perf_description">How busy and how hot your PC’s processor and graphics are</string>
     <string name="widget_focus_label">Focus on your PC</string>
     <string name="widget_focus_description">Your PC’s focus clock, counting down here too</string>
     <string name="tile_pc_screen">PC’s screen</string>
@@ -37,6 +39,8 @@
     <string name="widget_mixer_description">The apps playing on your PC, each with its own volume and mute, under the PC’s own volume</string>
     <!-- 1.9: your PC by voice: Gemini (App Functions), App Actions, shortcuts and arnavisland://do links. -->
     <string name="voice_label">Arnav Island actions</string>
+    <string name="pc_voice">PC Voice</string>
+    <string name="sc_voice_long">Talk to your PC</string>
     <string name="appfn_description">Controls the user’s own Windows PC from this phone through the Arnav Island app on that PC: media, volume, lock, sleep, restart, shut down, wake, find, clipboard, web pages, screenshots, its status, and anything its command bar understands.
 Operational patterns:
 - “My PC”, “my computer” and “my laptop” mean the PC chosen in the app; every function acts on it.

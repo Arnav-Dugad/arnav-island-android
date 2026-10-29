@@ -41,6 +41,13 @@
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE" />
         </intent>
+        <!-- 1.11: PC Voice: the phone's speech recognition, and its voice for the answer. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 
     <application
@@ -183,6 +190,13 @@
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_stats_info" />
         </receiver>
+        <!-- 1.11: the PC's processor and graphics, how busy and how hot. -->
+        <receiver android:name=".PerfWidget" android:exported="false" android:label="@string/widget_perf_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_perf_info" />
+        </receiver>
         <receiver android:name=".FocusWidget" android:exported="false" android:label="@string/widget_focus_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -252,6 +266,31 @@
                 <data android:scheme="arnavisland" android:host="do" />
             </intent-filter>
         </activity>
+        <!-- 1.11: PC Voice, its own icon on the home screen so "Hey Google, open PC Voice" finds it: it listens at once and
+             runs what you say on your PC. -->
+        <activity
+            android:name=".PcVoiceActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity="io.github.arnavdugad.arnavisland.voice"
+            android:launchMode="singleTask"
+            android:label="@string/pc_voice"
+            android:icon="@mipmap/ic_voice"
+            android:roundIcon="@mipmap/ic_voice"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service
+            android:name=".PcVoiceTile"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_voice"
+            android:label="@string/pc_voice"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
         <!-- 1.9: the app's actions for Gemini and other agents (Android 16+): the service and schema written by the App Functions compiler. -->
         <service
             android:name="io.github.arnavdugad.arnavisland.PcAppFunctionService"

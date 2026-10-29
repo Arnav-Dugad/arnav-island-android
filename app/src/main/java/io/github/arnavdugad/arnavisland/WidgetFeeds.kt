@@ -169,7 +169,7 @@ object WidgetFeeds {
                             if (p.lyrics && s?.available == true && s.playing) wait = if (pc.internet) 4_000L else 2_500L
                         }
                         // The minutes its battery has left, now and then (the stats widget already asks every 5 s).
-                        if (p.batteries && Hub.islandReady(pc) && StatsWidgets.ids(app).isEmpty() && System.currentTimeMillis() - statsAt > 60_000) { statsAt = System.currentTimeMillis(); Hub.refreshStats() }
+                        if (p.batteries && Hub.islandReady(pc) && StatsWidgets.ids(app).isEmpty() && PerfWidgets.ids(app).isEmpty() && System.currentTimeMillis() - statsAt > 60_000) { statsAt = System.currentTimeMillis(); Hub.refreshStats() }
                     }
                     if (lit && p.transfer) TransferWidgets.refresh(app)
                     delay(wait)

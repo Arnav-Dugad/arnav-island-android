@@ -66,9 +66,12 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /** 1.9: the sheets of this version, drawn over the whole app like the others. */
-object MoreUi { var gemini by mutableStateOf(false); var clipboard by mutableStateOf(false); var files by mutableStateOf<String?>(null); var tour by mutableStateOf(false); var sections by mutableStateOf(false) }
+object MoreUi { var gemini by mutableStateOf(false); var clipboard by mutableStateOf(false); var files by mutableStateOf<String?>(null); var tour by mutableStateOf(false); var sections by mutableStateOf(false)
+    /** 1.11: the PC's Start menu's apps, to open one there. */
+    var apps by mutableStateOf(false) }
 @Composable fun MoreSheets(pc: PeerView?) {
     ClipboardSheet(MoreUi.clipboard, pc) { MoreUi.clipboard = false }
+    PcAppsSheet(MoreUi.apps, pc) { MoreUi.apps = false }
     FilesSheet(MoreUi.files, pc) { MoreUi.files = null }
     SectionsSheet(MoreUi.sections) { MoreUi.sections = false }
     TourSheet(MoreUi.tour) { MoreUi.tour = false }
@@ -216,8 +219,8 @@ private fun placeIcon(name: String): ImageVector = when (name.lowercase()) {
 }
 
 // ---- the PC's top apps (#17) ----
-/** The PC's apps by what they use (island 0.27): each with its icon, CPU and memory as a bar; tap one to end it. */
-@Composable fun AppsPanel(pc: PeerView, visible: Boolean, onConfirm: (Confirm) -> Unit) {
+/** The PC's apps by what they use (island 0.27): each with its icon, CPU and memory as a bar. 1.11: only read, as Task Manager's list. */
+@Composable fun AppsPanel(pc: PeerView, visible: Boolean) {
     val t = LocalTokens.current; val list by Hub.processes.collectAsState(); val icons by Hub.processIcons.collectAsState()
     var sort by remember { mutableIntStateOf(Hub.processSort) }
     LaunchedEffect(visible, sort, pc.id) { Hub.processSort = sort; if (visible && Hub.rev10(pc)) while (isActive) { Hub.refreshProcesses(); delay(2500) } }
@@ -226,21 +229,21 @@ private fun placeIcon(name: String): ImageVector = when (name.lowercase()) {
     GlassPanel(Modifier.fillMaxWidth()) {
         Column {
             Segmented(listOf("By CPU", "By memory"), sort, { sort = it }, Modifier.fillMaxWidth().padding(12.dp))
-            if (list.isEmpty()) Box(Modifier.fillMaxWidth().height(90.dp), contentAlignment = Alignment.Center) { Radar(t.accent, Modifier.size(36.dp)) }
-            val top = list.maxOfOrNull { if (sort == 0) it.cpu.toDouble() else it.memory.toDouble() }?.coerceAtLeast(1.0) ?: 1.0
-            list.take(10).forEachIndexed { i, p ->
+            // Its rows' room is kept while the first answer comes, so nothing under it moves.
+            if (list.isEmpty()) Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) { Radar(t.accent, Modifier.size(36.dp)) }
+            // Sorted here too, so a row that changes places does so as the PC's next answer says.
+            val shown = (if (sort == 0) list.sortedByDescending { it.cpu } else list.sortedByDescending { it.memory }).take(10)
+            val top = shown.maxOfOrNull { if (sort == 0) it.cpu.toDouble() else it.memory.toDouble() }?.coerceAtLeast(1.0) ?: 1.0
+            shown.forEachIndexed { i, p ->
                 if (i > 0) Hairline(58.dp)
-                AppRow(p, icons[p.name], (if (sort == 0) p.cpu / top else p.memory / top).toFloat(), sort) {
-                    if (!p.protected && !p.island) onConfirm(Confirm("End ${p.name}?", "Unsaved work may be lost.", "End task", true) { Hub.endTask(p) })
-                    else Hub.banners.tryEmit(Banner(Banner.Kind.Info, "${p.name} keeps running", "Windows needs it"))
-                }
+                AppRow(p, icons[p.name], (if (sort == 0) p.cpu / top else p.memory / top).toFloat(), sort)
             }
         }
     }
 }
-@Composable private fun AppRow(p: PcProcess, icon: androidx.compose.ui.graphics.ImageBitmap?, share: Float, sort: Int, onTap: () -> Unit) {
+@Composable private fun AppRow(p: PcProcess, icon: androidx.compose.ui.graphics.ImageBitmap?, share: Float, sort: Int) {
     val t = LocalTokens.current; val f by animateFloatAsState(share.coerceIn(0f, 1f), spring(dampingRatio = .9f, stiffness = 120f), label = "App")
-    Row(Modifier.fillMaxWidth().clickable(role = Role.Button) { onTap() }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)).background(t.fill), contentAlignment = Alignment.Center) {
             if (icon != null) Image(icon, null, Modifier.size(24.dp)) else Icon(Icons.Rounded.Apps, null, tint = t.muted, modifier = Modifier.size(18.dp))
         }
@@ -254,7 +257,6 @@ private fun placeIcon(name: String): ImageVector = when (name.lowercase()) {
             Spacer(Modifier.height(5.dp))
             Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(t.track)) { Box(Modifier.fillMaxWidth(f).fillMaxHeight().clip(CircleShape).background(if (sort == 0) t.blue else t.good)) }
         }
-        if (!p.protected && !p.island) { Spacer(Modifier.width(10.dp)); Icon(Icons.Rounded.Close, "End ${p.name}", tint = t.faint, modifier = Modifier.size(18.dp)) }
     }
 }
 
@@ -336,8 +338,9 @@ private fun placeIcon(name: String): ImageVector = when (name.lowercase()) {
     }
 }
 /** The Island tab's sections, in their usual order: their keys and names. */
-val IslandSections = listOf("overview" to "Overview", "performance" to "Performance", "apps" to "Apps", "battery" to "Battery", "sound" to "Sound", "controls" to "Controls",
-    "focus" to "Focus", "run" to "Run", "power" to "Power", "alerts" to "Alerts", "pages" to "On the PC", "settings" to "Settings", "about" to "About")
+val IslandSections = listOf("overview" to "Overview", "performance" to "Performance", "apps" to "Top apps", "battery" to "Battery", "storage" to "Storage", "network" to "Network",
+    "sound" to "Sound", "controls" to "Controls", "focus" to "Focus", "run" to "Run", "power" to "Power", "updates" to "Windows Update", "startup" to "Startup",
+    "alerts" to "Alerts", "pages" to "On the PC", "settings" to "Settings", "about" to "About")
 /** The sections in the order they show: the pinned ones first, then the rest, each as you've arranged them. */
 fun orderedSections(order: List<String>, pins: Set<String>): List<String> {
     val all = order.filter { k -> IslandSections.any { it.first == k } } + IslandSections.map { it.first }.filter { it !in order }

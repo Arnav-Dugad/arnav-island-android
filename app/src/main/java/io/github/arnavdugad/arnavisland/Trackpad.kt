@@ -338,6 +338,8 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
                 val holding = downAt - lastTap < 300 && (first.position - lastTapAt).getDistance() < 48f * dp
                 if (holding) { input.frame(Link.buttonFrame(0, 1)); haptics.performHapticFeedback(HapticFeedbackType.LongPress) }
                 var most = 1; var travelled = 0f; var lastTime = downAt; var lastEvent = downAt
+                // 1.11: three or four fingers swipe as on a Windows touchpad, once per swipe.
+                var swipe = Offset.Zero; var swiped = false
                 touches[first.id.value] = first.position
                 while (true) {
                     val event = awaitPointerEvent()
@@ -352,7 +354,10 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
                         val speed = d.getDistance() / dp / ms
                         val gain = 1.6f * (1f + min(speed * 1.4f, 2.6f))
                         input.move(d.x / dp * gain, d.y / dp * gain); c.consume()
-                    } else if (down.size >= 2) {
+                    } else if (down.size >= 3) {
+                        swipe += down.map { it.positionChange() }.fold(Offset.Zero) { a, b -> a + b } / down.size.toFloat(); down.forEach { it.consume() }
+                        if (!swiped && swipe.getDistance() > 56f * dp) { swiped = true; travelled = slop * 2; haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate); fingerSwipe(input, swipe, most) }
+                    } else if (down.size >= 2 && most < 3) {
                         // Two fingers: the content follows them (a finger up scrolls down), 120 a notch every 20 dp.
                         val d = down.map { it.positionChange() }.fold(Offset.Zero) { a, b -> a + b } / down.size.toFloat()
                         travelled += d.getDistance()
@@ -371,15 +376,29 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
         }) {
         Canvas(Modifier.fillMaxSize()) {
             touches.values.forEach { p ->
-                drawCircle(Brush.radialGradient(listOf(t.accent.copy(alpha = .42f), t.accent.copy(alpha = .1f), Color.Transparent), p, 46.dp.toPx()), 46.dp.toPx(), p)
-                drawCircle(Color.White.copy(alpha = .5f), 9.dp.toPx(), p)
+                drawCircle(t.accent.copy(alpha = .22f), 26.dp.toPx(), p)
+                drawCircle(t.accent.copy(alpha = .9f), 8.dp.toPx(), p)
             }
             ripple?.let { (p, _) -> val a = rippleAge.value; if (a < 1f) drawCircle(t.accent.copy(alpha = (1f - a) * .6f), 12.dp.toPx() + 44.dp.toPx() * a, p, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx())) }
         }
         if (!used) Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Rounded.Mouse, null, tint = t.faint, modifier = Modifier.size(34.dp)); Spacer(Modifier.height(10.dp))
-            Text("Tap to click  ·  two fingers to scroll", style = Type.caption, color = t.faint, textAlign = TextAlign.Center)
+            Text("Tap to click  ·  two fingers scroll  ·  three switch desktops", style = Type.caption, color = t.faint, textAlign = TextAlign.Center)
         }
+    }
+}
+
+/**
+ * Windows' touchpad swipes: three fingers left or right move to the next or previous desktop (the content follows the
+ * fingers, as there), up opens Task View, down shows the desktop; four fingers any way show the desktop.
+ */
+private fun fingerSwipe(input: InputLink, d: Offset, fingers: Int) {
+    val sideways = kotlin.math.abs(d.x) > kotlin.math.abs(d.y)
+    when {
+        fingers >= 4 -> input.key(0x44, Vk.WIN)
+        sideways -> input.key(if (d.x < 0) Vk.RIGHT else Vk.LEFT, Vk.CONTROL, Vk.WIN)
+        d.y < 0 -> input.key(Vk.TAB, Vk.WIN)
+        else -> input.key(0x44, Vk.WIN)
     }
 }
 

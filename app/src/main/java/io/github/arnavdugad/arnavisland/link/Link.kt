@@ -908,8 +908,6 @@ class Link(
     // ---- revision 10 (island 0.27) ----
     /** The PC's apps by CPU (sort 0) or memory (1), with icons when asked. */
     fun processes(peer: String, sort: Int, max: Int = 20, icons: Boolean = false): List<PcProcess>? = ask(peer, Proto.CMD_PROCESSES, Bytes().u8(0).u8(sort).u8(max).u8(if (icons) 1 else 0).build())?.let { IslandWire.processes(it) }
-    /** Ends an app on the PC (gracefully first); the list afterwards, or null (with why) when it can't be. */
-    fun endTask(peer: String, pid: Long): RemoteReply? = remote(peer, Proto.CMD_PROCESSES, Bytes().u8(1).u32(pid).build())
     fun sensors(peer: String): Sensors? = ask(peer, Proto.CMD_SENSORS)?.let { IslandWire.sensors(it) }
     /** A page of a folder on the PC; the reply's status says when browsing is off there (NOT_ALLOWED). */
     fun files(peer: String, path: String, sort: Int, offset: Int = 0, max: Int = 120, thumbs: Boolean = true): Pair<Int, FileList?> {
@@ -927,6 +925,24 @@ class Link(
     /** One step of the speed test: [bytes] down (op 0) or up (op 1); true when it went. */
     fun speed(peer: String, down: Boolean, bytes: Int): Boolean =
         if (down) (ask(peer, Proto.CMD_SPEED, Bytes().u8(0).u32(bytes).build())?.size ?: 0) >= bytes else ask(peer, Proto.CMD_SPEED, Bytes().u8(1).raw(ByteArray(bytes)).build()) != null
+    // ---- revision 11 (island 0.28): each with what the PC said (UNSUPPORTED from an island between versions) ----
+    private fun <T> read(peer: String, command: Int, payload: ByteArray, parse: (ByteArray) -> T?): Pair<Int, T?> {
+        val r = remote(peer, command, payload) ?: return Proto.FAILED to null
+        return r.status to (if (r.ok) parse(r.payload) else null)
+    }
+    fun batteryHealth(peer: String) = read(peer, Proto.CMD_BATTERY_HEALTH, ByteArray(0), IslandWire::batteryHealth)
+    /** Its drives and what fills the Windows drive; [again]: measured afresh. */
+    fun storage(peer: String, again: Boolean = false) = read(peer, Proto.CMD_STORAGE, byteArrayOf(if (again) 1 else 0), IslandWire::storage)
+    fun startup(peer: String) = read(peer, Proto.CMD_STARTUP, byteArrayOf(0), IslandWire::startup)
+    /** Turns one on or off (only the user's own: others are NOT_ALLOWED); the list afterwards. */
+    fun setStartup(peer: String, id: String, enabled: Boolean) = read(peer, Proto.CMD_STARTUP, Bytes().u8(1).string(id).u8(if (enabled) 1 else 0).build(), IslandWire::startup)
+    fun network(peer: String) = read(peer, Proto.CMD_NETWORK, ByteArray(0), IslandWire::network)
+    /** Windows Update: read (op 0), check now (1), or open it in the PC's Settings (2). */
+    fun updates(peer: String, op: Int = 0) = read(peer, Proto.CMD_UPDATES, byteArrayOf(op.toByte()), IslandWire::updates)
+    /** The apps of its Start menu, by name (with their icons when [icons]). */
+    fun startMenu(peer: String, icons: Boolean) = read(peer, Proto.CMD_APPS, byteArrayOf(0, if (icons) 1 else 0), IslandWire::apps)
+    /** Opens one on the PC: its status (OK opened, FAILED not). */
+    fun openApp(peer: String, id: String): Int = remote(peer, Proto.CMD_APPS, Bytes().u8(1).string(id).build())?.status ?: Proto.FAILED
 
     // ---- revision 4: connections kept for more ----
     /** A remote (or notices) connection kept open, the path it went by (3 this network, 2 direct, 1 relay) and when last used. */

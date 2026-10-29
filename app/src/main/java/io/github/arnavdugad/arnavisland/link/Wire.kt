@@ -17,8 +17,9 @@ object Proto {
      * up next, the PC's apps each with its volume, its sound's levels, its adapters (to wake it), paused transfers, and
      * this phone's camera and microphone on the PC. Revision 10 (1.9, island 0.27): the PC's top apps, temperatures, files,
      * clipboard history, screenshots, slides and a speed test; transfers that resume after a dropped connection; this
-     * phone's live activities on the island; compressed microphone audio and a real camera on the PC. */
-    const val REVISION = 10
+     * phone's live activities on the island; compressed microphone audio and a real camera on the PC. Revision 11 (1.11,
+     * island 0.28): the PC's battery health, storage, startup apps, network, Windows Update and its Start menu's apps. */
+    const val REVISION = 11
     const val TCP_PORT = 47820
     const val UDP_PORT = 47821
     val MAGIC = byteArrayOf('A'.code.toByte(), 'R'.code.toByte(), 'N'.code.toByte(), 'V'.code.toByte())
@@ -89,6 +90,8 @@ object Proto {
     const val CMD_PLAYBACK = 20; const val CMD_MIXER = 21; const val CMD_LEVELS = 22; const val CMD_MACHINE = 23
     /** Revision 10 (island 0.27): 24 processes, 25 sensors, 26 files, 27 clipboard history, 28 screenshot, 29 slides, 30 speed. */
     const val CMD_PROCESSES = 24; const val CMD_SENSORS = 25; const val CMD_FILES = 26; const val CMD_CLIPS = 27; const val CMD_SCREENSHOT = 28; const val CMD_SLIDES = 29; const val CMD_SPEED = 30
+    /** Revision 11 (island 0.28), each answered [version 1, ...]; only read the PC, but for 33 op 1 (a startup switch) and 37 op 1 (open an app). 36 is unused. */
+    const val CMD_BATTERY_HEALTH = 31; const val CMD_STORAGE = 32; const val CMD_STARTUP = 33; const val CMD_NETWORK = 34; const val CMD_UPDATES = 35; const val CMD_APPS = 37
     /** An offer's flags: 1 a folder, 2 for the Shelf; revision 8: 4 with a picture, 8 a photo the PC asked for. */
     const val OFFER_FOLDER = 1; const val OFFER_SHELF = 2; const val OFFER_PICTURE = 4; const val OFFER_ASKED = 8
     /** Revision 10: the offer carries a 16-byte token, and the accept may say where to carry on ([1, u32 file, u64 offset]). */

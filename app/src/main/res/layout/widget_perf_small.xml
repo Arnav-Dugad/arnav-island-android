@@ -1,0 +1,31 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent">
+    <ImageView android:id="@+id/w_bg" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY"
+        android:src="@drawable/widget_glass" android:importantForAccessibility="no" />
+    <LinearLayout android:id="@+id/w_open" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="horizontal"
+        android:gravity="center_vertical" android:paddingStart="14dp" android:paddingEnd="10dp" android:paddingTop="6dp" android:paddingBottom="6dp">
+        <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
+            <FrameLayout android:layout_width="34dp" android:layout_height="34dp">
+                <ProgressBar android:id="@+id/w_cpu_ring" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="match_parent"
+                    android:indeterminate="false" android:max="100" android:progress="0" android:progressDrawable="@drawable/widget_ring_cpu" />
+            </FrameLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp" android:orientation="vertical">
+                <TextView android:id="@+id/w_cpu" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—"
+                    android:textColor="#FFFFFFFF" android:textSize="15sp" android:fontFamily="sans-serif-light" android:maxLines="1" />
+                <TextView android:id="@+id/w_cpu_temp" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="CPU"
+                    android:textColor="#80FFFFFF" android:textSize="9.5sp" android:letterSpacing="0.04" android:maxLines="1" android:ellipsize="end" android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+        <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
+            <FrameLayout android:layout_width="34dp" android:layout_height="34dp">
+                <ProgressBar android:id="@+id/w_gpu_ring" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="match_parent"
+                    android:indeterminate="false" android:max="100" android:progress="0" android:progressDrawable="@drawable/widget_ring_gpu" />
+            </FrameLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp" android:orientation="vertical">
+                <TextView android:id="@+id/w_gpu" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—"
+                    android:textColor="#FFFFFFFF" android:textSize="15sp" android:fontFamily="sans-serif-light" android:maxLines="1" />
+                <TextView android:id="@+id/w_gpu_temp" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="GPU"
+                    android:textColor="#80FFFFFF" android:textSize="9.5sp" android:letterSpacing="0.04" android:maxLines="1" android:ellipsize="end" android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

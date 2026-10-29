@@ -252,12 +252,12 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
                 GlassSwitch(flag("pcMedia"), { on -> set("pcMedia", on); if (on) PcMedia.update(context, Hub.pc(), Hub.status.value) else PcMedia.clear(context) }) } },
         Entry(2, "Volume buttons turn your PC", "volume keys buttons sound") {
             GlassRow(Icons.Rounded.VolumeUp, "Volume buttons turn your PC", "While the Remote shows", tint = t.blue) { GlassSwitch(flag("volumeKeys"), { set("volumeKeys", it) }) } },
-        Entry(2, "Widgets", "widgets home screen lyrics batteries transfer") {
+        Entry(2, "Widgets", "widgets home screen lyrics batteries transfer performance temperature") {
             Column {
                 GlassRow(Icons.Rounded.Widgets, "Widgets", if (widgets.isRequestPinAppWidgetSupported) null else "Add from your home screen", tint = t.blue)
                 if (widgets.isRequestPinAppWidgetSupported) Row(Modifier.horizontalScroll(rememberScrollState()).padding(start = 60.dp, end = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("Now playing" to PcWidget::class.java, "Controls" to ControlsWidget::class.java, "Mixer" to MixerWidget::class.java, "Quick actions" to ActionsWidget::class.java, "Lyrics" to LyricsWidget::class.java, "Batteries" to BatteriesWidget::class.java, "Transfers" to TransferWidget::class.java,
-                        "PC’s numbers" to StatsWidget::class.java, "Focus" to FocusWidget::class.java).forEach { (name, c) -> GlassChip(name, icon = Icons.Rounded.Add) { runCatching { widgets.requestPinAppWidget(ComponentName(context, c), null, null) } } }
+                        "PC’s numbers" to StatsWidget::class.java, "Performance" to PerfWidget::class.java, "Focus" to FocusWidget::class.java).forEach { (name, c) -> GlassChip(name, icon = Icons.Rounded.Add) { runCatching { widgets.requestPinAppWidget(ComponentName(context, c), null, null) } } }
                 }
             } },
         Entry(2, "Use with Gemini", "gemini assistant voice google ask hey app functions shortcuts routines") {

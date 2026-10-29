@@ -44,6 +44,12 @@ class StatsWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) { Hub.init(context); StatsWidgets.refresh(context, force = true) }
     override fun onEnabled(context: Context) { Hub.init(context); LinkService.start(context) }
 }
+/** 1.11: your PC's processor and graphics: how busy (rings) and how hot, small or large. */
+class PerfWidget : AppWidgetProvider() {
+    override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) { Hub.init(context); PerfWidgets.refresh(context, force = true) }
+    override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) { Hub.init(context); PerfWidgets.refresh(context, force = true) }
+    override fun onEnabled(context: Context) { Hub.init(context); LinkService.start(context) }
+}
 /** 1.5: your PC's focus clock, counting down here too (on the lock screen where the phone allows widgets there). */
 class FocusWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) { Hub.init(context); FocusWidgets.refresh(context) }
@@ -53,7 +59,7 @@ class FocusWidget : AppWidgetProvider() {
 /** 1.5: the widgets' style: the glass (in the cover's colours), or Material You (the wallpaper's palette, Android 12 and later). */
 object WidgetStyle {
     fun you(context: Context) = android.os.Build.VERSION.SDK_INT >= 31 && Hub.prefs.getBoolean("widgetsYou", false)
-    fun set(context: Context, you: Boolean) { Hub.prefs.edit().putBoolean("widgetsYou", you).apply(); PcWidgets.refresh(context, force = true); StatsWidgets.refresh(context, force = true); FocusWidgets.refresh(context); WidgetFeeds.refresh(context, force = true) }
+    fun set(context: Context, you: Boolean) { Hub.prefs.edit().putBoolean("widgetsYou", you).apply(); PcWidgets.refresh(context, force = true); StatsWidgets.refresh(context, force = true); PerfWidgets.refresh(context, force = true); FocusWidgets.refresh(context); WidgetFeeds.refresh(context, force = true) }
     fun open(context: Context, code: Int, what: String? = "island") = PendingIntent.getActivity(context, code,
         Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP).apply { what?.let { putExtra("open", it) } },
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -80,6 +86,44 @@ object StatsWidgets {
         v.setOnClickPendingIntent(R.id.w_open, WidgetStyle.open(app, 94))
         runCatching { AppWidgetManager.getInstance(app).updateAppWidget(ids, v) }
     }
+}
+
+/** 1.11: the performance widget: from the PC's numbers and temperatures as the app last read them (the service asks for both while it's out). */
+object PerfWidgets {
+    private val COMPACT = android.util.SizeF(110f, 40f); private val ROOMY = android.util.SizeF(200f, 100f)
+    private var drawn = ""
+    fun ids(context: Context): IntArray = runCatching { AppWidgetManager.getInstance(context).getAppWidgetIds(ComponentName(context, PerfWidget::class.java)) }.getOrDefault(IntArray(0))
+    @Synchronized fun refresh(context: Context, force: Boolean = false) {
+        val app = context.applicationContext; val ids = ids(app); if (ids.isEmpty()) return
+        val pc = Hub.pc(); val here = pc != null && pc.online
+        val s = Hub.pcStats.value.takeIf { here }; val heat = Hub.sensors.value.takeIf { here }
+        fun pct(v: Double?) = if (v == null || v.isNaN() || v < 0) -1 else v.roundToInt().coerceIn(0, 100)
+        fun deg(v: Float?) = if (v == null || !v.isFinite()) -1 else v.roundToInt()
+        val cpu = pct(s?.cpu); val gpu = pct(s?.gpu); val cpuC = deg(heat?.cpu); val gpuC = deg(heat?.gpu)
+        val you = WidgetStyle.you(app)
+        val where = when { pc == null -> "PAIR WITH YOUR PC"; !pc.online -> "${pc.name.uppercase()} IS AWAY"; else -> pc.name.uppercase() }
+        val look = listOf(where, cpu, gpu, cpuC, gpuC, you).joinToString("|")
+        if (!force && look == drawn) return
+        drawn = look
+        val m = AppWidgetManager.getInstance(app)
+        for (id in ids) runCatching {
+            m.updateAppWidget(id, WidgetFeeds.sized(m, id, COMPACT, ROOMY, true) { roomy ->
+                RemoteViews(app.packageName, if (you) (if (roomy) R.layout.widget_perf_you else R.layout.widget_perf_you_small) else if (roomy) R.layout.widget_perf else R.layout.widget_perf_small).apply {
+                    if (roomy) setTextViewText(R.id.w_where, where)
+                    for ((ring, text, temp, value, c, label) in listOf(Six(R.id.w_cpu_ring, R.id.w_cpu, R.id.w_cpu_temp, cpu, cpuC, "CPU"), Six(R.id.w_gpu_ring, R.id.w_gpu, R.id.w_gpu_temp, gpu, gpuC, "GPU"))) {
+                        setProgressBar(ring, 100, value.coerceAtLeast(0), false); setTextViewText(text, if (value < 0) "—" else "$value%")
+                        // Small, the temperature follows its name ("CPU  62°").
+                        setTextViewText(temp, if (roomy) (if (c < 0) "—" else "$c°C") else if (c < 0) label else "$label  $c°")
+                        // Hot on the glass: amber past 70°, red past 85° (Material You keeps the wallpaper's colours).
+                        if (!you && roomy) setTextColor(temp, when { c >= 85 -> 0xFFFF8A80.toInt(); c >= 70 -> 0xFFFFC46B.toInt(); else -> 0xFFFFFFFF.toInt() })
+                        setContentDescription(ring, "$label ${if (value < 0) "unknown" else "$value percent"}${if (c >= 0) ", $c degrees" else ""}")
+                    }
+                    setOnClickPendingIntent(R.id.w_open, WidgetStyle.open(app, 98))
+                }
+            })
+        }
+    }
+    private data class Six(val ring: Int, val text: Int, val temp: Int, val value: Int, val c: Int, val label: String)
 }
 
 object FocusWidgets {

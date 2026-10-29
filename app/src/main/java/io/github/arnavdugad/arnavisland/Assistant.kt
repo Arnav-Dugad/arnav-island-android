@@ -16,7 +16,8 @@ import kotlin.math.roundToInt
  *
  * Actions (and their arguments): play_pause, play, pause, next, previous, volume (value 0..100), volume_up and
  * volume_down (by, default 10), mute, unmute, lock, sleep, restart, shutdown (these three need confirm), find, wake,
- * paste (text), open (url), screenshot, playing, status, command (text, confirm).
+ * paste (text), open (url), screenshot, playing, status, command (text, confirm). 1.11: open_app (app), top_apps
+ * (by: memory or cpu), mute_app and unmute_app (app).
  */
 object Assistant {
     /** What happened, said plainly; [needsConfirm]: nothing was done yet, [speech] is the question to ask first. */
@@ -27,7 +28,9 @@ object Assistant {
     const val LOCK = "lock"; const val SLEEP = "sleep"; const val RESTART = "restart"; const val SHUT_DOWN = "shutdown"
     const val FIND = "find"; const val WAKE = "wake"; const val PASTE = "paste"; const val OPEN = "open"; const val SCREENSHOT = "screenshot"
     const val PLAYING = "playing"; const val STATUS = "status"; const val COMMAND = "command"
-    val ACTIONS = listOf(PLAY_PAUSE, PLAY, PAUSE, NEXT, PREVIOUS, VOLUME, VOLUME_UP, VOLUME_DOWN, MUTE, UNMUTE, LOCK, SLEEP, RESTART, SHUT_DOWN, FIND, WAKE, PASTE, OPEN, SCREENSHOT, PLAYING, STATUS, COMMAND)
+    const val OPEN_APP = "open_app"; const val TOP_APPS = "top_apps"; const val MUTE_APP = "mute_app"; const val UNMUTE_APP = "unmute_app"
+    val ACTIONS = listOf(PLAY_PAUSE, PLAY, PAUSE, NEXT, PREVIOUS, VOLUME, VOLUME_UP, VOLUME_DOWN, MUTE, UNMUTE, LOCK, SLEEP, RESTART, SHUT_DOWN, FIND, WAKE, PASTE, OPEN, SCREENSHOT, PLAYING, STATUS, COMMAND,
+        OPEN_APP, TOP_APPS, MUTE_APP, UNMUTE_APP)
     /** Actions that ask first (the PC goes away, or it may lose what's unsaved). */
     val ASKS = setOf(SLEEP, RESTART, SHUT_DOWN)
     /** Revision 10: a screenshot on the PC (CMD 28). */
@@ -43,6 +46,7 @@ object Assistant {
             "lock_pc", "lock_screen" -> LOCK; "shut_down", "power_off", "turn_off" -> SHUT_DOWN; "reboot" -> RESTART
             "ring", "findpc", "find_my_pc" -> FIND; "wake_up", "wol", "turn_on" -> WAKE; "clipboard" -> PASTE; "url", "link" -> OPEN
             "now_playing", "whats_playing", "song" -> PLAYING; "stats", "how", "battery", "cpu", "health" -> STATUS; "cmd", "run", "do" -> COMMAND
+            "launch", "start_app", "app" -> OPEN_APP; "processes", "top", "memory", "ram" -> TOP_APPS
             else -> null
         }
     }
@@ -56,6 +60,16 @@ object Assistant {
         normalize(l)?.let { return it to emptyMap() }
         Regex("""(?:set\s+)?(?:the\s+)?volume\s+(?:to\s+)?(\d{1,3})\s*%?""").find(l)?.let { return VOLUME to mapOf("value" to it.groupValues[1]) }
         fun has(vararg w: String) = w.any { Regex("""\b$it\b""").containsMatchIn(l) }
+        // 1.11: "mute Discord", "unmute spotify on my PC": one app, not the whole PC.
+        val onPc = Regex("""\s+(?:on|in)\s+(?:my\s+|the\s+)?(?:pc|computer|laptop|desktop)$""")
+        Regex("""^(un)?mute\s+(.+)$""").find(l)?.let { m -> val app = m.groupValues[2].replace(onPc, "").removePrefix("the ").trim()
+            if (app.isNotEmpty() && app !in setOf("my pc", "pc", "computer", "laptop", "it", "everything", "sound", "the sound", "volume", "audio")) return (if (m.groupValues[1].isEmpty()) MUTE_APP else UNMUTE_APP) to mapOf("app" to app) }
+        // "What's using my PC's memory", "what's slowing my PC down", "top apps".
+        if (Regex("""(?:what(?:'s| is)\s+(?:using|eating|hogging|taking)|which apps?|top apps|slowing)""").containsMatchIn(l))
+            return TOP_APPS to mapOf("by" to if (has("cpu", "processor", "slow", "slowing")) "cpu" else "memory")
+        // "Open Spotify on my PC", "launch steam": an app (a web address stays a web address, below).
+        Regex("""^(?:open|launch|start|run)\s+(?:the\s+)?(.+?)(?:\s+app)?$""").find(l.replace(onPc, ""))?.let { m -> val app = m.groupValues[1].trim()
+            if (app.isNotEmpty() && web(app) == null && !app.contains('/')) return OPEN_APP to mapOf("app" to app, "text" to p) }
         return when {
             has("unmute") -> UNMUTE to emptyMap()
             has("mute") -> MUTE to emptyMap()
@@ -142,6 +156,9 @@ object Assistant {
                 else Result(true, (if (s.playing) "Playing on $name: " else "Paused on $name: ") + s.title + (if (s.artist.isNotBlank()) " by ${s.artist}" else "") + (if (s.app.isNotBlank()) ", in ${s.app}" else "")) }
             STATUS -> status(pc)
             COMMAND -> command(pc, args["text"].orEmpty(), confirmed)
+            OPEN_APP -> openApp(pc, (args["app"] ?: args["text"]).orEmpty(), args["text"], confirmed)
+            TOP_APPS -> topApps(pc, args["by"] != "cpu")
+            MUTE_APP, UNMUTE_APP -> muteApp(pc, (args["app"] ?: args["text"]).orEmpty(), a == MUTE_APP)
             else -> Result(false, "Arnav Island can't do that yet")
         }
     }
@@ -194,11 +211,52 @@ object Assistant {
         return Result(false, "$name couldn't do that")
     }
 
+    /** The best of [names] for what was said ("spotify" → "Spotify", "code" → "Visual Studio Code"), or -1. */
+    internal fun match(said: String, names: List<String>): Int {
+        fun clean(s: String) = s.lowercase().replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim()
+        val q = clean(said).removeSuffix(" app").trim(); if (q.isEmpty()) return -1
+        val c = names.map { clean(it) }; val words = q.split(' ')
+        return c.indexOfFirst { it == q }.takeIf { it >= 0 } ?: c.indexOfFirst { it.startsWith("$q ") || it.startsWith(q) }.takeIf { it >= 0 }
+            ?: c.indexOfFirst { n -> n.split(' ').any { it == q } }.takeIf { it >= 0 } ?: c.indexOfFirst { n -> words.all { w -> n.contains(w) } }.takeIf { it >= 0 }
+            ?: c.indexOfFirst { n -> n.replace(" ", "").contains(q.replace(" ", "")) }
+    }
+
+    /** 1.11: an app from the PC's Start menu (island 0.28); older islands, or none matching, go to its command bar as said. */
+    private suspend fun openApp(pc: PeerView, app: String, said: String?, confirmed: Boolean): Result {
+        val name = pc.name; if (app.isBlank()) return Result(false, "Which app should $name open?")
+        if (Hub.rev11(pc) && Proto.CMD_APPS !in Hub.missing.value) {
+            if (Hub.pcApps.value.isEmpty()) Hub.refreshPcApps(icons = false)
+            val apps = Hub.pcApps.value; val i = match(app, apps.map { it.name })
+            if (i >= 0) return if (Hub.openPcApp(apps[i].id)) Result(true, "Opened ${apps[i].name} on $name") else Result(false, "$name couldn't open ${apps[i].name}")
+        }
+        return command(pc, said?.takeIf { it.isNotBlank() } ?: "open $app", confirmed)
+    }
+
+    /** 1.11: the apps using the most memory (or processor) on the PC, the top three in a sentence (island 0.28). */
+    private suspend fun topApps(pc: PeerView, memory: Boolean): Result {
+        val name = pc.name
+        if (!Hub.rev11(pc) || Proto.CMD_PROCESSES in Hub.missing.value) return Result(false, "Update Arnav Island on $name for that")
+        Hub.processSort = if (memory) 1 else 0; Hub.refreshProcesses()
+        val top = Hub.processes.value.let { l -> if (memory) l.sortedByDescending { it.memory } else l.sortedByDescending { it.cpu } }.take(3)
+        if (top.isEmpty()) return Result(false, "$name didn't answer")
+        return Result(true, (if (memory) "Using the most memory on $name: " else "Using the most processor on $name: ") +
+            top.joinToString(", ") { p -> p.name + " " + if (memory) Hub.sizeText(p.memory) else "${p.cpu.takeIf { !it.isNaN() }?.roundToInt() ?: 0}%" })
+    }
+
+    /** 1.11: one app's sound on the PC, muted or back on, from its mixer (island 0.26). */
+    private suspend fun muteApp(pc: PeerView, app: String, on: Boolean): Result {
+        val name = pc.name; if (app.isBlank()) return Result(false, "Which app?")
+        if (pc.revision < 9) return Result(false, "Update Arnav Island on $name for that")
+        Hub.refreshMixer(); val apps = Hub.mixer.value; val i = match(app, apps.map { it.name })
+        if (i < 0) return Result(false, "${app.replaceFirstChar { it.uppercase() }} isn't playing sound on $name")
+        Hub.setAppMute(apps[i].pid, on); return Result(true, (if (on) "Muted " else "Unmuted ") + apps[i].name + " on $name")
+    }
+
     /** A web address as typed or said ("example.com"): with its scheme, or null when it isn't one. */
     private fun web(text: String?): String? {
         val t = text?.trim()?.removePrefix("<")?.removeSuffix(">") ?: return null
         if (t.isEmpty() || t.contains(' ')) return null
         val u = if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://").containsMatchIn(t)) t else "https://$t"
-        return u.takeIf { (u.startsWith("http://", true) || u.startsWith("https://", true)) && Uri.parse(it).host?.contains('.') == true }
+        return u.takeIf { (u.startsWith("http://", true) || u.startsWith("https://", true)) && runCatching { java.net.URI(it).host }.getOrNull()?.contains('.') == true }
     }
 }

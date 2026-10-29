@@ -75,6 +75,7 @@ import io.github.arnavdugad.arnavisland.link.Proto
 import io.github.arnavdugad.arnavisland.link.PcControls
 import io.github.arnavdugad.arnavisland.link.PcStats
 import io.github.arnavdugad.arnavisland.link.PcBattery
+import io.github.arnavdugad.arnavisland.link.BatteryHealth
 import io.github.arnavdugad.arnavisland.link.PeerView
 import io.github.arnavdugad.arnavisland.link.hex
 import kotlinx.coroutines.delay
@@ -93,6 +94,7 @@ import kotlin.math.roundToInt
 @Composable fun IslandScreen(pc: PeerView?, visible: Boolean, bar: TopBar, padding: PaddingValues) {
     val stats by Hub.pcStats.collectAsState(); val controls by Hub.pcControls.collectAsState(); val settings by Hub.islandSettings.collectAsState(); val outputs by Hub.outputs.collectAsState()
     val battery by Hub.pcBattery.collectAsState(); val peers by Hub.peers.collectAsState()
+    val health by Hub.batteryHealth.collectAsState(); val missing by Hub.missing.collectAsState(); val t = LocalTokens.current
     val pcs = remember(peers) { peers.filter { it.paired && !it.phone } }
     val confirm: (Confirm) -> Unit = { IslandUi.confirm = it }
     val ready = Hub.islandReady(pc)
@@ -102,7 +104,10 @@ import kotlin.math.roundToInt
         Hub.loadOutputs(); if (Hub.islandSettings.value == null) Hub.loadIslandSettings()
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             var n = 0
-            while (true) { Hub.refreshIsland(withStats = true); if ((pc?.revision ?: 0) >= 9) Hub.refreshMixer(); if (n % 3 == 0 && Hub.rev10(pc)) Hub.refreshSensors(); if (++n % 10 == 0) Hub.loadOutputs(); delay(1000) }
+            while (true) { Hub.refreshIsland(withStats = true); if ((pc?.revision ?: 0) >= 9) Hub.refreshMixer(); if (n % 3 == 0 && Hub.rev10(pc)) Hub.refreshSensors()
+                // 1.11: the battery's health now and then (it changes slowly).
+                if (n % 60 == 0 && Hub.has11(Proto.CMD_BATTERY_HEALTH, pc)) Hub.refreshBatteryHealth()
+                if (++n % 10 == 0) Hub.loadOutputs(); delay(1000) }
         }
     }
     val scroll = rememberScrollState()
@@ -130,15 +135,25 @@ import kotlin.math.roundToInt
                 else -> {
                     if (shown.size > 1) { JumpRow(shown, current, ::jump, inset = false); Spacer(Modifier.height(4.dp)) }
                     // 1.9: in your order, the pinned ones first.
+                    // 1.11: island 0.28's sections show only once the PC has said it has them.
+                    fun has(cmd: Int) = Hub.rev11(pc) && cmd !in missing
                     for (key in sequence) when (key) {
                         "overview" -> Fold(key, anchors, pinned = key in pins) { Overview(pc, stats, controls) }
-                        "performance" -> Fold(key, anchors, pinned = key in pins) { Performance(stats); Spacer(Modifier.height(12.dp)); HourPanel() }
-                        "apps" -> if (Hub.rev10(pc) && Proto.CMD_PROCESSES !in Hub.missing.collectAsState().value) Fold(key, anchors, "Apps on ${pc.name}", pinned = key in pins) { AppsPanel(pc, visible, confirm) }
-                        "battery" -> if (battery?.present == true) Fold(key, anchors, pinned = key in pins) { BatteryPanel(battery!!) }
+                        "performance" -> Fold(key, anchors, pinned = key in pins) { Performance(stats); Spacer(Modifier.height(12.dp))
+                            // 1.11: the temperatures' hour, there from the start (the hour of numbers comes in under it once it has some).
+                            if (Hub.rev10(pc)) HeatPanel(); HourPanel() }
+                        "apps" -> if (Hub.rev10(pc) && Proto.CMD_PROCESSES !in missing) Fold(key, anchors, "Apps using the most", pinned = key in pins) { AppsPanel(pc, visible) }
+                        "battery" -> if (battery?.present == true) Fold(key, anchors, pinned = key in pins) { BatteryPanel(battery!!, health, has(Proto.CMD_BATTERY_HEALTH)) }
+                        "storage" -> if (has(Proto.CMD_STORAGE)) Fold(key, anchors, pinned = key in pins) { StoragePanel(pc, visible) }
+                        "network" -> if (has(Proto.CMD_NETWORK)) Fold(key, anchors, pinned = key in pins) { NetworkPanel(pc, visible) }
+                        "updates" -> if (has(Proto.CMD_UPDATES)) Fold(key, anchors, pinned = key in pins) { UpdatesPanel(pc, visible, confirm) }
+                        "startup" -> if (has(Proto.CMD_STARTUP)) Fold(key, anchors, "Startup apps", pinned = key in pins) { StartupPanel(pc, visible) }
                         "sound" -> Fold(key, anchors, pinned = key in pins) { SoundPanel(pc, controls, outputs, settings) }
                         "controls" -> Fold(key, anchors, pinned = key in pins) { ControlsPanel(controls) }
                         "focus" -> Fold(key, anchors, pinned = key in pins) { FocusPanel(controls) }
-                        "run" -> Fold(key, anchors, "Run on ${pc.name}", pinned = key in pins) { CommandPanel(pc.name, confirm) }
+                        "run" -> Fold(key, anchors, "Run on ${pc.name}", pinned = key in pins) { CommandPanel(pc.name, confirm)
+                            // 1.11: its Start menu's apps, to open one there.
+                            if (has(Proto.CMD_APPS)) { Spacer(Modifier.height(12.dp)); GlassPanel(Modifier.fillMaxWidth()) { GlassRow(Icons.Rounded.Apps, "Apps on ${pc.name}", tint = t.blue, chevron = true, onClick = { MoreUi.apps = true }) } } }
                         "power" -> Fold(key, anchors, pinned = key in pins) { PowerPanel(pc, confirm) }
                         "alerts" -> Fold(key, anchors, pinned = key in pins) { AlertsPanel() }
                         "pages" -> Fold(key, anchors, "Show on ${pc.name}", pinned = key in pins) { PagesPanel() }
@@ -435,7 +450,7 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
  * 1.5: the PC's battery (island 0.23): a ring with its level, whether it's charging and for how long, the power going in
  * or out, its last day, and its health, cycles, temperature, capacity and voltage.
  */
-@Composable private fun BatteryPanel(b: PcBattery) {
+@Composable private fun BatteryPanel(b: PcBattery, health: BatteryHealth?, healthDue: Boolean) {
     val t = LocalTokens.current
     val colour = when { b.charging -> t.good; b.percent in 0..20 -> t.danger; else -> t.blue }
     GlassPanel(Modifier.fillMaxWidth()) {
@@ -461,16 +476,24 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
         }
     }
     Spacer(Modifier.height(12.dp))
+    // 1.11: island 0.28 reads the battery's own health (hidden on a desktop): its card takes the place of these facts.
+    val card = healthDue && health?.present != false
+    if (card) { HealthCard(health); Spacer(Modifier.height(12.dp)) }
     GlassPanel(Modifier.fillMaxWidth()) {
         Column {
             var first = true
             fun sep() = if (first) { first = false; false } else true
+            if (card) {
+                Fact(Icons.Rounded.Thermostat, "Temperature", if (b.temperatureDeciK > 0) "%.1f°C".format(b.temperatureDeciK / 10.0 - 273.15) else "—", t.warn); Hairline()
+                Fact(Icons.Rounded.ElectricBolt, "Voltage", (health?.voltageMv?.takeIf { it > 0 } ?: b.voltageMv.takeIf { it > 0 })?.let { "%.2f V".format(it / 1000.0) } ?: "—", t.yellow)
+            } else {
             if (b.health >= 0) { Fact(Icons.Rounded.FavoriteBorder, "Health", "${(b.health * 100).roundToInt()}%" + if (b.healthBefore >= 0 && kotlin.math.abs(b.health - b.healthBefore) >= .0005) "  (%+.1f this week)".format((b.health - b.healthBefore) * 100).replace("-", "−") else "", t.good); first = false }
             if (b.cycles > 0) { if (sep()) Hairline(); Fact(Icons.Rounded.Autorenew, "Cycles", "${b.cycles}", t.blue) }
             if (b.temperatureDeciK > 0) { if (sep()) Hairline(); Fact(Icons.Rounded.Thermostat, "Temperature", "%.1f°C".format(b.temperatureDeciK / 10.0 - 273.15), t.warn) }
             if (b.fullMwh > 0) { if (sep()) Hairline(); Fact(Icons.Rounded.BatteryStd, "Capacity", "%.1f of %.1f Wh".format(b.remainingMwh / 1000.0, b.fullMwh / 1000.0) + if (b.designMwh > 0) " (made for %.1f)".format(b.designMwh / 1000.0) else "", t.teal) }
             if (b.voltageMv > 0) { if (sep()) Hairline(); Fact(Icons.Rounded.ElectricBolt, "Voltage", "%.2f V".format(b.voltageMv / 1000.0), t.yellow) }
             listOf(b.manufacturer, b.name).filter { it.isNotBlank() }.joinToString(" ").takeIf { it.isNotBlank() }?.let { if (sep()) Hairline(); Fact(Icons.Rounded.Info, "Battery", it + if (b.chemistry.isNotBlank()) "  ·  ${b.chemistry}" else "", t.gray) }
+            }
         }
     }
 }
@@ -551,7 +574,7 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
     }
 }
 /** A fact in a list: its icon on its colour, its name, and its value on the right. */
-@Composable private fun Fact(icon: ImageVector, title: String, value: String, tint: Color = LocalTokens.current.blue, onClick: (() -> Unit)? = null) {
+@Composable internal fun Fact(icon: ImageVector, title: String, value: String, tint: Color = LocalTokens.current.blue, onClick: (() -> Unit)? = null) {
     val t = LocalTokens.current
     Row(Modifier.fillMaxWidth().heightIn(min = 50.dp).then(if (onClick != null) Modifier.clickable { onClick() } else Modifier).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         IconTile(icon, tint, size = 28.dp); Spacer(Modifier.width(14.dp))

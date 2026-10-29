@@ -64,6 +64,12 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 - **Crash fixes,** and a crash now leaves a report you can share (Settings › About).
 - With the PC's island 0.27.1, the phone as a camera works in other apps.
 
+**The whole PC, at a glance (1.11)**
+- **PC Voice:** "Hey Google, open PC Voice", then say it: open any app on your PC, what's using its memory, mute one app, and everything else. Also a Quick Settings tile.
+- **The Island tab:** battery health, storage, startup apps with switches, the network, temperatures over the last hour, Windows Update and the top apps.
+- **Apps on your PC,** opened from the phone; **three- and four-finger swipes** on the trackpad; a **performance widget**.
+- Needs the PC's island 0.28.
+
 **Handed over (1.7)**
 - **Share to your PC's Shelf in one tap:** your PCs are bubbles in the app's sheet, and they appear in Android's share sheet too. The island shows the picture while it arrives.
 - **The photo you just took** shows on your PC's island, ready to paste there (Settings › On your PC’s island › Photos you take).

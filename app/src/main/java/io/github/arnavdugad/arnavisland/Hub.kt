@@ -40,6 +40,11 @@ import io.github.arnavdugad.arnavisland.link.PcProcess
 import io.github.arnavdugad.arnavisland.link.Sensors
 import io.github.arnavdugad.arnavisland.link.FileList
 import io.github.arnavdugad.arnavisland.link.PcClip
+import io.github.arnavdugad.arnavisland.link.BatteryHealth
+import io.github.arnavdugad.arnavisland.link.Storage
+import io.github.arnavdugad.arnavisland.link.StartupApp
+import io.github.arnavdugad.arnavisland.link.NetAdapter
+import io.github.arnavdugad.arnavisland.link.Updates
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +77,9 @@ data class Song(val key: String, val title: String, val artist: String, val app:
     override fun equals(other: Any?) = other is Song && key == other.key && last == other.last && plays == other.plays && loved == other.loved
     override fun hashCode() = key.hashCode()
 }
+
+/** 1.11: an app of the PC's Start menu (island 0.28): what opens it there, its name and its icon. */
+data class PcApp(val id: String, val name: String, val icon: androidx.compose.ui.graphics.ImageBitmap?)
 
 /** 1.8: how a PC looks here: its own name (null: the one it gives), colour and icon. */
 data class PcLook(val name: String?, val color: Int, val icon: Int)
@@ -557,13 +565,32 @@ object Hub {
         val p = peers.value.firstOrNull { it.id == peer } ?: return; if (p.revision < 10 || p.phone || peer != pc()?.id) return
         // Taken as missing until the PC says it has them, so their rows appear once rather than show and then vanish.
         missing.update { it + Proto.CMD_PROCESSES + Proto.CMD_FILES + Proto.CMD_SCREENSHOT }
+        // 1.11: island 0.28's, the same way (they only read; what they say is kept, so their sections open with it).
+        if (p.revision >= 11) missing.update { it + REV11 }
         scope.launch {
             val l = link ?: return@launch
             note(Proto.CMD_PROCESSES, l.remote(peer, Proto.CMD_PROCESSES, Bytes().u8(0).u8(0).u8(1).u8(0).build())?.status)
             note(Proto.CMD_FILES, l.files(peer, "", 0, max = 1, thumbs = false).first.takeIf { it != Proto.NOT_ALLOWED } ?: Proto.OK)
             // A screenshot isn't taken to find out: an empty ask is refused as unsupported (0.27) or as malformed (later).
             l.remote(peer, Proto.CMD_SCREENSHOT, ByteArray(0))?.status?.let { if (it == Proto.UNSUPPORTED) note(Proto.CMD_SCREENSHOT, it) else missing.update { m -> m - Proto.CMD_SCREENSHOT } }
+            if (p.revision >= 11) probe11(peer)
         }
+    }
+    private val REV11 = setOf(Proto.CMD_BATTERY_HEALTH, Proto.CMD_STORAGE, Proto.CMD_STARTUP, Proto.CMD_NETWORK, Proto.CMD_UPDATES, Proto.CMD_APPS)
+    private suspend fun probe11(peer: String) {
+        val l = link ?: return
+        // A dropped answer is asked again (twice), so a moment's trouble doesn't hide a section until the PC comes back.
+        suspend fun <T> tried(cmd: Int, ask: () -> Pair<Int, T?>): T? {
+            repeat(3) { i -> val (s, v) = ask(); note(cmd, s); if (s == Proto.OK || s == Proto.UNSUPPORTED || s == Proto.NOT_ALLOWED) return v; delay(1500L * (i + 1)) }
+            return null
+        }
+        fun mine() = pc()?.id == peer
+        tried(Proto.CMD_BATTERY_HEALTH) { l.batteryHealth(peer) }?.let { if (mine()) batteryHealth.value = it }
+        tried(Proto.CMD_STORAGE) { l.storage(peer) }?.let { if (mine()) storage.value = it }
+        tried(Proto.CMD_STARTUP) { l.startup(peer) }?.let { if (mine()) showStartup(it) }
+        tried(Proto.CMD_NETWORK) { l.network(peer) }?.let { if (mine()) network.value = it }
+        tried(Proto.CMD_UPDATES) { l.updates(peer) }?.let { if (mine()) updates.value = it }
+        tried(Proto.CMD_APPS) { l.startMenu(peer, false) }?.let { if (mine()) showPcApps(it) }
     }
     private fun note(cmd: Int, status: Int?) { if (status == Proto.UNSUPPORTED) missing.update { it + cmd } else if (status == Proto.OK) missing.update { it - cmd } }
     suspend fun refreshProcesses() = withContext(Dispatchers.IO) {
@@ -575,19 +602,9 @@ object Hub {
         val fresh = list.filter { it.icon != null && it.name !in processIcons.value }
         if (fresh.isNotEmpty()) processIcons.update { m -> m + fresh.mapNotNull { a -> runCatching { android.graphics.BitmapFactory.decodeByteArray(a.icon, 0, a.icon!!.size)?.let { bmp -> a.name to bmp.asImageBitmap() } }.getOrNull() } }
     }
-    /** Ends an app on the PC (it's asked to close first). */
-    fun endTask(proc: PcProcess) {
-        val p = pc() ?: return
-        processes.update { list -> list.filterNot { it.pid == proc.pid } }
-        scope.launch {
-            val r = link?.endTask(p.id, proc.pid)
-            when { r == null -> banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} didn't answer")); r.status == Proto.NOT_ALLOWED -> banners.tryEmit(Banner(Banner.Kind.Failed, "${proc.name} can't be ended", "Windows keeps it running"))
-                r.ok -> { banners.tryEmit(Banner(Banner.Kind.Info, "Ending ${proc.name}", "On ${p.name}")); IslandWire.processes(r.payload)?.let { processes.value = it } }
-                else -> banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't end ${proc.name}")) }
-        }
-    }
+    // 1.11: the list is only read (island 0.28 says no to ending apps from a phone).
     val sensors = MutableStateFlow<Sensors?>(null)
-    suspend fun refreshSensors() = withContext(Dispatchers.IO) { val p = pc()?.takeIf { rev10(it) } ?: return@withContext; link?.sensors(p.id)?.let { sensors.value = it; Alerts.checkHeat(app, p, it) } }
+    suspend fun refreshSensors() = withContext(Dispatchers.IO) { val p = pc()?.takeIf { rev10(it) } ?: return@withContext; link?.sensors(p.id)?.let { sensors.value = it; keepHeat(p, it); Alerts.checkHeat(app, p, it) } }
 
     /** 1.9: the PC's files, a folder at a time: what it said (NOT_ALLOWED when browsing is off there) and the page. */
     suspend fun files(path: String, sort: Int): Pair<Int, FileList?> = withContext(Dispatchers.IO) { val p = pc()?.takeIf { rev10(it) } ?: return@withContext Proto.FAILED to null; (link?.files(p.id, path, sort) ?: (Proto.FAILED to null)).also { note(Proto.CMD_FILES, it.first) } }
@@ -647,6 +664,94 @@ object Hub {
         if (point.at - hourSaved > 60_000) { hourSaved = point.at; val list = hourTrail.value
             scope.launch { runCatching { val a = JSONArray(); list.forEach { a.put(JSONArray().put(it.at).put(it.cpu.toDouble()).put(it.gpu.toDouble()).put(it.download.toDouble()).put(it.upload.toDouble())) }; hourFile(p.id).writeText(a.toString()) } } }
     }
+    // ---- 1.11: and an hour of its temperatures and fans, the same way (°C, rpm; -1 unknown) ----
+    data class HeatPoint(val at: Long, val cpu: Float, val gpu: Float, val fan: Int)
+    val heatTrail = MutableStateFlow<List<HeatPoint>>(emptyList())
+    @Volatile private var heatPc: String? = null; @Volatile private var heatSaved = 0L
+    private fun heatFile(pc: String) = File(app.filesDir, "heat-$pc.json")
+    private fun keepHeat(p: PeerView, s: Sensors) {
+        if (heatPc != p.id) { heatPc = p.id; heatTrail.value = runCatching { val a = JSONArray(heatFile(p.id).readText()); (0 until a.length()).map { i -> val o = a.getJSONArray(i); HeatPoint(o.getLong(0), o.getDouble(1).toFloat(), o.getDouble(2).toFloat(), o.getInt(3)) } }.getOrDefault(emptyList()) }
+        val point = HeatPoint(System.currentTimeMillis(), s.cpu.takeIf { it.isFinite() } ?: -1f, s.gpu.takeIf { it.isFinite() } ?: -1f, s.fans.maxOfOrNull { it.second } ?: -1)
+        if (point.cpu < 0 && point.gpu < 0 && point.fan < 0) return
+        val last = heatTrail.value.lastOrNull()
+        if (last != null && point.at - last.at < 10_000) return
+        heatTrail.value = (heatTrail.value + point).filter { point.at - it.at <= 3_600_000 }
+        if (point.at - heatSaved > 60_000) { heatSaved = point.at; val list = heatTrail.value
+            scope.launch { runCatching { val a = JSONArray(); list.forEach { a.put(JSONArray().put(it.at).put(it.cpu.toDouble()).put(it.gpu.toDouble()).put(it.fan)) }; heatFile(p.id).writeText(a.toString()) } } }
+    }
+
+    // ---- 1.11: the PC's battery health, storage, startup apps, network, Windows Update and its apps (island 0.28) ----
+    fun rev11(p: PeerView? = pc()) = p != null && p.online && p.revision >= 11
+    /** Whether the chosen PC has this command of island 0.28's (it said so when it arrived). */
+    fun has11(cmd: Int, p: PeerView? = pc()) = rev11(p) && cmd !in missing.value
+    val batteryHealth = MutableStateFlow<BatteryHealth?>(null)
+    suspend fun refreshBatteryHealth() = withContext(Dispatchers.IO) { val p = pc()?.takeIf { rev11(it) } ?: return@withContext; val (s, v) = link?.batteryHealth(p.id) ?: return@withContext; note(Proto.CMD_BATTERY_HEALTH, s); v?.let { batteryHealth.value = it } }
+    /** The PC's drives, and what fills its Windows drive (measured on the PC, a moment at first; cached there ten minutes). */
+    val storage = MutableStateFlow<Storage?>(null)
+    suspend fun refreshStorage(again: Boolean = false) = withContext(Dispatchers.IO) {
+        val p = pc()?.takeIf { rev11(it) } ?: return@withContext
+        if (again) storage.update { it?.let { s -> Storage(false, 0, s.drives, s.groups) } }
+        val (s, v) = link?.storage(p.id, again) ?: return@withContext; note(Proto.CMD_STORAGE, s)
+        if (v != null) storage.value = v else if (again) banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't measure it"))
+    }
+    /** The apps that start with Windows there (null until the PC says), each with its icon. */
+    val startup = MutableStateFlow<List<StartupApp>?>(null)
+    val startupIcons = MutableStateFlow<Map<String, androidx.compose.ui.graphics.ImageBitmap>>(emptyMap())
+    @Volatile private var startupAsked = 0L
+    private fun showStartup(list: List<StartupApp>) {
+        // What a finger just set stays until the PC has answered it.
+        if (System.currentTimeMillis() - startupAsked < 1500) return
+        startup.value = list
+        val fresh = list.filter { it.icon != null && it.id !in startupIcons.value }
+        if (fresh.isNotEmpty()) startupIcons.update { m -> m + fresh.mapNotNull { a -> decode(a.icon)?.let { a.id to it } } }
+    }
+    suspend fun refreshStartup() = withContext(Dispatchers.IO) { val p = pc()?.takeIf { rev11(it) } ?: return@withContext; val (s, v) = link?.startup(p.id) ?: return@withContext; note(Proto.CMD_STARTUP, s); v?.let { showStartup(it) } }
+    /** Turns a startup app on or off (the user's own only): shown at once, then as the PC says. */
+    fun setStartup(item: StartupApp, enabled: Boolean) {
+        val p = pc() ?: return
+        startupAsked = System.currentTimeMillis()
+        startup.update { list -> list?.map { if (it.id == item.id) StartupApp(it.id, it.name, it.command, it.source, enabled, it.canChange, it.icon) else it } }
+        scope.launch {
+            val (s, v) = link?.setStartup(p.id, item.id, enabled) ?: (Proto.FAILED to null); startupAsked = 0
+            if (v != null) showStartup(v)
+            else { banners.tryEmit(if (s == Proto.NOT_ALLOWED) Banner(Banner.Kind.Failed, "${item.name} is for every user", "Change it on ${p.name}") else Banner(Banner.Kind.Failed, "${p.name} couldn't change that"))
+                link?.startup(p.id)?.second?.let { showStartup(it) } }
+        }
+    }
+    /** Its network adapters in full, the one with the default route first. */
+    val network = MutableStateFlow<List<NetAdapter>?>(null)
+    suspend fun refreshNetwork() = withContext(Dispatchers.IO) { val p = pc()?.takeIf { rev11(it) } ?: return@withContext; val (s, v) = link?.network(p.id) ?: return@withContext; note(Proto.CMD_NETWORK, s); v?.let { network.value = it } }
+    /** Windows Update as the PC last found it (it checks on its own; a check from here can take a minute). */
+    val updates = MutableStateFlow<Updates?>(null)
+    suspend fun refreshUpdates() = withContext(Dispatchers.IO) { val p = pc()?.takeIf { rev11(it) } ?: return@withContext; val (s, v) = link?.updates(p.id) ?: return@withContext; note(Proto.CMD_UPDATES, s); v?.let { updates.value = it } }
+    fun checkUpdates() { val p = pc() ?: return; updates.update { it?.let { u -> Updates(4, u.lastChecked, u.lastInstalled, u.items) } }
+        scope.launch { val v = link?.updates(p.id, 1)?.second; if (v != null) updates.value = v else banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't check")) } }
+    fun openUpdates() { val p = pc() ?: return
+        scope.launch { banners.tryEmit(if (link?.updates(p.id, 2)?.second != null) Banner(Banner.Kind.Info, "Windows Update is open", "On ${p.name}") else Banner(Banner.Kind.Failed, "${p.name} couldn't open it")) } }
+    /** The apps of the PC's Start menu, by name (the same list its island's command bar searches). */
+    val pcApps = MutableStateFlow<List<PcApp>>(emptyList())
+    private fun showPcApps(list: List<io.github.arnavdugad.arnavisland.link.StartMenuApp>) {
+        // Icons come once (they're asked for only while none are here); a list without them keeps the ones seen.
+        val before = pcApps.value.associateBy { it.id }
+        pcApps.value = list.map { a -> PcApp(a.id, a.name, a.icon?.let(::decode) ?: before[a.id]?.icon) }
+    }
+    suspend fun refreshPcApps(icons: Boolean = true) = withContext(Dispatchers.IO) {
+        val p = pc()?.takeIf { rev11(it) } ?: return@withContext; val l = link ?: return@withContext
+        val want = icons && pcApps.value.none { it.icon != null }
+        var (s, v) = l.startMenu(p.id, want)
+        // Every icon at once may be more than one answer carries: then the names alone.
+        if (v == null && want && s != Proto.UNSUPPORTED) { val again = l.startMenu(p.id, false); s = again.first; v = again.second }
+        note(Proto.CMD_APPS, s); v?.let { showPcApps(it) }
+    }
+    /** Opens an app on the PC (brought to the front when it's already running): true when the PC did. */
+    suspend fun openPcApp(id: String): Boolean = withContext(Dispatchers.IO) {
+        val p = pc() ?: return@withContext false; val name = pcApps.value.firstOrNull { it.id == id }?.name ?: "it"
+        if (!rev11(p)) { banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${p.name}", "Opening apps needs version 0.28 or later")); return@withContext false }
+        val ok = link?.openApp(p.id, id) == Proto.OK
+        banners.tryEmit(if (ok) Banner(Banner.Kind.Info, "Opening $name", "On ${p.name}") else Banner(Banner.Kind.Failed, "${p.name} couldn't open $name"))
+        ok
+    }
+    private fun decode(png: ByteArray?): androidx.compose.ui.graphics.ImageBitmap? = png?.let { runCatching { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() }
 
     // ---- 1.9: the Island tab's sections, in your order, the pinned ones first ----
     val sectionOrder = MutableStateFlow(prefsList("islandOrder")); val sectionPins = MutableStateFlow(prefsList("islandPins").toSet())
@@ -726,6 +831,9 @@ object Hub {
     fun clearIsland() {
         // The numbers stay until the next PC's arrive, so the rings move from one PC's to the other's.
         pcBattery.value = null; islandSettings.value = null; outputs.value = emptyList(); statsTrail.value = emptyList(); trailPc = null; batteryTick = 0
+        // 1.11: what island 0.28 said is that PC's own.
+        batteryHealth.value = null; storage.value = null; startup.value = null; startupIcons.value = emptyMap(); network.value = null; updates.value = null; pcApps.value = emptyList()
+        heatTrail.value = emptyList(); heatPc = null
     }
 
     // ---- 1.5: what a PC asks this phone (revision 6) ----
@@ -771,11 +879,11 @@ object Hub {
     }
     /** Not every reading carries each core's: the last ones carry on, so their box doesn't leave and come back. */
     private fun withCores(p: PeerView, read: PcStats): PcStats { val before = statsCache[p.id]; return if (read.cores.isEmpty() && !before?.cores.isNullOrEmpty()) read.copy(cores = before!!.cores) else read }
-    /** 1.5: just the PC's numbers (for the stats widget while the app isn't on screen). */
-    suspend fun refreshStats() = withContext(Dispatchers.IO) {
+    /** 1.5: just the PC's numbers (for the stats widget while the app isn't on screen); [sensors] (1.11): its temperatures too, for the performance widget. */
+    suspend fun refreshStats(sensors: Boolean = false) = withContext(Dispatchers.IO) {
         val l = link ?: return@withContext; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext
         l.stats(p.id)?.let { read -> val s = withCores(p, read); pcStats.value = s; statsCache[p.id] = s; Alerts.check(app, p, s) }
-        if (rev10(p) && (Alerts.on("cpuheat") || Alerts.on("gpuheat"))) refreshSensors()
+        if (rev10(p) && (sensors || Alerts.on("cpuheat") || Alerts.on("gpuheat"))) refreshSensors()
     }
     /** 1.5: each PC's numbers as last read (the Island tab's carousel shows its neighbours with them). */
     private val statsCache = java.util.concurrent.ConcurrentHashMap<String, PcStats>()

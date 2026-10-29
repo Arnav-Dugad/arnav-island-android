@@ -66,6 +66,31 @@ class FileList(val path: String, val title: String, val parent: String, val tota
 /** Revision 10: an item of the PC's clipboard history. kind 0 text, 1 image, 2 files. */
 class PcClip(val id: Long, val kind: Int, val text: String, val at: Long, val pinned: Boolean, val thumb: ByteArray?)
 class PcClipFull(val kind: Int, val text: String, val image: ByteArray?)
+/** Revision 11: the PC's battery as it was made and as it is: capacities in mWh (0 unknown), cycles (-1 unknown), rate in mW (+ charging). */
+class BatteryHealth(val present: Boolean, val designMwh: Long, val fullMwh: Long, val cycles: Long, val chemistry: String, val manufacturer: String, val device: String,
+                    val currentMwh: Long, val rateMw: Int, val voltageMv: Long) {
+    /** What it holds now against what it was made to (0..1, a new one a little over); -1 unknown. */
+    val health get() = if (designMwh > 0 && fullMwh > 0) fullMwh.toDouble() / designMwh else -1.0
+}
+/** Revision 11: a drive (kind 0 fixed, 1 removable, 2 network, 3 other), in bytes; [system]: the Windows drive. */
+class Drive(val root: String, val label: String, val kind: Int, val total: Long, val free: Long, val system: Boolean) { val used get() = (total - free).coerceAtLeast(0) }
+/** What fills the Windows drive: kind 0 apps, 1 Windows, 2 documents, 3 downloads, 4 pictures, 5 videos, 6 music, 7 desktop, 8 recycle bin, 9 other. */
+class StorageGroup(val name: String, val kind: Int, val bytes: Long)
+/** Revision 11: the PC's drives and (once measured; partly while [ready] is false) what fills its Windows drive. */
+class Storage(val ready: Boolean, val progress: Int, val drives: List<Drive>, val groups: List<StorageGroup>)
+/** Revision 11: an app that starts with Windows. source 0 the user's Run, 1 all users' Run, 2 all users' 32-bit Run, 3 the user's Startup folder, 4 everyone's, 5 a Store app. */
+class StartupApp(val id: String, val name: String, val command: String, val source: Int, val enabled: Boolean, val canChange: Boolean, val icon: ByteArray?)
+/** Revision 11: one of the PC's network adapters in full (kind 0 Ethernet, 1 Wi-Fi, 2 other). [signal] 0..100, -1 unknown; [channel] 0 unknown. */
+class NetAdapter(val name: String, val description: String, val kind: Int, val up: Boolean, val isDefault: Boolean, val mac: String, val linkBps: Long,
+                 val ipv4: List<String>, val ipv6: List<String>, val gateway: String, val dns: List<String>, val ssid: String, val signal: Int, val band: String, val channel: Int, val security: String) {
+    val wifi get() = kind == 1
+}
+/** Revision 11: an update Windows has found. kind 0 quality or security, 1 driver, 2 feature, 3 definitions, 4 other; size in bytes (0 unknown). */
+class UpdateItem(val title: String, val kind: Int, val size: Long, val downloaded: Boolean, val needsRestart: Boolean)
+/** Revision 11: Windows Update. state 0 unknown, 1 up to date, 2 updates available, 3 restart required, 4 checking; times in seconds since 1970 (0 unknown). */
+class Updates(val state: Int, val lastChecked: Long, val lastInstalled: Long, val items: List<UpdateItem>)
+/** Revision 11: an app of the PC's Start menu: its id (an AUMID, or a shortcut's or exe's path), name and a 48 px PNG when asked. */
+class StartMenuApp(val id: String, val name: String, val icon: ByteArray?)
 
 object IslandWire {
     // The island's controls (remoteControls), and its CommandKind numbers the phone draws icons for.
@@ -174,5 +199,46 @@ object IslandWire {
     fun machine(p: ByteArray): List<Adapter>? {
         val r = Reader(p); if (r.u8() != 1) return null
         return List(r.u8() ?: return null) { Adapter(r.bytes(6) ?: return null, r.string(1024) ?: return null, r.string(64) ?: return null, r.u8() ?: return null) }
+    }
+
+    // ---- revision 11 (island 0.28) ----
+    fun batteryHealth(p: ByteArray): BatteryHealth? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        val present = (r.u8() ?: return null) != 0; val design = r.u32() ?: return null; val full = r.u32() ?: return null; val cycles = r.u32() ?: return null
+        val texts = List(3) { r.string(1024) ?: return null }; val current = r.u32() ?: return null; val rate = r.i32() ?: return null; val volts = r.u32() ?: return null
+        return BatteryHealth(present, design, full, if (cycles == 0xFFFFFFFFL) -1 else cycles, texts[0], texts[1], texts[2], current, rate, volts)
+    }
+    fun storage(p: ByteArray): Storage? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        val state = r.u8() ?: return null; val progress = r.u8() ?: return null
+        val drives = List(r.u8() ?: return null) { Drive(r.string(1024) ?: return null, r.string(1024) ?: return null, r.u8() ?: return null, r.u64() ?: return null, r.u64() ?: return null, (r.u8() ?: return null) != 0) }
+        val groups = List(r.u8() ?: return null) { StorageGroup(r.string(1024) ?: return null, r.u8() ?: return null, r.u64() ?: return null) }
+        return Storage(state == 1, progress.coerceIn(0, 100), drives, groups)
+    }
+    fun startup(p: ByteArray): List<StartupApp>? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        return List(r.u8() ?: return null) { StartupApp(r.string(4096) ?: return null, r.string(1024) ?: return null, r.string(4096) ?: return null, r.u8() ?: return null,
+            (r.u8() ?: return null) != 0, (r.u8() ?: return null) != 0, (r.blob(64 * 1024) ?: return null).takeIf { it.isNotEmpty() }) }
+    }
+    fun network(p: ByteArray): List<NetAdapter>? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        fun strings(): List<String>? { return List(r.u8() ?: return null) { r.string(512) ?: return null } }
+        return List(r.u8() ?: return null) {
+            val name = r.string(1024) ?: return null; val description = r.string(1024) ?: return null; val kind = r.u8() ?: return null; val up = (r.u8() ?: return null) != 0
+            val default = (r.u8() ?: return null) != 0; val mac = r.string(64) ?: return null; val speed = r.u64() ?: return null
+            val v4 = strings() ?: return null; val v6 = strings() ?: return null; val gateway = r.string(512) ?: return null; val dns = strings() ?: return null
+            val ssid = r.string(512) ?: return null; val signal = r.u8() ?: return null; val band = r.string(64) ?: return null; val channel = r.u16() ?: return null; val security = r.string(128) ?: return null
+            NetAdapter(name, description, kind, up, default, mac, speed, v4, v6, gateway, dns, ssid, if (signal == 255) -1 else signal.coerceIn(0, 100), band, channel, security)
+        }
+    }
+    fun updates(p: ByteArray): Updates? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        val state = r.u8() ?: return null; val checked = r.u64() ?: return null; val installed = r.u64() ?: return null
+        val items = List(r.u8() ?: return null) { UpdateItem(r.string(2048) ?: return null, r.u8() ?: return null, r.u64() ?: return null, (r.u8() ?: return null) != 0, (r.u8() ?: return null) != 0) }
+        return Updates(state, checked, installed, items)
+    }
+    fun apps(p: ByteArray): List<StartMenuApp>? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        return List(r.u16() ?: return null) { StartMenuApp(r.string(8192) ?: return null, r.string(1024) ?: return null, (r.blob(64 * 1024) ?: return null).takeIf { it.isNotEmpty() }) }
     }
 }
