@@ -1,0 +1,50 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent">
+    <ImageView android:id="@+id/w_bg" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY"
+        android:src="@drawable/widget_glass" android:importantForAccessibility="no" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="9dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="24dp" android:orientation="horizontal" android:gravity="center_vertical">
+            <TextView android:id="@+id/w_where" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginStart="6dp" android:gravity="center_vertical"
+                android:text="STUDIO PC" android:textColor="#80FFFFFF" android:textSize="10sp" android:letterSpacing="0.06" android:maxLines="1" android:ellipsize="end" android:textStyle="bold" />
+            <ImageView android:id="@+id/w_lock" android:layout_width="24dp" android:layout_height="24dp" android:layout_marginEnd="3dp" android:background="@drawable/widget_button" android:padding="5dp"
+                android:src="@drawable/ic_w_lock" android:contentDescription="Lock" />
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="6dp" android:orientation="horizontal">
+            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginStart="3dp" android:layout_marginEnd="3dp">
+                <CheckBox android:id="@+id/w_wifi" android:layout_width="match_parent" android:layout_height="match_parent" android:button="@null" android:background="@drawable/widget_tile_blue"
+                    android:minWidth="0dp" android:minHeight="0dp" android:text="" android:checked="true" android:contentDescription="Wi-Fi" />
+                <ImageView android:id="@+id/w_wifi_icon" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="center" android:src="@drawable/ic_w_wifi" android:importantForAccessibility="no" />
+            </FrameLayout>
+            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginStart="3dp" android:layout_marginEnd="3dp">
+                <CheckBox android:id="@+id/w_bt" android:layout_width="match_parent" android:layout_height="match_parent" android:button="@null" android:background="@drawable/widget_tile_blue"
+                    android:minWidth="0dp" android:minHeight="0dp" android:text="" android:checked="true" android:contentDescription="Bluetooth" />
+                <ImageView android:id="@+id/w_bt_icon" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="center" android:src="@drawable/ic_w_bluetooth" android:importantForAccessibility="no" />
+            </FrameLayout>
+            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginStart="3dp" android:layout_marginEnd="3dp">
+                <CheckBox android:id="@+id/w_dark" android:layout_width="match_parent" android:layout_height="match_parent" android:button="@null" android:background="@drawable/widget_tile_indigo"
+                    android:minWidth="0dp" android:minHeight="0dp" android:text="" android:contentDescription="Dark mode" />
+                <ImageView android:id="@+id/w_dark_icon" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="center" android:src="@drawable/ic_w_dark" android:importantForAccessibility="no" />
+            </FrameLayout>
+            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginStart="3dp" android:layout_marginEnd="3dp">
+                <CheckBox android:id="@+id/w_mute" android:layout_width="match_parent" android:layout_height="match_parent" android:button="@null" android:background="@drawable/widget_tile_red"
+                    android:minWidth="0dp" android:minHeight="0dp" android:text="" android:contentDescription="Mute" />
+                <ImageView android:id="@+id/w_mute_icon" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="center" android:src="@drawable/ic_w_volume_off" android:importantForAccessibility="no" />
+            </FrameLayout>
+            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginStart="3dp" android:layout_marginEnd="3dp">
+                <CheckBox android:id="@+id/w_mic" android:layout_width="match_parent" android:layout_height="match_parent" android:button="@null" android:background="@drawable/widget_tile_orange"
+                    android:minWidth="0dp" android:minHeight="0dp" android:text="" android:contentDescription="Microphone muted" />
+                <ImageView android:id="@+id/w_mic_icon" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="center" android:src="@drawable/ic_w_mic_off" android:importantForAccessibility="no" />
+            </FrameLayout>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="28dp" android:layout_marginTop="7dp" android:paddingStart="3dp" android:paddingEnd="3dp" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:id="@+id/w_vol_down" android:layout_width="28dp" android:layout_height="28dp" android:background="@drawable/widget_button" android:padding="6dp"
+                android:src="@drawable/ic_w_minus" android:contentDescription="Volume down" />
+            <ImageView android:id="@+id/w_vol_icon" android:layout_width="16dp" android:layout_height="16dp" android:layout_marginStart="10dp" android:src="@drawable/ic_w_volume" android:tint="#B3FFFFFF" android:importantForAccessibility="no" />
+            <ProgressBar android:id="@+id/w_vol_bar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="0dp" android:layout_height="6dp" android:layout_weight="1" android:layout_marginStart="8dp"
+                android:indeterminate="false" android:max="100" android:progress="40" android:progressDrawable="@drawable/widget_bar" />
+            <TextView android:id="@+id/w_vol_pct" android:layout_width="38dp" android:layout_height="wrap_content" android:gravity="center" android:text="40%"
+                android:textColor="#B3FFFFFF" android:textSize="11sp" android:maxLines="1" />
+            <ImageView android:id="@+id/w_vol_up" android:layout_width="28dp" android:layout_height="28dp" android:background="@drawable/widget_button" android:padding="6dp"
+                android:src="@drawable/ic_w_plus" android:contentDescription="Volume up" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

@@ -191,6 +191,7 @@ object Ui {
     var link by mutableStateOf(false); var trackpad by mutableStateOf<Int?>(null); var song by mutableStateOf<Song?>(null); var upNext by mutableStateOf(false)
     var pairing by mutableStateOf(false); var pairStart by mutableIntStateOf(PAIR_NEARBY)
     fun pair(start: Int = PAIR_NEARBY) { pairStart = start; pairing = true }
+    fun clipboard() { MoreUi.clipboard = true }
 }
 
 @Composable private fun App(share: ShareRequest?, onShareDone: () -> Unit, opened: String?, onOpened: () -> Unit, link: io.github.arnavdugad.arnavisland.link.PairLink?, onLinkDone: () -> Unit, onDark: (Boolean) -> Unit) {
@@ -241,7 +242,9 @@ object Ui {
     LaunchedEffect(Unit) {
         val seen = Hub.prefs.getString("seenVersion", null)
         if (seen != null && seen != Updates.current) whatsNew = Updates.releases.value.firstOrNull { it.versionName == Updates.current.substringBefore('-') }
-        Hub.prefs.edit().putString("seenVersion", Updates.current).apply()
+        // 1.9: a short tour of what's new and where things moved, once.
+        if (seen != null && !Hub.prefs.getBoolean("tour19", false)) MoreUi.tour = true
+        Hub.prefs.edit().putString("seenVersion", Updates.current).putBoolean("tour19", true).apply()
         Updates.check()
     }
 
@@ -331,6 +334,7 @@ object Ui {
                     IslandSheets()
                     RemoteSheets(pc)
                     ShelfSheets()
+                    MoreSheets(pc)
                     SettingsSheet(Ui.settings, look, { next -> look = next; Hub.prefs.edit().putInt("appearance", next.appearance).putBoolean("glass", next.glass).apply() }) { Ui.settings = false }
                     PcSheet(Ui.pc?.let { id -> peers.firstOrNull { it.id == id } }) { Ui.pc = null }
                     ConnectionSheet(Ui.connection?.let { id -> peers.firstOrNull { it.id == id } }) { Ui.connection = null }

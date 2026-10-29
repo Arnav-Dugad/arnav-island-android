@@ -44,6 +44,9 @@ object Alerts {
         Kind("disk", "Disk space low", Icons.Rounded.SdStorage, " GB free", 10, 1, 100, 1),
         Kind("battery", "Battery low", Icons.Rounded.BatteryAlert, "%", 15, 5, 50, 5),
         Kind("charged", "Finished charging", Icons.Rounded.BatteryChargingFull, "", 0, 0, 0, 0),
+        // 1.9: temperatures (island 0.27).
+        Kind("cpuheat", "Processor hot", Icons.Rounded.Thermostat, "°C", 90, 60, 105, 5, sustained = true),
+        Kind("gpuheat", "Graphics hot", Icons.Rounded.LocalFireDepartment, "°C", 85, 60, 105, 5, sustained = true),
     )
     fun on(k: String) = Hub.prefs.getBoolean("alert_$k", false)
     fun level(k: Kind) = Hub.prefs.getInt("alert_${k.key}_at", k.level)
@@ -54,7 +57,7 @@ object Alerts {
     private val since = HashMap<String, Long>(); private val fired = HashSet<String>()
     /** Each new reading of a PC's numbers. */
     @Synchronized fun check(context: Context, pc: PeerView, s: PcStats) {
-        if (!any()) return
+        if (!kinds.take(6).any { on(it.key) }) return
         val now = System.currentTimeMillis()
         fun hold(key: String, past: Boolean, back: Boolean, sustained: Boolean, say: () -> Pair<String, String>) {
             val id = "${pc.id}:$key"
@@ -72,6 +75,18 @@ object Alerts {
         if (s.battery >= 0) {
             hold("battery", !s.charging && s.battery <= level(battery), s.charging || s.battery > level(battery) + 5, false) { "${pc.name}’s battery is at ${s.battery}%" to "Plug it in soon" }
             hold("charged", s.charging && s.battery >= 100, !s.charging || s.battery < 95, false) { "${pc.name} has finished charging" to "Its battery is full" }
+        }
+    }
+
+    /** 1.9: each new reading of a PC's temperatures (island 0.27): hot for as long as a busy processor must be busy. */
+    @Synchronized fun checkHeat(context: Context, pc: PeerView, s: io.github.arnavdugad.arnavisland.link.Sensors) {
+        val now = System.currentTimeMillis()
+        for ((key, value) in listOf("cpuheat" to s.cpu, "gpuheat" to s.gpu)) {
+            val id = "${pc.id}:$key"; val k = kinds.first { it.key == key }
+            if (!on(key) || value.isNaN()) { since.remove(id); fired.remove(id); continue }
+            if (value >= level(k)) { val start = since.getOrPut(id) { now }
+                if (id !in fired && now - start >= minutes() * 60_000L) { fired += id; post(context, key, "${pc.name} is running hot", "${if (key == "cpuheat") "Its processor" else "Its graphics card"} has been at ${value.roundToInt()}°C for ${minutes()} min") } }
+            else if (value < level(k) - 5) { since.remove(id); fired.remove(id) }
         }
     }
 
@@ -97,8 +112,8 @@ object Alerts {
                 Alerts.kinds.forEachIndexed { i, k ->
                     if (i > 0) Hairline()
                     val on = Alerts.on(k.key); val level = Alerts.level(k)
-                    GlassRow(k.icon, k.title, if (k.step == 0) "When its battery is full" else if (k.key == "disk") "Under $level GB free" else (if (k.key == "battery") "At $level% or less" else "At $level% or more") + if (k.sustained) " for ${Alerts.minutes()} min" else "",
-                        tint = listOf(t.blue, t.purple, t.teal, t.gray, t.danger, t.good)[i]) {
+                    GlassRow(k.icon, k.title, if (k.step == 0) "When its battery is full" else if (k.key == "disk") "Under $level GB free" else if (k.unit == "°C") "At $level°C or more for ${Alerts.minutes()} min (island 0.27)" else (if (k.key == "battery") "At $level% or less" else "At $level% or more") + if (k.sustained) " for ${Alerts.minutes()} min" else "",
+                        tint = listOf(t.blue, t.purple, t.teal, t.gray, t.danger, t.good, t.warn, t.pink)[i]) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (on && k.step > 0) {
                                 StepButton(Icons.Rounded.Remove, "Lower", { Hub.prefs.edit().putInt("alert_${k.key}_at", (Alerts.level(k) - k.step).coerceAtLeast(k.lo)).apply(); version++ }, size = 32.dp)

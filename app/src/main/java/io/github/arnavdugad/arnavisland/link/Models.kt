@@ -65,7 +65,8 @@ sealed interface LinkEvent {
     data class Progress(val transfer: Int, val peer: String, val name: String, val title: String, val done: Long, val total: Long, val outgoing: Boolean) : LinkEvent
     data class Received(val transfer: Int, val peer: String, val name: String, val title: String, val count: Int, val size: Long, val shown: List<String>, val taken: Boolean) : LinkEvent
     data class Sent(val transfer: Int, val peer: String, val name: String, val title: String, val count: Int, val size: Long) : LinkEvent
-    data class Failed(val transfer: Int, val peer: String, val name: String, val title: String, val detail: String, val outgoing: Boolean) : LinkEvent
+    /** [resumable] (1.8.1, revision 10): it broke with the connection, not by anyone's choice, so it can carry on later. */
+    data class Failed(val transfer: Int, val peer: String, val name: String, val title: String, val detail: String, val outgoing: Boolean, val resumable: Boolean = false) : LinkEvent
     data class Music(val transfer: Int, val peer: String, val name: String, val music: Handoff) : LinkEvent
     data class MusicFile(val transfer: Int, val peer: String, val name: String, val music: Handoff, val shown: String) : LinkEvent
     data class Ring(val peer: String, val name: String) : LinkEvent

@@ -1,4 +1,4 @@
-<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
     <shortcut android:shortcutId="camera" android:enabled="true" android:icon="@drawable/ic_sc_camera"
         android:shortcutShortLabel="@string/sc_camera" android:shortcutLongLabel="@string/sc_camera_long">
         <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.MainActivity">
@@ -16,12 +16,65 @@
         <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.MainActivity">
             <extra android:name="open" android:value="findpc" />
         </intent>
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding android:key="feature" android:value="@array/aa_find" />
+        </capability-binding>
     </shortcut>
     <shortcut android:shortcutId="paste" android:enabled="true" android:icon="@drawable/ic_sc_paste"
         android:shortcutShortLabel="@string/sc_paste" android:shortcutLongLabel="@string/sc_paste_long">
         <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.MainActivity">
             <extra android:name="open" android:value="paste" />
         </intent>
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding android:key="feature" android:value="@array/aa_paste" />
+        </capability-binding>
+    </shortcut>
+    <!-- 1.9: your PC by voice. App Actions (Assistant, and wherever Gemini still hands requests to it): "open lock in Arnav
+         Island" matches a shortcut below (its id arrives as "feature"); other words arrive as they were said. -->
+    <capability android:name="actions.intent.OPEN_APP_FEATURE">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.VoiceActivity">
+            <parameter android:name="feature" android:key="feature" />
+        </intent>
+    </capability>
+    <!-- "Search Arnav Island for budget.xlsx": the PC's command bar finds it. -->
+    <capability android:name="actions.intent.GET_THING">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.VoiceActivity">
+            <parameter android:name="thing.name" android:key="text" />
+        </intent>
+    </capability>
+    <!-- "Tell my PC to set a timer for 10 minutes": anything for the PC's command bar. -->
+    <capability android:name="custom.actions.intent.PC_COMMAND" app:queryPatterns="@array/aa_pc_command_queries">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.VoiceActivity">
+            <parameter android:name="text" android:key="text" android:mimeType="https://schema.org/Text" />
+        </intent>
+    </capability>
+    <shortcut android:shortcutId="pc_lock" android:enabled="true" android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_lock" android:shortcutLongLabel="@string/sc_lock_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.VoiceActivity" android:data="arnavisland://do/lock" />
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding android:key="feature" android:value="@array/aa_lock" />
+        </capability-binding>
+    </shortcut>
+    <shortcut android:shortcutId="pc_play_pause" android:enabled="true" android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_play" android:shortcutLongLabel="@string/sc_play_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.VoiceActivity" android:data="arnavisland://do/play_pause" />
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding android:key="feature" android:value="@array/aa_play" />
+        </capability-binding>
+    </shortcut>
+    <shortcut android:shortcutId="pc_wake" android:enabled="true" android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_wake" android:shortcutLongLabel="@string/sc_wake_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.VoiceActivity" android:data="arnavisland://do/wake" />
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding android:key="feature" android:value="@array/aa_wake" />
+        </capability-binding>
+    </shortcut>
+    <shortcut android:shortcutId="pc_status" android:enabled="true" android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_status" android:shortcutLongLabel="@string/sc_status_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="io.github.arnavdugad.arnavisland" android:targetClass="io.github.arnavdugad.arnavisland.VoiceActivity" android:data="arnavisland://do/status" />
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding android:key="feature" android:value="@array/aa_status" />
+        </capability-binding>
     </shortcut>
     <!-- 1.7: your PCs in Android's share sheet (published by the app for each paired PC). -->
     <share-target android:targetClass="io.github.arnavdugad.arnavisland.MainActivity">

@@ -36,6 +36,10 @@ import io.github.arnavdugad.arnavisland.link.Levels
 import io.github.arnavdugad.arnavisland.link.Adapter
 import io.github.arnavdugad.arnavisland.link.hex
 import io.github.arnavdugad.arnavisland.link.unhex
+import io.github.arnavdugad.arnavisland.link.PcProcess
+import io.github.arnavdugad.arnavisland.link.Sensors
+import io.github.arnavdugad.arnavisland.link.FileList
+import io.github.arnavdugad.arnavisland.link.PcClip
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,7 +59,12 @@ data class Transfer(val id: Int, val peer: String, val name: String, val title: 
                     val rate: Double = 0.0, val sampledAt: Long = 0, val sampledDone: Long = 0, val paused: Boolean = false)
 
 /** 1.8: a send waiting its turn (one transfer to a PC at a time): what, how much, and who asked for it. */
-class Queued(val id: Long, val peer: String, val name: String, val sources: List<Source>, val title: String, val size: Long, val toShelf: Boolean, val preview: ByteArray?, val ask: Int, val onStarted: (Int) -> Unit)
+class Queued(val id: Long, val peer: String, val name: String, val sources: List<Source>, val title: String, val size: Long, val toShelf: Boolean, val preview: ByteArray?, val ask: Int, val onStarted: (Int) -> Unit,
+             /** 1.9: one token for every try, so a PC on island 0.27 carries on where a dropped connection left it; and how many tries so far. */
+             val token: ByteArray = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }, val attempts: Int = 0)
+
+/** 1.9: a copy kept in the clipboard history (this phone's own, and the PC's): its text, when, and whether it's pinned. */
+data class ClipItem(val text: String, val at: Long, val pinned: Boolean, val from: String)
 
 /** 1.8: a song heard on a PC, for the Remote's history: its small cover (a JPEG), when it was first and last heard, how often, and whether it's loved. */
 data class Song(val key: String, val title: String, val artist: String, val app: String, val pc: String, val cover: ByteArray?, val first: Long, val last: Long, val plays: Int, val loved: Boolean) {
@@ -116,7 +125,7 @@ object Hub {
         app = context.applicationContext
         selected.value = prefs.getString("pc", null)
         moments.value = loadMoments()
-        looks.value = loadLooks(); lastSeen.value = loadSeen(); machines.value = loadMachines()
+        looks.value = loadLooks(); lastSeen.value = loadSeen(); machines.value = loadMachines(); clipHistory.value = loadClips()
         scope.launch { history.value = loadHistory() }
     }
 
@@ -126,10 +135,10 @@ object Hub {
     @Synchronized fun start(): Link? {
         link?.let { return it }
         // Over the internet too (through the relay, end-to-end encrypted) unless that is turned off.
-        val l = Link(PhoneStore(app), phoneName(), DownloadsInbox(app), ::onEvent, Link.Options(relay = prefs.getBoolean("internet", true)))
+        val l = Link(PhoneStore(app), phoneName(), DownloadsInbox(app), ::onEvent, Link.Options(relay = prefs.getBoolean("internet", true), resumeDir = File(app.filesDir, "resume")))
         l.onAction = { key, index, reply -> NoticeActions.perform(app, key, index, reply) }
         l.onQuery = { peer, command, payload -> if (peers.value.any { it.id == peer && it.paired }) answer(peer, command, payload) else null }
-        l.onClipboard = { text, sensitive -> Clip.receive(app, text, sensitive).also { if (it && visible) banners.tryEmit(Banner(Banner.Kind.Clipboard, "Copied from your PC", text.lineSequence().first().take(60))) } }
+        l.onClipboard = { text, sensitive -> Clip.receive(app, text, sensitive).also { if (it && !sensitive) rememberClip(text, "PC"); if (it && visible) banners.tryEmit(Banner(Banner.Kind.Clipboard, "Copied from your PC", text.lineSequence().first().take(60))) } }
         starting = l
         if (!l.start()) { starting = null; failure.value = l.failure ?: "The link couldn't start"; return null }
         link = l; starting = null; running.value = true; failure.value = null
@@ -147,7 +156,7 @@ object Hub {
     fun pc(list: List<PeerView> = peers.value, chosen: String? = selected.value): PeerView? =
         list.firstOrNull { it.id == chosen && it.paired } ?: list.firstOrNull { it.paired && it.online && !it.phone } ?: list.firstOrNull { it.paired && !it.phone }
     private fun pickDefault() { val p = pc(); if (p != null && p.id != selected.value) choose(p.id) }
-    fun choose(peer: String) { if (selected.value != peer) clearIsland(); selected.value = peer; prefs.edit().putString("pc", peer).apply(); status.value = null }
+    fun choose(peer: String) { if (selected.value != peer) { clearIsland(); missing.value = emptySet() }; selected.value = peer; prefs.edit().putString("pc", peer).apply(); status.value = null; probe(peer) }
 
     private val lastOnline = HashSet<String>()
     private fun onEvent(e: LinkEvent) {
@@ -158,7 +167,7 @@ object Hub {
                 // A PC that just came online hears this phone's battery and details at once.
                 val online = e.peers.filter { it.paired && it.online && it.remote }.map { it.id }.toSet()
                 val arrived = synchronized(lastOnline) { val a = online - lastOnline; lastOnline.clear(); lastOnline.addAll(online); a }
-                if (arrived.isNotEmpty()) { sendBattery(force = true); sendDetails(force = true); sendHotspot(arrived = true); arrived.forEach { learnMachine(it) } }
+                if (arrived.isNotEmpty()) { sendBattery(force = true); sendDetails(force = true); sendHotspot(arrived = true); arrived.forEach { learnMachine(it); probe(it); next(it) } }
             }
             is LinkEvent.PairCode -> { codePairing.value = null; pairCode.value = e; if (!visible) Notify.pairing(app, e) }
             is LinkEvent.Paired -> {
@@ -182,15 +191,26 @@ object Hub {
             is LinkEvent.Received -> {
                 transfers.update { it - e.transfer }; offers.update { list -> list.filterNot { it.transfer == e.transfer } }
                 remember(Moment(if (e.taken) 2 else 0, e.title, e.name, e.count, e.size, System.currentTimeMillis(), e.shown.take(20)))
+                // 1.9: a screenshot just asked for opens as it lands, while the app shows.
+                if (visible && e.title.startsWith("Screenshot") && System.currentTimeMillis() - screenshotAsked < 120_000) { screenshotAsked = 0; openReceived(app, moments.value.first()) }
                 banners.tryEmit(Banner(Banner.Kind.Received, if (e.taken) "Took ${e.title}" else "Received ${e.title}", "From ${e.name}  ·  ${sizeText(e.size)}"))
                 Notify.received(app, e)
             }
             is LinkEvent.Sent -> {
-                transfers.update { it - e.transfer }; outcomes.tryEmit(e.transfer to true); next(e.peer)
+                sending.remove(e.transfer); transfers.update { it - e.transfer }; outcomes.tryEmit(e.transfer to true); next(e.peer)
                 remember(Moment(1, e.title, e.name, e.count, e.size, System.currentTimeMillis(), emptyList()))
                 banners.tryEmit(Banner(Banner.Kind.Sent, "Sent ${e.title}", "To ${e.name}  ·  ${sizeText(e.size)}"))
             }
             is LinkEvent.Failed -> {
+                // 1.9: a send that broke with the connection waits at the front of the queue and carries on (island 0.27).
+                val again = if (e.outgoing && e.resumable) sending.remove(e.transfer)?.takeIf { it.attempts < 5 } else { sending.remove(e.transfer); null }
+                if (again != null) {
+                    transfers.update { it - e.transfer }
+                    synchronized(queue) { queue.update { listOf(Queued(again.id, again.peer, again.name, again.sources, again.title, again.size, again.toShelf, again.preview, again.ask, again.onStarted, again.token, again.attempts + 1)) + it } }
+                    banners.tryEmit(Banner(Banner.Kind.Info, "${e.title} is waiting", "It carries on where it stopped when ${e.name} is back"))
+                    scope.launch { delay(4_000); if (peers.value.firstOrNull { it.id == e.peer }?.online == true) next(e.peer) }
+                    return
+                }
                 if (e.outgoing) { outcomes.tryEmit(e.transfer to false); scope.launch { delay(50); next(e.peer) } }
                 transfers.update { it - e.transfer }; offers.update { list -> list.filterNot { it.transfer == e.transfer } }; Notify.cancel(app, Notify.OFFER + e.transfer)
                 if (music.value?.transfer == e.transfer) music.value = null
@@ -282,9 +302,12 @@ object Hub {
     }
     /** 1.8: sends waiting their turn, in order. */
     val queue = MutableStateFlow<List<Queued>>(emptyList())
+    /** 1.9: what each send under way is, so one that breaks can be tried again. */
+    private val sending = java.util.concurrent.ConcurrentHashMap<Int, Queued>()
     private fun start(q: Queued) {
         val l = link ?: return
-        val id = l.send(q.peer, q.sources, q.title, toShelf = q.toShelf, preview = q.preview, ask = q.ask)
+        val id = l.send(q.peer, q.sources, q.title, toShelf = q.toShelf, preview = q.preview, ask = q.ask, token = q.token)
+        sending[id] = q
         transfers.update { it + (id to Transfer(id, q.peer, q.name, q.title, 0, q.size, true, sampledAt = System.currentTimeMillis())) }
         q.onStarted(id)
     }
@@ -296,6 +319,8 @@ object Hub {
         } ?: return
         start(q)
     }
+    /** 1.9: the same files to every paired PC that is here. */
+    fun sendToAll(uris: List<Uri>) { val pcs = peers.value.filter { it.paired && !it.phone && it.online }; if (pcs.isEmpty()) { banners.tryEmit(Banner(Banner.Kind.Failed, "None of your PCs is here")); return }; pcs.forEach { send(it.id, uris) } }
     /** Moves a waiting send from one place in the queue to another. */
     fun moveQueued(from: Int, to: Int) = queue.update { list -> if (from !in list.indices || to !in list.indices) list else list.toMutableList().apply { add(to, removeAt(from)) } }
     fun dropQueued(id: Long) = queue.update { list -> list.filterNot { it.id == id } }
@@ -516,6 +541,112 @@ object Hub {
     val levels = MutableStateFlow<Levels?>(null)
     suspend fun refreshLevels() = withContext(Dispatchers.IO) { val p = pc()?.takeIf { it.online && it.revision >= 9 } ?: return@withContext; levels.value = link?.levels(p.id) }
 
+    // ---- 1.9: the PC's top apps, temperatures, files, clipboard, screenshots and a speed test (island 0.27) ----
+    fun rev10(p: PeerView? = pc()) = p != null && p.online && p.revision >= 10
+    val processes = MutableStateFlow<List<PcProcess>>(emptyList())
+    val processIcons = MutableStateFlow<Map<String, androidx.compose.ui.graphics.ImageBitmap>>(emptyMap())
+    @Volatile var processSort = 0
+    /** 1.9: the new commands a PC said it doesn't have (an island between versions), so their screens say so instead of waiting. */
+    val missing = MutableStateFlow<Set<Int>>(emptySet())
+    /** Asks a newly arrived island 0.27 which of these it has: its apps' list and a folder listing (both only read). */
+    private fun probe(peer: String) {
+        val p = peers.value.firstOrNull { it.id == peer } ?: return; if (p.revision < 10 || p.phone || peer != pc()?.id) return
+        scope.launch {
+            val l = link ?: return@launch
+            note(Proto.CMD_PROCESSES, l.remote(peer, Proto.CMD_PROCESSES, Bytes().u8(0).u8(0).u8(1).u8(0).build())?.status)
+            note(Proto.CMD_FILES, l.files(peer, "", 0, max = 1, thumbs = false).first.takeIf { it != Proto.NOT_ALLOWED } ?: Proto.OK)
+            // A screenshot isn't taken to find out: an empty ask is refused as unsupported (0.27) or as malformed (later).
+            l.remote(peer, Proto.CMD_SCREENSHOT, ByteArray(0))?.status?.let { if (it == Proto.UNSUPPORTED) note(Proto.CMD_SCREENSHOT, it) else missing.update { m -> m - Proto.CMD_SCREENSHOT } }
+        }
+    }
+    private fun note(cmd: Int, status: Int?) { if (status == Proto.UNSUPPORTED) missing.update { it + cmd } else if (status == Proto.OK) missing.update { it - cmd } }
+    suspend fun refreshProcesses() = withContext(Dispatchers.IO) {
+        val p = pc()?.takeIf { rev10(it) } ?: return@withContext
+        val icons = processes.value.isEmpty() || processes.value.size < 3
+        val r = link?.remote(p.id, Proto.CMD_PROCESSES, Bytes().u8(0).u8(processSort).u8(15).u8(if (icons) 1 else 0).build()); note(Proto.CMD_PROCESSES, r?.status)
+        val list = r?.takeIf { it.ok }?.let { IslandWire.processes(it.payload) } ?: return@withContext
+        processes.value = list
+        val fresh = list.filter { it.icon != null && it.name !in processIcons.value }
+        if (fresh.isNotEmpty()) processIcons.update { m -> m + fresh.mapNotNull { a -> runCatching { android.graphics.BitmapFactory.decodeByteArray(a.icon, 0, a.icon!!.size)?.let { bmp -> a.name to bmp.asImageBitmap() } }.getOrNull() } }
+    }
+    /** Ends an app on the PC (it's asked to close first). */
+    fun endTask(proc: PcProcess) {
+        val p = pc() ?: return
+        processes.update { list -> list.filterNot { it.pid == proc.pid } }
+        scope.launch {
+            val r = link?.endTask(p.id, proc.pid)
+            when { r == null -> banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} didn't answer")); r.status == Proto.NOT_ALLOWED -> banners.tryEmit(Banner(Banner.Kind.Failed, "${proc.name} can't be ended", "Windows keeps it running"))
+                r.ok -> { banners.tryEmit(Banner(Banner.Kind.Info, "Ending ${proc.name}", "On ${p.name}")); IslandWire.processes(r.payload)?.let { processes.value = it } }
+                else -> banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't end ${proc.name}")) }
+        }
+    }
+    val sensors = MutableStateFlow<Sensors?>(null)
+    suspend fun refreshSensors() = withContext(Dispatchers.IO) { val p = pc()?.takeIf { rev10(it) } ?: return@withContext; link?.sensors(p.id)?.let { sensors.value = it; Alerts.checkHeat(app, p, it) } }
+
+    /** 1.9: the PC's files, a folder at a time: what it said (NOT_ALLOWED when browsing is off there) and the page. */
+    suspend fun files(path: String, sort: Int): Pair<Int, FileList?> = withContext(Dispatchers.IO) { val p = pc()?.takeIf { rev10(it) } ?: return@withContext Proto.FAILED to null; (link?.files(p.id, path, sort) ?: (Proto.FAILED to null)).also { note(Proto.CMD_FILES, it.first) } }
+    fun takeFromPc(path: String, name: String) {
+        val p = pc() ?: return
+        scope.launch { if (link?.takeFromPc(p.id, path) == true) banners.tryEmit(Banner(Banner.Kind.Received, "Bringing $name over", "From ${p.name}")) else banners.tryEmit(Banner(Banner.Kind.Failed, "${p.name} couldn't send $name")) }
+    }
+    /** 1.9: a screenshot of the PC, brought here (it opens when it arrives, while the app shows). */
+    @Volatile var screenshotAsked = 0L
+    fun screenshot(what: Int = 0) {
+        val p = pc() ?: return
+        if (!rev10(p)) { banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${p.name}", "Screenshots need version 0.27 or later")); return }
+        scope.launch { screenshotAsked = System.currentTimeMillis(); val size = link?.screenshot(p.id, what)
+            banners.tryEmit(when { size != null -> Banner(Banner.Kind.Photo, "Taking a screenshot of ${p.name}", "${size.first} × ${size.second}, coming over")
+                link?.remote(p.id, Proto.CMD_SCREENSHOT, ByteArray(0))?.status == Proto.UNSUPPORTED -> { missing.update { it + Proto.CMD_SCREENSHOT }; Banner(Banner.Kind.Info, "Screenshots aren't on ${p.name}'s island yet", "A later island adds them") }
+                else -> Banner(Banner.Kind.Failed, "${p.name} couldn't take one") }) }
+    }
+    /** 1.9: the connection's speed both ways (bits a second), each measured for about three seconds; null when it couldn't. */
+    suspend fun speedTest(onStep: (down: Double?, up: Double?) -> Unit): Pair<Double, Double>? = withContext(Dispatchers.IO) {
+        val p = pc()?.takeIf { rev10(it) } ?: return@withContext null; val l = link ?: return@withContext null
+        fun run(down: Boolean): Double? { val chunk = if (p.internet && p.path != 2) 60_000 else 190_000; var bytes = 0L; val start = System.nanoTime()
+            while (System.nanoTime() - start < 3_000_000_000L) { if (!l.speed(p.id, down, chunk)) return null; bytes += chunk
+                val secs = (System.nanoTime() - start) / 1e9; if (secs > .3) { if (down) onStep(bytes * 8 / secs, null) else onStep(null, bytes * 8 / secs) } }
+            return bytes * 8 / ((System.nanoTime() - start) / 1e9) }
+        val down = run(true) ?: return@withContext null; val up = run(false) ?: return@withContext null
+        down to up
+    }
+
+    // ---- 1.9: the clipboard's history, both ways ----
+    /** This phone's own history: what you copied here (as the app saw it) and what came from your PCs, newest first. */
+    val clipHistory = MutableStateFlow<List<ClipItem>>(emptyList())
+    fun rememberClip(text: String, from: String) {
+        if (text.isBlank()) return
+        clipHistory.update { list -> (listOf(ClipItem(text.take(20_000), System.currentTimeMillis(), list.firstOrNull { it.text == text }?.pinned ?: false, from)) + list.filterNot { it.text == text }).let { l -> l.filter { it.pinned } + l.filterNot { it.pinned }.take(50) } }
+        saveClips()
+    }
+    fun pinClip(item: ClipItem, on: Boolean) { clipHistory.update { list -> list.map { if (it.at == item.at && it.text == item.text) it.copy(pinned = on) else it } }; saveClips() }
+    fun forgetClip(item: ClipItem) { clipHistory.update { list -> list.filterNot { it.at == item.at && it.text == item.text } }; saveClips() }
+    private fun saveClips() = scope.launch { runCatching { val a = JSONArray(); clipHistory.value.forEach { c -> a.put(JSONObject().put("t", c.text).put("a", c.at).put("p", c.pinned).put("f", c.from)) }; File(app.filesDir, "clips.json").writeText(a.toString()) } }
+    private fun loadClips(): List<ClipItem> = runCatching { val a = JSONArray(File(app.filesDir, "clips.json").takeIf { it.exists() }?.readText() ?: "[]"); (0 until a.length()).map { i -> val o = a.getJSONObject(i); ClipItem(o.getString("t"), o.getLong("a"), o.optBoolean("p"), o.optString("f")) } }.getOrDefault(emptyList())
+    /** The PC's own clipboard history (island 0.27). */
+    val pcClips = MutableStateFlow<List<PcClip>>(emptyList())
+    suspend fun refreshPcClips() = withContext(Dispatchers.IO) { val p = pc()?.takeIf { rev10(it) } ?: return@withContext; link?.clips(p.id)?.let { pcClips.value = it } }
+    fun pcClipOp(op: Int, clip: PcClip, arg: Int = 0) { val p = pc() ?: return; scope.launch { link?.clipOp(p.id, op, clip.id, arg)?.let { pcClips.value = it } } }
+    /** A copy from the PC's history onto this phone's clipboard. */
+    suspend fun pcClipHere(clip: PcClip): io.github.arnavdugad.arnavisland.link.PcClipFull? = withContext(Dispatchers.IO) { val p = pc() ?: return@withContext null; link?.clipHere(p.id, clip.id) }
+
+    // ---- 1.9: an hour of the PC's numbers, kept on this phone (one point every ten seconds) ----
+    val hourTrail = MutableStateFlow<List<StatsPoint>>(emptyList())
+    @Volatile private var hourPc: String? = null; @Volatile private var hourSaved = 0L
+    private fun hourFile(pc: String) = File(app.filesDir, "hour-$pc.json")
+    private fun keepHour(p: PeerView, point: StatsPoint) {
+        if (hourPc != p.id) { hourPc = p.id; hourTrail.value = runCatching { val a = JSONArray(hourFile(p.id).readText()); (0 until a.length()).map { i -> val o = a.getJSONArray(i); StatsPoint(o.getLong(0), o.getDouble(1).toFloat(), o.getDouble(2).toFloat(), o.getDouble(3).toFloat(), o.getDouble(4).toFloat()) } }.getOrDefault(emptyList()) }
+        val last = hourTrail.value.lastOrNull()
+        if (last != null && point.at - last.at < 10_000) return
+        hourTrail.value = (hourTrail.value + point).filter { point.at - it.at <= 3_600_000 }
+        if (point.at - hourSaved > 60_000) { hourSaved = point.at; val list = hourTrail.value
+            scope.launch { runCatching { val a = JSONArray(); list.forEach { a.put(JSONArray().put(it.at).put(it.cpu.toDouble()).put(it.gpu.toDouble()).put(it.download.toDouble()).put(it.upload.toDouble())) }; hourFile(p.id).writeText(a.toString()) } } }
+    }
+
+    // ---- 1.9: the Island tab's sections, in your order, the pinned ones first ----
+    val sectionOrder = MutableStateFlow(prefsList("islandOrder")); val sectionPins = MutableStateFlow(prefsList("islandPins").toSet())
+    private fun prefsList(key: String): List<String> = runCatching { prefs.getString(key, "")!!.split(',').filter { it.isNotBlank() } }.getOrDefault(emptyList())
+    fun setSections(order: List<String>, pins: Set<String>) { sectionOrder.value = order; sectionPins.value = pins; prefs.edit().putString("islandOrder", order.joinToString(",")).putString("islandPins", pins.joinToString(",")).apply() }
+
     // ---- 1.8: the phone's volume keys, for the PC's sound ----
     /** One step (5%) of the PC's volume up or down, shown at once and then on the PC. */
     fun volumeStep(up: Boolean) {
@@ -573,7 +704,8 @@ object Hub {
             // A new PC starts its trail afresh; otherwise each poll adds a point (five minutes of them, for scrubbing).
             if (trailPc != p.id) { trailPc = p.id; statsTrail.value = emptyList() }
             pcStats.value = s; statsCache[p.id] = s; val now = System.currentTimeMillis(); Alerts.check(app, p, s)
-            statsTrail.value = (statsTrail.value + StatsPoint(now, s.cpu.toFloat(), s.gpu.toFloat(), s.download.toFloat(), s.upload.toFloat())).takeLast(300)
+            val point = StatsPoint(now, s.cpu.toFloat(), s.gpu.toFloat(), s.download.toFloat(), s.upload.toFloat())
+            statsTrail.value = (statsTrail.value + point).takeLast(300); keepHour(p, point)
         }
         l.controls(p.id)?.let { pcControls.value = it; controlsAt = System.currentTimeMillis() }
         // 1.5: its battery, every third time (island 0.23).
@@ -635,6 +767,7 @@ object Hub {
     suspend fun refreshStats() = withContext(Dispatchers.IO) {
         val l = link ?: return@withContext; val p = pc()?.takeIf { islandReady(it) } ?: return@withContext
         l.stats(p.id)?.let { pcStats.value = it; statsCache[p.id] = it; Alerts.check(app, p, it) }
+        if (rev10(p) && (Alerts.on("cpuheat") || Alerts.on("gpuheat"))) refreshSensors()
     }
     /** 1.5: each PC's numbers as last read (the Island tab's carousel shows its neighbours with them). */
     private val statsCache = java.util.concurrent.ConcurrentHashMap<String, PcStats>()
@@ -746,6 +879,7 @@ object Hub {
             for (i in 0 until 30) { if (s != null) break; kotlinx.coroutines.delay(100); s = status.value }
             if (s?.clipboard != true) return@launch
             val text = withContext(Dispatchers.Main) { Clip.newCopy(context) } ?: return@launch
+            rememberClip(text, "This phone")
             if (command(Proto.CMD_CLIP_SET, text.toByteArray(), quiet = true)?.ok == true)
                 banners.tryEmit(Banner(Banner.Kind.Clipboard, "On ${p.name}’s clipboard", text.lineSequence().first().take(60)))
         }

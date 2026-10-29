@@ -77,14 +77,18 @@ import kotlin.math.roundToInt
 @Composable fun SendScreen(pc: PeerView?, peers: List<PeerView>, transfers: Map<Int, Transfer>, moments: List<Moment>, bar: TopBar, onCamera: () -> Unit, padding: PaddingValues) {
     val t = LocalTokens.current; val context = LocalContext.current; val scope = rememberCoroutineScope(); val scroll = rememberScrollState()
     bar.follow("Send", scroll)
-    val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { uris -> pc?.let { Hub.send(it.id, uris) } }
-    val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> pc?.let { Hub.send(it.id, uris) } }
+    // 1.9: to the chosen PC, or to every one of them that's here.
+    var toAll by remember { mutableStateOf(false) }
+    fun go(uris: List<android.net.Uri>) { if (toAll) Hub.sendToAll(uris) else pc?.let { Hub.send(it.id, uris) } }
+    val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { uris -> go(uris) }
+    val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> go(uris) }
     val queue by Hub.queue.collectAsState()
     Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(padding).padding(horizontal = 16.dp)) {
-        ScreenTitle("Send", over = pc?.let { "To ${it.name}" } ?: "Pair a PC first")
+        ScreenTitle("Send", over = if (toAll) "To all your PCs" else pc?.let { "To ${it.name}" } ?: "Pair a PC first")
         val paired = peers.filter { it.paired && !it.phone }
         if (paired.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 14.dp, start = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            paired.forEach { p -> GlassChip(p.name, icon = pcIcon(p.id), selected = p.id == pc?.id, iconTint = if (p.online) pcColor(p.id) else Color.Unspecified) { Hub.choose(p.id) } }
+            GlassChip("All PCs", icon = Icons.Rounded.Devices, selected = toAll) { toAll = !toAll }
+            paired.forEach { p -> GlassChip(p.name, icon = pcIcon(p.id), selected = !toAll && p.id == pc?.id, iconTint = if (p.online) pcColor(p.id) else Color.Unspecified) { toAll = false; Hub.choose(p.id) } }
         }
         if (pc == null) { GlassButton({ Ui.pair() }, Modifier.fillMaxWidth(), prominent = true, contentPadding = PaddingValues(vertical = 15.dp)) { Icon(Icons.Rounded.Laptop, null); Spacer(Modifier.width(8.dp)); Text("Pair with your PC", style = Type.headline) }; return@Column }
         val ready = pc.online
@@ -101,6 +105,8 @@ import kotlin.math.roundToInt
                 if (text.isBlank()) Hub.banners.tryEmit(Banner(Banner.Kind.Info, "Your clipboard is empty")) else scope.launch { if (Hub.command(Proto.CMD_CLIP_SET, text.toByteArray())?.ok == true) Hub.banners.tryEmit(Banner(Banner.Kind.Clipboard, "On ${pc.name}’s clipboard", text.lineSequence().first().take(60))) }
             }
         }
+        val missing by Hub.missing.collectAsState()
+        if (pc.revision >= 10 && Proto.CMD_FILES !in missing) { Spacer(Modifier.height(12.dp)); GlassPanel(Modifier.fillMaxWidth()) { GlassRow(Icons.Rounded.FolderOpen, "Bring from ${pc.name}", "Browse its files and take any of them", tint = t.teal, chevron = true, onClick = { MoreUi.files = "" }) } }
         if (!ready) Text("${pc.name} is away. Files go once Arnav Island runs there, on this Wi-Fi or any other.", style = Type.caption, color = t.muted, modifier = Modifier.padding(top = 12.dp, start = 6.dp))
         else if (pc.internet) Row(Modifier.padding(top = 12.dp, start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Lock, null, tint = t.muted, modifier = Modifier.size(13.dp)); Spacer(Modifier.width(6.dp))
@@ -116,8 +122,19 @@ import kotlin.math.roundToInt
         }
         if (moments.isNotEmpty()) {
             SectionLabel("Recent") { Text("Clear", style = Type.body, color = t.accent, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { Hub.clearMoments() }.padding(horizontal = 6.dp, vertical = 2.dp)) }
+            // 1.9: find one, or show only what came, what went, or one PC's.
+            var query by remember { mutableStateOf("") }; var kind by remember { mutableIntStateOf(-1) }; var who by remember { mutableStateOf<String?>(null) }
+            SearchField(query, { query = it }, "Search recent")
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(-1 to "All", 0 to "Received", 1 to "Sent", 2 to "From a Shelf").forEach { (k, label) -> GlassChip(label, selected = kind == k) { kind = k } }
+                moments.map { it.from }.distinct().take(5).forEach { name -> GlassChip(name, icon = Icons.Rounded.Laptop, selected = who == name) { who = if (who == name) null else name } }
+            }
+            val shown = moments.filter { (kind < 0 || it.kind == kind) && (who == null || it.from == who) && (query.isBlank() || query.trim().lowercase() in it.title.lowercase()) }
             GlassPanel(Modifier.fillMaxWidth()) {
-                Column { moments.take(30).forEachIndexed { i, m -> key(m.at, m.title) { if (i > 0) Hairline(70.dp); SwipeAway({ Hub.forgetMoment(m) }) { MomentRow(m) } } } }
+                Column {
+                    if (shown.isEmpty()) Text("Nothing matches", style = Type.body, color = t.muted, modifier = Modifier.fillMaxWidth().padding(20.dp), textAlign = TextAlign.Center)
+                    shown.take(40).forEachIndexed { i, m -> key(m.at, m.title) { if (i > 0) Hairline(70.dp); SwipeAway({ Hub.forgetMoment(m) }) { MomentRow(m) } } }
+                }
             }
             Text("Swipe one to the left to take it off the list.", style = Type.caption, color = t.muted, modifier = Modifier.padding(start = 18.dp, top = 7.dp))
         }
@@ -203,7 +220,16 @@ import kotlin.math.roundToInt
             else context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = 8 }) }
         }.getOrNull() }
     }
-    Row(Modifier.fillMaxWidth().then(if (m.kind != 1) Modifier.clickable { openReceived(context, m) } else Modifier).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    // 1.9: one that has just finished drops in from where the transfer was, with a glow that fades.
+    val fresh = remember(m.at) { System.currentTimeMillis() - m.at < 2_500 }
+    val reduced = LocalReduced.current
+    val land = remember(m.at) { Animatable(if (fresh && !reduced) 0f else 1f) }
+    LaunchedEffect(m.at) { if (land.value < 1f) land.animateTo(1f, spring(dampingRatio = .55f, stiffness = 260f)) }
+    val glow = remember(m.at) { Animatable(if (fresh) 1f else 0f) }
+    LaunchedEffect(m.at) { if (glow.value > 0f) { kotlinx.coroutines.delay(500); glow.animateTo(0f, tween(1400)) } }
+    Row(Modifier.fillMaxWidth().graphicsLayer { val f = land.value; translationY = (1f - f) * -64.dp.toPx(); scaleX = .92f + .08f * f; scaleY = .92f + .08f * f; alpha = f.coerceIn(0f, 1f) }
+        .background(t.good.copy(alpha = .16f * glow.value))
+        .then(if (m.kind != 1) Modifier.clickable { openReceived(context, m) } else Modifier).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(t.fill), contentAlignment = Alignment.Center) {
             val b = thumb
             if (b != null) Image(b.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -214,7 +240,8 @@ import kotlin.math.roundToInt
             Text(m.title, style = Type.body, color = t.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text("${if (m.kind == 1) "To" else "From"} ${m.from}  ·  ${Hub.sizeText(m.size)}  ·  ${ago(m.at)}", style = Type.caption, color = t.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (m.kind != 1) Chevron()
+        if (glow.value > .05f) Box(Modifier.size(26.dp).graphicsLayer { alpha = glow.value }.clip(CircleShape).background(t.good), contentAlignment = Alignment.Center) { DrawnCheck(Color.White, Modifier.size(18.dp)) }
+        else if (m.kind != 1) Chevron()
     }
 }
 
@@ -258,7 +285,11 @@ object ShelfUi { var peek by mutableStateOf<Pair<Int, ShelfItem>?>(null); var se
     LaunchedEffect(visible, pc?.id, pc?.online) { if (visible && pc?.online == true) load() }
     LaunchedEffect(pc?.id) { ShelfUi.selecting = false; ShelfUi.selected = emptySet() }
     val grid = rememberLazyGridState()
-    val l = list; val items = l?.items.orEmpty()
+    val l = list
+    // 1.9: sorted as you like (the Shelf's own order is newest first); folders open on island 0.27.
+    var sort by remember { mutableIntStateOf(Hub.prefs.getInt("shelfSort", 1)) }
+    val items = l?.items.orEmpty()
+    val order = remember(items, sort) { items.indices.sortedWith(when (sort) { 0 -> compareBy { items[it].name.lowercase() }; 2 -> compareByDescending { items[it].size }; 3 -> compareBy<Int> { if (items[it].folder) 0 else 1 }.thenBy { items[it].name.substringAfterLast('.', "").lowercase() }; else -> compareBy { it } }) }
     bar.follow("Shelf", { if (grid.firstVisibleItemIndex > 0) 10_000 else grid.firstVisibleItemScrollOffset }, actions = if (items.isNotEmpty() && l?.shared == true) ({
         GlassButton({ ShelfUi.selecting = !ShelfUi.selecting; ShelfUi.selected = emptySet() }, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) { Text(if (ShelfUi.selecting) "Done" else "Select", style = Type.bodyStrong) }
     }) else null)
@@ -301,16 +332,22 @@ object ShelfUi { var peek by mutableStateOf<Pair<Int, ShelfItem>?>(null); var se
                                     GlassButton({ ShelfUi.selected = if (ShelfUi.selected.size == items.size) emptySet() else items.indices.toSet() }, Modifier.weight(1f)) { Text(if (ShelfUi.selected.size == items.size) "Select none" else "Select all", style = Type.bodyStrong) }
                                     GlassButton({ ShelfUi.selected.sorted().forEach { i -> items.getOrNull(i)?.let { take(i, it) } }; ShelfUi.selecting = false; ShelfUi.selected = emptySet() }, Modifier.weight(1f), prominent = true, enabled = ShelfUi.selected.isNotEmpty()) {
                                         Icon(Icons.Rounded.Download, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Take ${ShelfUi.selected.size.takeIf { it > 0 } ?: ""}".trim(), style = Type.bodyStrong) }
-                                } else GlassButton({ items.forEachIndexed { i, it -> if (it.name !in taken) take(i, it) } }, Modifier.fillMaxWidth(), contentPadding = PaddingValues(vertical = 12.dp)) {
-                                    Icon(Icons.Rounded.DownloadForOffline, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("Take all", style = Type.bodyStrong) }
+                                } else {
+                                    GlassButton({ items.forEachIndexed { i, it -> if (it.name !in taken) take(i, it) } }, Modifier.weight(1f), contentPadding = PaddingValues(vertical = 12.dp)) {
+                                        Icon(Icons.Rounded.DownloadForOffline, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("Take all", style = Type.bodyStrong) }
+                                    if (pc.revision >= 10 && Proto.CMD_FILES !in Hub.missing.collectAsState().value) GlassButton({ MoreUi.files = "" }, Modifier.weight(1f), contentPadding = PaddingValues(vertical = 12.dp)) {
+                                        Icon(Icons.Rounded.FolderOpen, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("PC’s files", style = Type.bodyStrong) }
+                                }
                             }
+                            if (items.size > 1) Segmented(listOf("Name", "Newest", "Largest", "Kind"), sort, { sort = it; Hub.prefs.edit().putInt("shelfSort", it).apply() }, Modifier.fillMaxWidth().padding(top = 8.dp))
                         }
                     }
-                    items(items.size) { i ->
-                        val item = items[i]
+                    items(order.size, key = { order[it] }) { n ->
+                        val i = order[n]; val item = items[i]
                         val moving = transfers.values.firstOrNull { !it.outgoing && it.title == item.name && it.peer == pc.id }
                         ShelfTile(item, moving, item.name in taken, ShelfUi.selecting, i in ShelfUi.selected, onPeek = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); ShelfUi.peek = i to item }) {
-                            if (ShelfUi.selecting) ShelfUi.selected = if (i in ShelfUi.selected) ShelfUi.selected - i else ShelfUi.selected + i else take(i, item)
+                            if (ShelfUi.selecting) ShelfUi.selected = if (i in ShelfUi.selected) ShelfUi.selected - i else ShelfUi.selected + i
+                            else if (item.folder && pc.revision >= 10) MoreUi.files = "shelf:$i" else take(i, item)
                         }
                     }
                 }

@@ -54,6 +54,18 @@ class MixerApp(val pid: Long, val name: String, val volume: Int, val peak: Int, 
 class Levels(val level: Float, val resting: Boolean, val bands: List<Float>)
 /** Revision 9: one of the PC's network adapters: its hardware address, name, IPv4 address and prefix length. */
 class Adapter(val mac: ByteArray, val name: String, val ipv4: String, val prefix: Int)
+/** Revision 10: an app running on the PC (its processes summed): CPU (% of the machine), memory, and whether it can be ended. */
+class PcProcess(val pid: Long, val name: String, val title: String, val cpu: Float, val memory: Long, val flags: Int, val icon: ByteArray?) {
+    val windowed get() = flags and 1 != 0; val protected get() = flags and 2 != 0; val island get() = flags and 4 != 0
+}
+/** Revision 10: the PC's temperatures (°C, NaN unknown), each sensor read, and its fans. */
+class Sensors(val cpu: Float, val gpu: Float, val zones: List<Pair<String, Float>>, val fans: List<Pair<String, Int>>)
+/** Revision 10: a folder on the PC ([path] "" is its Places, "shelf:" its Shelf), a page of what's in it. kind 0 file, 1 folder, 2 drive, 3 place. */
+class FileEntry(val name: String, val path: String, val kind: Int, val size: Long, val modified: Long, val thumb: ByteArray?) { val folder get() = kind != 0 }
+class FileList(val path: String, val title: String, val parent: String, val total: Long, val entries: List<FileEntry>)
+/** Revision 10: an item of the PC's clipboard history. kind 0 text, 1 image, 2 files. */
+class PcClip(val id: Long, val kind: Int, val text: String, val at: Long, val pinned: Boolean, val thumb: ByteArray?)
+class PcClipFull(val kind: Int, val text: String, val image: ByteArray?)
 
 object IslandWire {
     // The island's controls (remoteControls), and its CommandKind numbers the phone draws icons for.
@@ -138,6 +150,27 @@ object IslandWire {
         val r = Reader(p); if (r.u8() != 1) return null; val level = r.u8() ?: return null; val resting = (r.u8() ?: return null) != 0
         return Levels(level / 255f, resting, List(r.u8() ?: return null) { (r.u8() ?: return null) / 255f })
     }
+    fun processes(p: ByteArray): List<PcProcess>? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        return List(r.u8() ?: return null) { PcProcess(r.u32() ?: return null, r.string(1024) ?: return null, r.string(2048) ?: return null, r.f32() ?: return null, r.u64() ?: return null, r.u8() ?: return null, r.blob(64 * 1024)?.takeIf { it.isNotEmpty() }) }
+    }
+    fun sensors(p: ByteArray): Sensors? {
+        val r = Reader(p); if (r.u8() != 1) return null; val cpu = r.f32() ?: return null; val gpu = r.f32() ?: return null
+        val zones = List(r.u8() ?: return null) { (r.string(512) ?: return null) to (r.f32() ?: return null) }
+        val fans = List(r.u8() ?: 0) { (r.string(512) ?: return null) to (r.u16() ?: return null) }
+        return Sensors(cpu, gpu, zones, fans)
+    }
+    fun files(p: ByteArray): FileList? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        val path = r.string(8192) ?: return null; val title = r.string(2048) ?: return null; val parent = r.string(8192) ?: return null; val total = r.u32() ?: return null
+        val entries = List(r.u16() ?: return null) { FileEntry(r.string(2048) ?: return null, r.string(8192) ?: return null, r.u8() ?: return null, r.u64() ?: return null, r.u64() ?: return null, r.blob(64 * 1024)?.takeIf { it.isNotEmpty() }) }
+        return FileList(path, title, parent, total, entries)
+    }
+    fun clips(p: ByteArray): List<PcClip>? {
+        val r = Reader(p); if (r.u8() != 1) return null
+        return List(r.u8() ?: return null) { PcClip(r.u32() ?: return null, r.u8() ?: return null, r.string(8192) ?: return null, r.u64() ?: return null, (r.u8() ?: return null) != 0, r.blob(64 * 1024)?.takeIf { it.isNotEmpty() }) }
+    }
+    fun clip(p: ByteArray): PcClipFull? { val r = Reader(p); if (r.u8() != 1) return null; return PcClipFull(r.u8() ?: return null, r.string(200_000) ?: return null, r.blob(256 * 1024)?.takeIf { it.isNotEmpty() }) }
     fun machine(p: ByteArray): List<Adapter>? {
         val r = Reader(p); if (r.u8() != 1) return null
         return List(r.u8() ?: return null) { Adapter(r.bytes(6) ?: return null, r.string(1024) ?: return null, r.string(64) ?: return null, r.u8() ?: return null) }

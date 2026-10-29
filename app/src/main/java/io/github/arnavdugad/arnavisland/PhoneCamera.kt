@@ -67,11 +67,20 @@ import kotlin.math.min
  * through a small GL step that turns the picture upright however the phone is held, and the frames go to the PC on a
  * mode V connection just as this phone's screen does. A notification with Flip and Stop shows while it's on; it carries
  * on with the app in the background, and ends when you stop it, the PC does, or the connection goes.
+ *
+ * 1.9 (#34): its picture is chosen (by the network, 720p, 1080p, or 4K where the lens and encoder can), the lens it
+ * starts on is kept, and while it's on the card shows what is being sent, drawn by the same GL step into a small view
+ * (mirrored if you like). With island 0.27 on Windows 11 the PC lists it as a real camera, "Arnav Island Phone Camera".
  */
 object PhoneCamera {
+    /** 1.9: the picture asked for: [AUTO] (1080p on the same Wi-Fi, else 720p), or its long side. */
+    const val AUTO = 0; const val HD = 1280; const val FULL_HD = 1920; const val UHD = 3840
     internal val shown = MutableStateFlow<String?>(null)
     internal val asking = MutableStateFlow(false)
-    internal val lens = MutableStateFlow(CameraCharacteristics.LENS_FACING_FRONT)
+    internal val lens = MutableStateFlow(runCatching { Hub.prefs.getInt("cameraLens", CameraCharacteristics.LENS_FACING_FRONT) }.getOrDefault(CameraCharacteristics.LENS_FACING_FRONT))
+    internal val wanted = MutableStateFlow(runCatching { Hub.prefs.getInt("cameraQuality", AUTO) }.getOrDefault(AUTO))
+    internal val mirrored = MutableStateFlow(runCatching { Hub.prefs.getBoolean("cameraMirror", true) }.getOrDefault(true))
+    internal val sent = MutableStateFlow<Pair<Int, Int>?>(null)
     internal val lit = MutableStateFlow(false)
     internal val lightable = MutableStateFlow(false)
     /** Which PC uses this camera now (its name), or null. */
@@ -83,6 +92,42 @@ object PhoneCamera {
     /** Whether the lens in use has a light, and whether it's on. */
     val hasTorch: StateFlow<Boolean> get() = lightable
     val torch: StateFlow<Boolean> get() = lit
+    /** 1.9: the picture asked for ([AUTO], [HD], [FULL_HD] or [UHD]), kept; changed while on, the camera reshapes. */
+    val quality: StateFlow<Int> get() = wanted
+    /** 1.9: whether the card's preview is mirrored (only the preview: the PC gets the picture as others see you). */
+    val mirror: StateFlow<Boolean> get() = mirrored
+    /** 1.9: the picture being sent (width, height), while on. */
+    val picture: StateFlow<Pair<Int, Int>?> get() = sent
+
+    fun setQuality(longest: Int) {
+        wanted.value = longest; runCatching { Hub.prefs.edit().putInt("cameraQuality", longest).apply() }
+        PhoneCameraService.instance?.reshapeWanted = true
+    }
+    fun setMirror(on: Boolean) { mirrored.value = on; runCatching { Hub.prefs.edit().putBoolean("cameraMirror", on).apply() } }
+    /** 1.9: the lens to use (and start on next time): now if the camera is on. */
+    fun setLens(context: Context, facing: Int) { if (lens.value != facing) flip(context) }
+
+    /** 1.9: whether [facing]'s lens gives 4K at 30 fps and this phone's H.264 encoder takes it. */
+    fun can4K(context: Context, facing: Int): Boolean { return runCatching {
+        val m = context.getSystemService(CameraManager::class.java)
+        val c = m.cameraIdList.map { m.getCameraCharacteristics(it) }.firstOrNull { it.get(CameraCharacteristics.LENS_FACING) == facing } ?: return false
+        val map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return false
+        val size = map.getOutputSizes(SurfaceTexture::class.java)?.firstOrNull { max(it.width, it.height) == 3840 && min(it.width, it.height) == 2160 } ?: return false
+        if (map.getOutputMinFrameDuration(SurfaceTexture::class.java, size) > 34_000_000L) return false
+        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
+            info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) } &&
+                runCatching { info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).videoCapabilities?.areSizeAndRateSupported(3840, 2160, 30.0) == true }.getOrDefault(false)
+        }
+    }.getOrDefault(false) }
+
+    /** 1.9: the card's preview: a TextureView's surface, drawn into by the camera's GL step while it's on. */
+    internal class Preview(val texture: SurfaceTexture, @Volatile var width: Int, @Volatile var height: Int) { val surface = Surface(texture) }
+    @Volatile internal var preview: Preview? = null
+    /** Held while drawing into the preview, and while it goes, so nothing is drawn into a surface let go. */
+    internal val previewLock = Any()
+    fun attachPreview(texture: SurfaceTexture, width: Int, height: Int) { synchronized(previewLock) { preview = Preview(texture, width, height) } }
+    fun resizePreview(texture: SurfaceTexture, width: Int, height: Int) { preview?.takeIf { it.texture === texture }?.let { it.width = width; it.height = height } }
+    fun detachPreview(texture: SurfaceTexture) { synchronized(previewLock) { preview?.takeIf { it.texture === texture }?.let { preview = null; runCatching { it.surface.release() } } } }
 
     /** Starts this camera on [peer]; a banner says why when it can't (no permission, an older island, no PC). */
     fun start(context: Context, peer: String) {
@@ -101,6 +146,7 @@ object PhoneCamera {
     /** The other lens: now if the camera is on, else next time. */
     fun flip(context: Context) {
         lens.value = if (lens.value == CameraCharacteristics.LENS_FACING_FRONT) CameraCharacteristics.LENS_FACING_BACK else CameraCharacteristics.LENS_FACING_FRONT
+        runCatching { Hub.prefs.edit().putInt("cameraLens", lens.value).apply() }
         PhoneCameraService.instance?.flipWanted = true
     }
     /** The lens's light (a back lens with a flash), while the camera is on. */
@@ -112,6 +158,7 @@ object PhoneCamera {
  * camera frame upright (the camera's own turn from its transform, unmirrored for the front lens, then the phone's
  * turn), cropped to fill, at 30 frames a second. On the same Wi-Fi 1080p where the camera and encoder can, else 720p.
  * The bit rate follows the PC's feedback as the screen's does; a turned phone restarts the encoder at its new shape.
+ * 1.9: or the picture chosen (4K included), and the card's preview drawn from the same frames about 20 times a second.
  */
 class PhoneCameraService : Service() {
     companion object {
@@ -120,6 +167,8 @@ class PhoneCameraService : Service() {
     }
     @Volatile private var running = false; @Volatile private var session: Link.ScreenSession? = null
     @Volatile internal var flipWanted = false; @Volatile private var feed: Feed? = null
+    /** 1.9: another picture was chosen. */
+    @Volatile internal var reshapeWanted = false
     /** How the phone is held: 0, 90, 180 or 270 degrees turned clockwise from upright (as OrientationEventListener says). */
     @Volatile private var held = 0
     private var orientation: OrientationEventListener? = null
@@ -173,7 +222,7 @@ class PhoneCameraService : Service() {
         if (s != null) thread(name = "phone-camera-stop", isDaemon = true) { runCatching { s.send(byteArrayOf(Proto.SCREEN_STOP.toByte())) }; s.close() }
         orientation?.disable(); orientation = null
         if (instance === this) instance = null
-        PhoneCamera.shown.value = null; PhoneCamera.asking.value = false; PhoneCamera.lit.value = false
+        PhoneCamera.shown.value = null; PhoneCamera.asking.value = false; PhoneCamera.lit.value = false; PhoneCamera.sent.value = null
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE); stopSelf()
     }
     override fun onDestroy() { finish(); super.onDestroy() }
@@ -181,6 +230,16 @@ class PhoneCameraService : Service() {
 
     private class PcSays { @Volatile var acked = 0; @Volatile var heard = false; @Volatile var wantKey = false; @Volatile var lastHeard = SystemClock.elapsedRealtime(); @Volatile var limits: Triple<Int, Int, Int>? = null }
     private data class Cap(val longest: Int, val fps: Int, val start: Int, val most: Int, val least: Int)
+    /** 1.9: the picture chosen (by the network when it's left to it), with bit rates for the path: the same Wi-Fi, direct, or the relay. */
+    private fun capFor(pc: io.github.arnavdugad.arnavisland.link.PeerView): Cap {
+        val wifi = !pc.internet; val direct = pc.path == 2
+        return when (PhoneCamera.wanted.value) {
+            PhoneCamera.UHD -> when { wifi -> Cap(3840, 30, 16_000_000, 25_000_000, 3_000_000); direct -> Cap(3840, 30, 6_000_000, 10_000_000, 1_000_000); else -> Cap(3840, 30, 1_800_000, 3_000_000, 400_000) }
+            PhoneCamera.FULL_HD -> when { wifi -> Cap(1920, 30, 6_000_000, 10_000_000, 1_000_000); direct -> Cap(1920, 30, 3_500_000, 6_000_000, 500_000); else -> Cap(1920, 30, 1_200_000, 2_200_000, 300_000) }
+            PhoneCamera.HD -> when { wifi -> Cap(1280, 30, 4_000_000, 6_000_000, 800_000); direct -> Cap(1280, 30, 2_500_000, 5_000_000, 500_000); else -> Cap(1280, 30, 900_000, 1_800_000, 250_000) }
+            else -> when { wifi -> Cap(1920, 30, 6_000_000, 10_000_000, 1_000_000); direct -> Cap(1280, 30, 2_500_000, 5_000_000, 500_000); else -> Cap(1280, 30, 900_000, 1_800_000, 250_000) }
+        }
+    }
     private data class Dim(val width: Int, val height: Int)
     /** A lens to use: its id, which way it faces, its sensor's turn, its light, and its picture size and fps range for the path. */
     private class Lens(val id: String, val facing: Int, val sensor: Int, val flash: Boolean, val width: Int, val height: Int, val fps: Range<Int>?, val focus: Boolean) {
@@ -250,7 +309,7 @@ class PhoneCameraService : Service() {
     private fun stream(peer: String) {
         val link = Hub.link; val pc = Hub.peers.value.firstOrNull { it.id == peer }
         if (link == null || pc == null) { CamWire.fail("Couldn’t reach $pcName"); return }
-        val cap = when { !pc.internet -> Cap(1920, 30, 6_000_000, 10_000_000, 1_000_000); pc.path == 2 -> Cap(1280, 30, 2_500_000, 5_000_000, 500_000); else -> Cap(1280, 30, 900_000, 1_800_000, 250_000) }
+        var cap = capFor(pc)
         val info = encoderInfo() ?: run { CamWire.fail("This phone has no video encoder"); return }
         val videoCaps = runCatching { info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).videoCapabilities }.getOrNull()
         var lens = lens(PhoneCamera.lens.value, cap.longest, cap.fps) ?: run { CamWire.fail("This phone’s camera can’t be used"); return }
@@ -262,8 +321,9 @@ class PhoneCameraService : Service() {
         val (s, answer) = opened; session = s
         val reply = ScreenWire.reply(answer)
         if (reply == null || reply.status != 0) { CamWire.fail("$pcName couldn’t use this phone’s camera", CamWire.statusText(reply?.status)); return }
-        // The PC may ask for less than offered.
-        if (reply.width > 0 && reply.height > 0) longest = min(longest, max(reply.width, reply.height))
+        // The PC may ask for less than offered (kept, so another picture chosen stays within it).
+        var pcLongest = Int.MAX_VALUE
+        if (reply.width > 0 && reply.height > 0) { pcLongest = max(reply.width, reply.height); longest = min(longest, pcLongest) }
         if (reply.fps > 0) fps = min(fps, reply.fps)
         var bitrate = if (reply.bitrate > 0) reply.bitrate.coerceIn(cap.least.toLong(), cap.start.toLong()).toInt() else cap.start
         size = output(lens, turn(lens), longest, fps, videoCaps)
@@ -271,6 +331,8 @@ class PhoneCameraService : Service() {
         val cameraThread = HandlerThread("camera").apply { start() }; val cameraHandler = Handler(cameraThread.looper)
         var codec: MediaCodec? = null; var input: Surface? = null; var egl: Egl? = null; var window: EGLSurface? = null
         var painter: Painter? = null; var texture: SurfaceTexture? = null; var surface: Surface? = null; var feed: Feed? = null
+        // 1.9: the card's preview: which one is drawn into, its EGL surface, when it was last drawn.
+        var previewShown: PhoneCamera.Preview? = null; var previewWindow: EGLSurface? = null; var previewAt = 0L
         val pcSays = PcSays(); var number = 0
         try {
             var c = encoder(info, size, fps, bitrate); codec = c; var inp = c.createInputSurface(); input = inp; c.start()
@@ -280,7 +342,7 @@ class PhoneCameraService : Service() {
             val fresh = AtomicBoolean(false); tex.setOnFrameAvailableListener({ fresh.set(true) }, cameraHandler)
             val f = Feed(cameraHandler, tex, camSurface); feed = f; this.feed = f
             f.open(lens)
-            PhoneCamera.shown.value = pcName; PhoneCamera.asking.value = false
+            PhoneCamera.shown.value = pcName; PhoneCamera.asking.value = false; PhoneCamera.sent.value = size.width to size.height
             update("${size.width}×${size.height} · ${lensName()}")
             // What the PC says: how it's keeping up, key frames it wants, new limits, its end.
             thread(name = "phone-camera-in", isDaemon = true) {
@@ -309,7 +371,12 @@ class PhoneCameraService : Service() {
                     lens(PhoneCamera.lens.value, cap.longest, cap.fps)?.let { lens = it; f.open(it) }
                     update("${size.width}×${size.height} · ${lensName()}")
                 }
-                pcSays.limits?.let { (w, h, r) -> pcSays.limits = null; if (w > 0 && h > 0) longest = min(cap.longest, max(w, h)); if (r > 0) fps = min(cap.fps, r) }
+                if (reshapeWanted) {
+                    // 1.9: another picture chosen: the lens again at its size, and the bit rate the path gives it.
+                    reshapeWanted = false; val next = capFor(pc)
+                    if (next != cap) { cap = next; longest = min(cap.longest, pcLongest); bitrate = cap.start; runCatching { c.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bitrate) }) }; lens(PhoneCamera.lens.value, cap.longest, cap.fps)?.let { lens = it; f.open(it) } }
+                }
+                pcSays.limits?.let { (w, h, r) -> pcSays.limits = null; if (w > 0 && h > 0) { pcLongest = max(w, h); longest = min(cap.longest, pcLongest) }; if (r > 0) fps = min(cap.fps, r) }
                 // A turned phone, another lens or new limits: the encoder again, at the new shape.
                 val angle = turn(lens); val next = output(lens, angle, longest, fps, videoCaps)
                 if (next != size || fps != encodedFps) {
@@ -319,6 +386,7 @@ class PhoneCameraService : Service() {
                     runCatching { c.stop() }; c.release(); inp.release()
                     c = nc; codec = nc; inp = ni; input = ni
                     s.send(Bytes().u8(Proto.SCREEN_LIMITS).u16(size.width).u16(size.height).u8(fps).build()); config = null; skipping = false
+                    PhoneCamera.sent.value = size.width to size.height
                     update("${size.width}×${size.height} · ${lensName()}")
                 }
                 if (pcSays.wantKey) { pcSays.wantKey = false; keyFrame() }
@@ -333,6 +401,24 @@ class PhoneCameraService : Service() {
                         lastDrawn = at; tex.getTransformMatrix(st)
                         paint.draw(st, lens.facing == CameraCharacteristics.LENS_FACING_FRONT, angle, lens.aspect, size.width, size.height)
                         e.present(win, at); drew = true
+                    }
+                }
+                // 1.9: the card's preview, from the same frame (a view that came or went gets its EGL surface made or let go).
+                val wantPreview = PhoneCamera.preview
+                if (wantPreview !== previewShown) synchronized(PhoneCamera.previewLock) {
+                    previewWindow?.let { runCatching { e.destroy(it) } }; previewWindow = null; previewShown = PhoneCamera.preview
+                    previewShown?.let { p -> previewWindow = runCatching { e.window(p.surface) }.getOrNull() }
+                }
+                val pw = previewWindow; val ps = previewShown
+                if (drew && pw != null && ps != null && tex.timestamp - previewAt >= 45_000_000L) synchronized(PhoneCamera.previewLock) {
+                    if (PhoneCamera.preview === ps && ps.width > 0 && ps.height > 0) {
+                        previewAt = tex.timestamp
+                        try {
+                            e.current(pw)
+                            paint.draw(st, lens.facing == CameraCharacteristics.LENS_FACING_FRONT, angle, lens.aspect, ps.width, ps.height, PhoneCamera.mirrored.value)
+                            e.swap(pw)
+                        } catch (x: Exception) { android.util.Log.w("ArnavCamera", "preview failed", x); runCatching { e.destroy(pw) }; previewWindow = null }
+                        finally { e.current(win) }
                     }
                 }
                 // Whatever the encoder has ready.
@@ -372,6 +458,7 @@ class PhoneCameraService : Service() {
             // The camera first (it draws into the texture), then the GL step and the encoder.
             this.feed = null; feed?.close(); cameraThread.quitSafely()
             runCatching { surface?.release() }; runCatching { texture?.release() }; runCatching { painter?.release() }
+            synchronized(PhoneCamera.previewLock) { runCatching { previewWindow?.let { egl?.destroy(it) } } }
             runCatching { window?.let { egl?.destroy(it) } }; runCatching { egl?.release() }
             runCatching { codec?.stop() }; runCatching { codec?.release() }; runCatching { input?.release() }
         }
@@ -436,6 +523,7 @@ class PhoneCameraService : Service() {
         fun window(s: Surface): EGLSurface = EGL14.eglCreateWindowSurface(display, config, s, intArrayOf(EGL14.EGL_NONE), 0).also { check(it != EGL14.EGL_NO_SURFACE) { "no EGL surface" } }
         fun current(s: EGLSurface) = check(EGL14.eglMakeCurrent(display, s, s, context)) { "EGL couldn’t start" }
         fun present(s: EGLSurface, ns: Long) { EGLExt.eglPresentationTimeANDROID(display, s, ns); EGL14.eglSwapBuffers(display, s) }
+        fun swap(s: EGLSurface) { EGL14.eglSwapBuffers(display, s) }
         fun destroy(s: EGLSurface) { EGL14.eglDestroySurface(display, s) }
         fun release() { EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT); EGL14.eglDestroyContext(display, context); EGL14.eglReleaseThread() }
     }
@@ -443,7 +531,7 @@ class PhoneCameraService : Service() {
     /**
      * Draws the camera's texture: the camera's own transform (upright with the phone upright, mirrored for the front
      * lens), unmirrored for the front lens (a webcam's picture is as others see you), then turned clockwise as the phone
-     * is held and scaled to fill the picture (cropping the rest).
+     * is held and scaled to fill the picture (cropping the rest). 1.9: [mirror] flips the result left to right (the preview).
      */
     private class Painter {
         val texture: Int; private val program: Int; private val aPos: Int; private val aTex: Int; private val uPos: Int; private val uTex: Int
@@ -470,11 +558,11 @@ class PhoneCameraService : Service() {
             return s
         }
         /** [st]: the camera's transform; [aspect]: the picture's width over height upright; [turn]: degrees clockwise. */
-        fun draw(st: FloatArray, unmirror: Boolean, turn: Int, aspect: Float, width: Int, height: Int) {
+        fun draw(st: FloatArray, unmirror: Boolean, turn: Int, aspect: Float, width: Int, height: Int, mirror: Boolean = false) {
             Matrix.setIdentityM(flip, 0); if (unmirror) { Matrix.translateM(flip, 0, 1f, 0f, 0f); Matrix.scaleM(flip, 0, -1f, 1f, 1f) }
             Matrix.multiplyMM(tex, 0, st, 0, flip, 0)
             val shown = if (turn % 180 == 90) 1f / aspect else aspect; val view = width.toFloat() / height
-            Matrix.setIdentityM(pos, 0)
+            Matrix.setIdentityM(pos, 0); if (mirror) Matrix.scaleM(pos, 0, -1f, 1f, 1f)
             if (shown > view) Matrix.scaleM(pos, 0, shown / view, 1f, 1f) else Matrix.scaleM(pos, 0, 1f, view / shown, 1f)
             Matrix.rotateM(pos, 0, -turn.toFloat(), 0f, 0f, 1f)
             GLES20.glViewport(0, 0, width, height); GLES20.glClearColor(0f, 0f, 0f, 1f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)

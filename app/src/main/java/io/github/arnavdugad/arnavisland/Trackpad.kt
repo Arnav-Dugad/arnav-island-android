@@ -12,6 +12,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.rounded.CenterFocusStrong
+import androidx.compose.material.icons.rounded.Gesture
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.ui.focus.FocusRequester
@@ -211,14 +213,24 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
 /**
  * The air mouse: a big clutch (the pointer follows the phone only while it is held, so you can reset your wrist like
  * lifting a mouse), a strip to scroll beside it, the two buttons, and its sensitivity. Its sensors listen only while
- * this shows.
+ * this shows. 1.9 (#36): flicks of the wrist click (a word in the clutch and a tap say which), and Calibrate learns the
+ * gyroscope's drift and the speed for your sweep, in place of the pad.
  */
 @Composable private fun ColumnScope.AirPad(input: InputLink, visible: Boolean) {
     val t = LocalTokens.current; val haptics = LocalHapticFeedback.current; val reduced = LocalReduced.current
     var held by remember { mutableStateOf(false) }
+    var calibrating by remember { mutableStateOf(false) }
+    var flicks by remember { mutableStateOf(runCatching { Hub.prefs.getBoolean(AirMouse.PREF_FLICKS, true) }.getOrDefault(true)) }
+    // What the last flick did, said in the clutch for a moment.
+    var flicked by remember { mutableStateOf<Pair<String, Long>?>(null) }
+    LaunchedEffect(flicked) { if (flicked != null) { delay(900); flicked = null } }
     // Where the clutch's light sits: it trails the pointer's motion and springs back home when let go.
     var dot by remember { mutableStateOf(Offset.Zero) }
-    val mouse = rememberAirMouse(visible) { x, y -> input.move(x, y); if (!reduced) dot = Offset((dot.x * .94f + x * .5f).coerceIn(-90f, 90f), (dot.y * .94f + y * .5f).coerceIn(-90f, 90f)) }
+    val mouse = rememberAirMouse(visible, engaged = held && !calibrating, flicks = flicks && !calibrating, onGesture = { g ->
+        input.frame(Link.buttonFrame(if (g == AirMouse.TWIST) 1 else 0, 2))
+        haptics.performHapticFeedback(when (g) { AirMouse.TWIST -> HapticFeedbackType.ContextClick; AirMouse.DOUBLE_FLICK -> HapticFeedbackType.LongPress; else -> HapticFeedbackType.SegmentTick })
+        flicked = when (g) { AirMouse.TWIST -> "Right click"; AirMouse.DOUBLE_FLICK -> "Double click"; else -> "Click" } to System.nanoTime()
+    }) { x, y -> input.move(x, y); if (!reduced) dot = Offset((dot.x * .94f + x * .5f).coerceIn(-90f, 90f), (dot.y * .94f + y * .5f).coerceIn(-90f, 90f)) }
     var sensitivity by remember { mutableFloatStateOf(mouse.sensitivity) }
     LaunchedEffect(held) { if (!held && dot != Offset.Zero) { val from = dot; animate(1f, 0f, animationSpec = spring(dampingRatio = .55f, stiffness = 300f)) { v, _ -> dot = from * v } } }
     if (!mouse.available) {
@@ -227,13 +239,14 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
         }
         return
     }
+    if (calibrating) { AirCalibration(mouse) { s -> calibrating = false; if (s != null) sensitivity = s }; return }
     Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         val glow by springy(if (held) 1f else 0f, .7f, 420f)
         val scale by springy(if (held) .985f else 1f, .55f, 600f)
         Box(Modifier.weight(1f).fillMaxHeight().graphicsLayerScale(scale).glass(GlassShapes.card, GlassLevel.Control, if (held) t.accent else Color.Unspecified)
             .semantics { contentDescription = "Hold to move the pointer" }
             .whileHeld { h ->
-                if (h != held) { held = h; mouse.engaged = h; haptics.performHapticFeedback(if (h) HapticFeedbackType.LongPress else HapticFeedbackType.SegmentTick) }
+                if (h != held) { held = h; haptics.performHapticFeedback(if (h) HapticFeedbackType.LongPress else HapticFeedbackType.SegmentTick) }
             }, contentAlignment = Alignment.Center) {
             Canvas(Modifier.fillMaxSize()) {
                 val c = center + Offset(dot.x.dp.toPx(), dot.y.dp.toPx()); val r = (70f + 40f * glow).dp.toPx()
@@ -243,9 +256,10 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(20.dp)) {
                 Icon(Icons.Rounded.TouchApp, null, tint = if (held) t.text else t.faint, modifier = Modifier.size(36.dp))
                 Spacer(Modifier.height(10.dp))
-                Text(if (held) "Moving" else "Hold to move", style = Type.headline, color = if (held) t.text else t.muted)
+                val said = flicked?.first
+                Text(said ?: if (held) "Moving" else "Hold to move", style = Type.headline, color = if (held || said != null) t.text else t.muted)
                 Spacer(Modifier.height(4.dp))
-                Text(if (held) "Point at the screen" else "Point the phone at your PC, then hold here", style = Type.caption, color = t.faint, textAlign = TextAlign.Center)
+                Text(if (held) "Point at the screen" else if (flicks) "Point the phone at your PC, then hold here. Flick down to click" else "Point the phone at your PC, then hold here", style = Type.caption, color = t.faint, textAlign = TextAlign.Center)
             }
         }
         ScrollStrip(input, Modifier.width(60.dp).fillMaxHeight())
@@ -258,7 +272,13 @@ const val TRACKPAD_PAD = 0; const val TRACKPAD_AIR = 1; const val TRACKPAD_KEYS 
         GlassSlider(sensitivity, { sensitivity = it; mouse.sensitivity = it }, { Hub.prefs.edit().putFloat(AirMouse.PREF, it).apply() },
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 6.dp), description = "Pointer sensitivity")
         Hairline()
-        GlassRow(Icons.Rounded.CenterFocusStrong, "Recenter", "Hold the phone still a moment: clears any drift", onClick = { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); mouse.recenter() })
+        GlassRow(Icons.Rounded.Gesture, "Flick to click", "Flick down to click, twice for a double click, twist for a right click", tint = t.purple, trailing = {
+            GlassSwitch(flicks, { flicks = it; Hub.prefs.edit().putBoolean(AirMouse.PREF_FLICKS, it).apply() })
+        })
+        Hairline()
+        GlassRow(Icons.Rounded.Tune, "Calibrate", "Learns the drift and the speed for your sweep", tint = t.teal, onClick = { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); held = false; calibrating = true }, trailing = {
+            GlassChip("Recenter", icon = Icons.Rounded.CenterFocusStrong) { mouse.recenter() }
+        })
     }
 }
 

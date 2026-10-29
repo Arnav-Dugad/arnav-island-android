@@ -1,14 +1,19 @@
-plugins { id("com.android.application"); id("org.jetbrains.kotlin.plugin.compose") }
+plugins {
+    id("com.android.application"); id("org.jetbrains.kotlin.plugin.compose")
+    // 1.9: KSP, for the App Functions compiler (it writes the service Gemini binds and the schema Android indexes).
+    id("com.google.devtools.ksp") version "2.3.12"
+}
 
 android {
     namespace = "io.github.arnavdugad.arnavisland"
-    compileSdk = 36
+    // 1.9: 37 to compile App Functions (androidx.appfunctions needs it); the app still targets 36.
+    compileSdk = 37
     defaultConfig {
         applicationId = "io.github.arnavdugad.arnavisland"
         minSdk = 28
         targetSdk = 36
-        versionCode = 19
-        versionName = "1.8.0"
+        versionCode = 20
+        versionName = "1.9.0"
     }
     signingConfigs {
         if (System.getenv("ARNAVISLAND_KEYSTORE") != null) create("release") {
@@ -37,6 +42,8 @@ android {
     testOptions { unitTests.isIncludeAndroidResources = true; unitTests.isReturnDefaultValues = true }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
+// 1.9: the App Functions compiler writes the service and its schema in this (the app) module.
+ksp { arg("appfunctions:aggregateAppFunctions", "true") }
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.02.01"))
@@ -56,6 +63,9 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.2")
     implementation("androidx.camera:camera-view:1.4.2")
     implementation("com.google.zxing:core:3.5.3")
+    // 1.9: App Functions, so Gemini (and other agents on Android 16+) can run the app's actions on your PC.
+    implementation("androidx.appfunctions:appfunctions:1.0.0-alpha13")
+    ksp("androidx.appfunctions:appfunctions-compiler:1.0.0-alpha13")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250107")

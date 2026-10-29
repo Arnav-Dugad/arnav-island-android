@@ -31,4 +31,41 @@
     <string name="widget_transfer_description">What’s moving between this phone and your PC, and the last thing that did</string>
     <string name="wallpaper_label">Arnav Island light</string>
     <string name="wallpaper_description">The app’s drifting light behind your home screen, in the colours of what plays on your PC</string>
+    <string name="widget_controls_label">Your PC’s controls</string>
+    <string name="widget_controls_description">Your PC’s Wi-Fi, Bluetooth, dark mode, sound and microphone in tiles, with its volume and Lock</string>
+    <string name="widget_mixer_label">Your PC’s sound</string>
+    <string name="widget_mixer_description">The apps playing on your PC, each with its own volume and mute, under the PC’s own volume</string>
+    <!-- 1.9: your PC by voice: Gemini (App Functions), App Actions, shortcuts and arnavisland://do links. -->
+    <string name="voice_label">Arnav Island actions</string>
+    <string name="appfn_description">Controls the user’s own Windows PC from this phone through the Arnav Island app on that PC: media, volume, lock, sleep, restart, shut down, wake, find, clipboard, web pages, screenshots, its status, and anything its command bar understands.
+Operational patterns:
+- “My PC”, “my computer” and “my laptop” mean the PC chosen in the app; every function acts on it.
+- Use runPcCommand for any PC request that no other function covers (opening apps, timers, focus sessions, settings like dark mode).
+- When a reply has needsConfirmation, ask the user its message and call the same function again with confirmed = true only if they agree.
+Constraints:
+- Restart and shut down may lose unsaved work: always confirm with the user first.
+- The PC must be on and allow phone control; replies say plainly when it is away.</string>
+    <string name="appfn_display_description">Control your Windows PC: media, volume, lock, sleep, wake and its command bar</string>
+    <string name="sc_lock">Lock PC</string>
+    <string name="sc_lock_long">Lock your PC</string>
+    <string name="sc_play">Play or pause</string>
+    <string name="sc_play_long">Play or pause on your PC</string>
+    <string name="sc_wake">Wake PC</string>
+    <string name="sc_wake_long">Wake your PC</string>
+    <string name="sc_status">How’s my PC</string>
+    <string name="sc_status_long">Your PC’s processor, memory and battery</string>
+    <string-array name="aa_lock"><item>lock my pc</item><item>lock pc</item><item>lock my computer</item><item>lock my laptop</item><item>lock</item></string-array>
+    <string-array name="aa_play"><item>play pause</item><item>pause my pc</item><item>pause the music on my pc</item><item>play music on my pc</item><item>resume</item></string-array>
+    <string-array name="aa_wake"><item>wake my pc</item><item>wake up my computer</item><item>turn on my pc</item><item>wake</item></string-array>
+    <string-array name="aa_status"><item>how is my pc</item><item>pc status</item><item>my pc battery</item><item>cpu usage</item><item>status</item></string-array>
+    <string-array name="aa_find"><item>find my pc</item><item>ring my pc</item><item>where is my laptop</item><item>find</item></string-array>
+    <string-array name="aa_paste"><item>paste on pc</item><item>send my clipboard to my pc</item><item>paste my clipboard on my computer</item><item>paste</item></string-array>
+    <string-array name="aa_pc_command_queries">
+        <item>tell my pc to $text</item>
+        <item>ask my pc to $text</item>
+        <item>on my pc $text</item>
+        <item>$text on my pc</item>
+        <item>$text on my computer</item>
+        <item>have my computer $text</item>
+    </string-array>
 </resources>

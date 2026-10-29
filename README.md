@@ -9,16 +9,16 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 **[Download the latest APK](https://github.com/Arnav-Dugad/arnav-island-android/releases/latest)** · Android 9 or later · free, open source, no account
 
 <p>
-<img src="docs/screens/remote.jpg" width="200" alt="The remote: the PC's song with its cover, the controls and the volume">
+<img src="docs/screens/remote.jpg" width="200" alt="The Remote: the PC's song with its cover, its live levels, the controls, shuffle, repeat and love">
 <img src="docs/screens/lyrics.jpg" width="200" alt="The song's lyrics on the back of the cover, the sung line lit">
-<img src="docs/screens/island-open.jpg" width="200" alt="The app's island opened into the song's card">
-<img src="docs/screens/sound.jpg" width="200" alt="The PC's volume on a dial">
+<img src="docs/screens/island.jpg" width="200" alt="The Island tab as a dashboard: the PC, its rings and its performance, with a row to jump between sections">
+<img src="docs/screens/sound.jpg" width="200" alt="The PC's sound: the dial, where it plays from, and each app's own volume">
 </p>
 <p>
-<img src="docs/screens/pair-scan.jpg" width="200" alt="Scanning the island's QR code to pair from another network">
-<img src="docs/screens/trackpad.jpg" width="200" alt="The phone as the PC's trackpad and keyboard">
-<img src="docs/screens/widgets.jpg" width="200" alt="Home-screen widgets: the PC's music and quick actions">
-<img src="docs/screens/rain.jpg" width="200" alt="Rain on the app's glass when it rains where the PC is">
+<img src="docs/screens/pairing.jpg" width="200" alt="Pairing: your PCs on the radar, or scan the island's QR code from another network">
+<img src="docs/screens/trackpad.jpg" width="200" alt="The phone as the PC's trackpad, air mouse and keyboard">
+<img src="docs/screens/settings.jpg" width="200" alt="Settings in their own sheet, with search">
+<img src="docs/screens/remote-light.jpg" width="200" alt="The Remote in the light theme">
 </p>
 
 ## What it does
@@ -47,6 +47,15 @@ Your [Arnav Island](https://github.com/Arnav-Dugad/arnav-island), in your hand. 
 - **Present** (slides, a laser, a timer), the **air mouse**, and this phone as your PC's **camera or microphone**.
 - **New widgets** (lyrics, both batteries, transfers), a **live wallpaper**, and **live updates** on Android 16.
 - Needs the PC's island 0.26 for shuffle, repeat, each app's volume, the levels, Wake, pausing and the camera and microphone.
+
+**On its way (1.9)**
+- **Live activities on your PC:** your Swiggy, Zomato or Blinkit order, a ride or a timer shows on your PC's island with its tracking line.
+- **Gemini controls your PC:** ask it to pause the music, turn the volume, lock the PC, send a file or tell you its battery.
+- **The presenter's laser works again,** the air mouse calibrates, and the presenter shows the slide, the next one and your notes.
+- **Transfers carry on** after a dropped connection; **send to all your PCs** at once; an AirDrop-style share sheet; search and filter Recent; sort the Shelf and open its folders.
+- **Temperatures** with heat alerts, **the last hour** of your PC's work, the Island tab's sections in your order, **clipboard history** both ways, and a **speed test**.
+- **Two new widgets** (controls, each app's volume), a compressed microphone, the camera as a Windows camera, and pairing redone.
+- Needs the PC's island 0.27 for live activities, transfers that carry on, temperatures, the clipboard history, slides and the speed test.
 
 **Handed over (1.7)**
 - **Share to your PC's Shelf in one tap:** your PCs are glass bubbles in the app's sheet, and they appear in Android's share sheet too. The island shows the picture while it arrives.

@@ -1,0 +1,105 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent">
+    <ImageView android:id="@+id/w_bg" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitXY"
+        android:src="@drawable/widget_you" android:importantForAccessibility="no" />
+    <LinearLayout android:id="@+id/w_open" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical"
+        android:paddingStart="13dp" android:paddingEnd="9dp" android:paddingTop="8dp" android:paddingBottom="8dp">
+        <LinearLayout android:id="@+id/w_m" android:layout_width="match_parent" android:layout_height="30dp" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:id="@+id/w_m_icon" android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_w_volume" android:tint="@color/widget_you_text" android:importantForAccessibility="no" />
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="9dp" android:orientation="vertical">
+                <TextView android:id="@+id/w_where" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="STUDIO PC" android:textColor="@color/widget_you_accent" android:textSize="9.5sp" android:letterSpacing="0.06" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+                <ProgressBar android:id="@+id/w_m_bar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="3dp"
+                    android:indeterminate="false" android:max="100" android:progress="48" android:progressDrawable="@drawable/widget_you_bar" />
+            </LinearLayout>
+            <TextView android:id="@+id/w_m_pct" android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="48%"
+                android:textColor="@color/widget_you_muted" android:textSize="10.5sp" android:maxLines="1" />
+            <ImageView android:id="@+id/w_m_down" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="6dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_minus" android:tint="@color/widget_you_text" android:contentDescription="Quieter" />
+            <ImageView android:id="@+id/w_m_up" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_plus" android:tint="@color/widget_you_text" android:contentDescription="Louder" />
+            <ImageView android:id="@+id/w_m_mute" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="5dp"
+                android:src="@drawable/ic_w_volume_off" android:tint="@color/widget_you_text" android:contentDescription="Mute" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/w_a0" android:layout_width="match_parent" android:layout_height="30dp" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:id="@+id/w_a0_icon" android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_w_app" android:importantForAccessibility="no" />
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="9dp" android:orientation="vertical">
+                <TextView android:id="@+id/w_a0_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Spotify" android:textColor="@color/widget_you_text" android:textSize="11.5sp" android:maxLines="1" android:ellipsize="end" />
+                <ProgressBar android:id="@+id/w_a0_bar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="3dp"
+                    android:indeterminate="false" android:max="100" android:progress="72" android:progressDrawable="@drawable/widget_you_bar" />
+            </LinearLayout>
+            <TextView android:id="@+id/w_a0_pct" android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="72%"
+                android:textColor="@color/widget_you_muted" android:textSize="10.5sp" android:maxLines="1" />
+            <ImageView android:id="@+id/w_a0_down" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="6dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_minus" android:tint="@color/widget_you_text" android:contentDescription="Quieter" />
+            <ImageView android:id="@+id/w_a0_up" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_plus" android:tint="@color/widget_you_text" android:contentDescription="Louder" />
+            <ImageView android:id="@+id/w_a0_mute" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="5dp"
+                android:src="@drawable/ic_w_volume_off" android:tint="@color/widget_you_text" android:contentDescription="Mute" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/w_a1" android:layout_width="match_parent" android:layout_height="30dp" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:id="@+id/w_a1_icon" android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_w_app" android:importantForAccessibility="no" />
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="9dp" android:orientation="vertical">
+                <TextView android:id="@+id/w_a1_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Chrome" android:textColor="@color/widget_you_text" android:textSize="11.5sp" android:maxLines="1" android:ellipsize="end" />
+                <ProgressBar android:id="@+id/w_a1_bar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="3dp"
+                    android:indeterminate="false" android:max="100" android:progress="45" android:progressDrawable="@drawable/widget_you_bar" />
+            </LinearLayout>
+            <TextView android:id="@+id/w_a1_pct" android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="45%"
+                android:textColor="@color/widget_you_muted" android:textSize="10.5sp" android:maxLines="1" />
+            <ImageView android:id="@+id/w_a1_down" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="6dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_minus" android:tint="@color/widget_you_text" android:contentDescription="Quieter" />
+            <ImageView android:id="@+id/w_a1_up" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_plus" android:tint="@color/widget_you_text" android:contentDescription="Louder" />
+            <ImageView android:id="@+id/w_a1_mute" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="5dp"
+                android:src="@drawable/ic_w_volume_off" android:tint="@color/widget_you_text" android:contentDescription="Mute" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/w_a2" android:layout_width="match_parent" android:layout_height="30dp" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:id="@+id/w_a2_icon" android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_w_app" android:importantForAccessibility="no" />
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="9dp" android:orientation="vertical">
+                <TextView android:id="@+id/w_a2_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Discord" android:textColor="@color/widget_you_text" android:textSize="11.5sp" android:maxLines="1" android:ellipsize="end" />
+                <ProgressBar android:id="@+id/w_a2_bar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="3dp"
+                    android:indeterminate="false" android:max="100" android:progress="60" android:progressDrawable="@drawable/widget_you_bar" />
+            </LinearLayout>
+            <TextView android:id="@+id/w_a2_pct" android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="60%"
+                android:textColor="@color/widget_you_muted" android:textSize="10.5sp" android:maxLines="1" />
+            <ImageView android:id="@+id/w_a2_down" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="6dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_minus" android:tint="@color/widget_you_text" android:contentDescription="Quieter" />
+            <ImageView android:id="@+id/w_a2_up" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_plus" android:tint="@color/widget_you_text" android:contentDescription="Louder" />
+            <ImageView android:id="@+id/w_a2_mute" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="5dp"
+                android:src="@drawable/ic_w_volume_off" android:tint="@color/widget_you_text" android:contentDescription="Mute" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/w_a3" android:layout_width="match_parent" android:layout_height="30dp" android:orientation="horizontal" android:gravity="center_vertical">
+            <ImageView android:id="@+id/w_a3_icon" android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_w_app" android:importantForAccessibility="no" />
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="9dp" android:orientation="vertical">
+                <TextView android:id="@+id/w_a3_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Teams" android:textColor="@color/widget_you_text" android:textSize="11.5sp" android:maxLines="1" android:ellipsize="end" />
+                <ProgressBar android:id="@+id/w_a3_bar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="3dp"
+                    android:indeterminate="false" android:max="100" android:progress="30" android:progressDrawable="@drawable/widget_you_bar" />
+            </LinearLayout>
+            <TextView android:id="@+id/w_a3_pct" android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="30%"
+                android:textColor="@color/widget_you_muted" android:textSize="10.5sp" android:maxLines="1" />
+            <ImageView android:id="@+id/w_a3_down" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="6dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_minus" android:tint="@color/widget_you_text" android:contentDescription="Quieter" />
+            <ImageView android:id="@+id/w_a3_up" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_plus" android:tint="@color/widget_you_text" android:contentDescription="Louder" />
+            <ImageView android:id="@+id/w_a3_mute" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="5dp"
+                android:src="@drawable/ic_w_volume_off" android:tint="@color/widget_you_text" android:contentDescription="Mute" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/w_a4" android:layout_width="match_parent" android:layout_height="30dp" android:orientation="horizontal" android:gravity="center_vertical" android:visibility="gone">
+            <ImageView android:id="@+id/w_a4_icon" android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_w_app" android:importantForAccessibility="no" />
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="9dp" android:orientation="vertical">
+                <TextView android:id="@+id/w_a4_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="System sounds" android:textColor="@color/widget_you_text" android:textSize="11.5sp" android:maxLines="1" android:ellipsize="end" />
+                <ProgressBar android:id="@+id/w_a4_bar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="3dp"
+                    android:indeterminate="false" android:max="100" android:progress="100" android:progressDrawable="@drawable/widget_you_bar" />
+            </LinearLayout>
+            <TextView android:id="@+id/w_a4_pct" android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="100%"
+                android:textColor="@color/widget_you_muted" android:textSize="10.5sp" android:maxLines="1" />
+            <ImageView android:id="@+id/w_a4_down" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="6dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_minus" android:tint="@color/widget_you_text" android:contentDescription="Quieter" />
+            <ImageView android:id="@+id/w_a4_up" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="6dp"
+                android:src="@drawable/ic_w_plus" android:tint="@color/widget_you_text" android:contentDescription="Louder" />
+            <ImageView android:id="@+id/w_a4_mute" android:layout_width="26dp" android:layout_height="26dp" android:layout_marginStart="4dp" android:background="@drawable/widget_you_button" android:padding="5dp"
+                android:src="@drawable/ic_w_volume_off" android:tint="@color/widget_you_text" android:contentDescription="Mute" />
+        </LinearLayout>
+        <TextView android:id="@+id/w_empty" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:gravity="center" android:visibility="gone"
+            android:text="Nothing’s making sound" android:textColor="@color/widget_you_muted" android:textSize="12sp" android:maxLines="2" android:ellipsize="end" />
+    </LinearLayout>
+</FrameLayout>

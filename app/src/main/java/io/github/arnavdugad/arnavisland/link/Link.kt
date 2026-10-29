@@ -38,7 +38,9 @@ class Link(
     class Options(val tcpPort: Int = Proto.TCP_PORT, val udpPort: Int = Proto.UDP_PORT, val discovery: Boolean = true, val loopback: Boolean = false, val phone: Boolean = true,
                   val relay: Boolean = false, val relayBrokers: List<Pair<String, Int>> = Relay.DEFAULT_BROKERS, val relayLoseEvery: Int = 0,
                   /** 1.3: the relay's direct path ([directLoopback], [directExtra]: tests). */
-                  val direct: Boolean = true, val directLoopback: Boolean = false, val directExtra: List<String> = emptyList())
+                  val direct: Boolean = true, val directLoopback: Boolean = false, val directExtra: List<String> = emptyList(),
+                  /** 1.8.1: where unfinished incoming transfers are kept to carry on (revision 10); null: they aren't. */
+                  val resumeDir: java.io.File? = null)
 
     private class Peer(var name: String = "", var address: String? = null, var port: Int = 0, var version: Int = 1, var revision: Int = 0,
                        var online: Boolean = false, var seen: Long = 0, var key: ByteArray? = null, var phone: Boolean = false)
@@ -480,6 +482,46 @@ class Link(
         return !stopped(transfer)
     }
 
+    // ---- 1.8.1 (revision 10): asks, and transfers that carry on ----
+    /** Files this phone asked a PC for (its files, a screenshot): accepted without asking, for ten minutes. */
+    private val asks = ConcurrentHashMap<Int, Long>()
+    fun newAsk(): Int { val a = (java.security.SecureRandom().nextInt() and 0x7fffffff).coerceAtLeast(1); asks[a] = System.currentTimeMillis(); return a }
+    private fun asked(a: Int) = a != 0 && (asks[a]?.let { System.currentTimeMillis() - it < 600_000 } == true)
+    /** An offer's head: as revision 8 lays it out when it has a picture, an ask or (revision 10) a token, else the old way. */
+    private class OfferHead(val count: Long, val total: Long, val flags: Int, val title: String, val ask: Int, val token: ByteArray?)
+    private fun offerHead(r: Reader): OfferHead? {
+        val count = r.u32() ?: return null; val total = r.u64() ?: return null; val flags = r.u8() ?: return null
+        if (flags and (Proto.OFFER_PICTURE or Proto.OFFER_ASKED or Proto.OFFER_RESUMABLE) == 0) return OfferHead(count, total, flags, cleanName(r.rest().toString(Charsets.UTF_8)), 0, null)
+        val title = cleanName(r.string(4000) ?: return null)
+        if (flags and Proto.OFFER_PICTURE != 0) r.blob(256 * 1024) ?: return null
+        val ask = if (flags and Proto.OFFER_ASKED != 0) (r.u32() ?: return null).toInt() else 0
+        val token = if (flags and Proto.OFFER_RESUMABLE != 0) r.bytes(16) ?: return null else null
+        return OfferHead(count, total, flags, title, ask, token)
+    }
+    /**
+     * Where an incoming resumable transfer stands, kept in [Options.resumeDir]/<token>: the files that arrived whole (in
+     * a list, with what each became), the next one's bytes so far ("<index>.part"), and the top folders made for it.
+     */
+    private inner class Partial(token: ByteArray) {
+        val dir = java.io.File(options.resumeDir, token.hex())
+        private val list = java.io.File(dir, "kept.txt")
+        val done = ArrayList<Pair<Long, String>>(); val tops = HashMap<String, String>()
+        init {
+            runCatching { list.readLines().forEach { l -> val p = l.split('\t'); when (p[0]) { "f" -> done += p[1].toLong() to p[2]; "t" -> tops[p[1]] = p[2] } } }
+            // Only whole runs from the first file count.
+        }
+        fun part(index: Int) = java.io.File(dir, "$index.part")
+        val offset get() = part(done.size).takeIf { it.exists() }?.length() ?: 0L
+        fun keep(size: Long, shown: String) { done += size to shown; dir.mkdirs(); list.appendText("f\t$size\t$shown\n") }
+        fun top(original: String, made: String) { tops[original] = made; dir.mkdirs(); list.appendText("t\t$original\t$made\n") }
+        fun drop() { runCatching { dir.deleteRecursively() } }
+    }
+    /** Clears what was kept of transfers that never came back (after a day). */
+    private fun pruneKept() { options.resumeDir?.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 86_400_000L }?.forEach { runCatching { it.deleteRecursively() } } }
+    /** The accept for an offer: [yes], and (revision 10, carrying on) where to start: [1, u32 file, u64 offset]. */
+    private fun accept(yes: Int, kept: Partial?): ByteArray =
+        if (yes == 1 && kept != null && (kept.done.isNotEmpty() || kept.offset > 0)) Bytes().u8(1).u32(kept.done.size).u64(kept.offset).build() else byteArrayOf(yes.toByte())
+
     // ---- progress ----
     private inner class Progress(val transfer: Int, val peer: String, val name: String, val title: String, val total: Long, val outgoing: Boolean) {
         var done = 0L; private var shown = -1; private var at = 0L
@@ -493,7 +535,8 @@ class Link(
     /** Sends these items to a paired PC in one transfer; returns its id (for [cancel]). */
     /** toShelf (revision 3): photos this phone took for the PC's Shelf. */
     /** [preview]: a small JPEG the PC shows as it arrives (revision 8); [ask]: the PC's ask this answers (revision 8). */
-    fun send(peer: String, items: List<Source>, title: String, folder: Boolean = false, toShelf: Boolean = false, preview: ByteArray? = null, ask: Int = 0): Int {
+    /** [token] (revision 10): the same token for every try of one send, so the PC can carry on where it broke. */
+    fun send(peer: String, items: List<Source>, title: String, folder: Boolean = false, toShelf: Boolean = false, preview: ByteArray? = null, ask: Int = 0, token: ByteArray? = null): Int {
         val transfer = newTransfer()
         thread(name = "link-send", isDaemon = true) {
             val total = items.sumOf { it.size }
@@ -501,40 +544,58 @@ class Link(
             var why = why0; var sent = false; val name = nameOf(peer, "")
             val revision = target(peer).first?.revision ?: 0
             val picture = preview?.takeIf { revision >= 8 && it.isNotEmpty() && it.size <= 96 * 1024 }
-            val flags = (if (folder) Proto.OFFER_FOLDER else 0) or (if (toShelf && revision >= 3) Proto.OFFER_SHELF else 0) or (if (picture != null) Proto.OFFER_PICTURE else 0) or (if (ask != 0 && revision >= 8) Proto.OFFER_ASKED else 0)
-            if (c != null) { try { val failed = offerBatch(c, ss, items, total, flags, title, peer, name, transfer, picture, ask); sent = failed == null; if (failed != null) why = failed } finally { c.close() } }
+            val resumable = token != null && revision >= 10
+            val flags = (if (folder) Proto.OFFER_FOLDER else 0) or (if (toShelf && revision >= 3) Proto.OFFER_SHELF else 0) or (if (picture != null) Proto.OFFER_PICTURE else 0) or (if (ask != 0 && revision >= 8) Proto.OFFER_ASKED else 0) or (if (resumable) Proto.OFFER_RESUMABLE else 0)
+            var broke = c == null
+            if (c != null) { try { val failed = offerBatch(c, ss, items, total, flags, title, peer, name, transfer, picture, ask, token); sent = failed == null; if (failed != null) { why = failed.first; broke = failed.second } } finally { c.close() } }
+            val mine = stopped(transfer)
             finish(transfer)
-            onEvent(if (sent) LinkEvent.Sent(transfer, peer, name, title, items.size, total) else LinkEvent.Failed(transfer, peer, name, title, why.ifEmpty { "It didn't go" }, true))
+            onEvent(if (sent) LinkEvent.Sent(transfer, peer, name, title, items.size, total) else LinkEvent.Failed(transfer, peer, name, title, why.ifEmpty { "It didn't go" }, true, resumable = resumable && broke && !mine))
         }
         return transfer
     }
-    /** An offer of these files, then (answered yes) the files and the batch's end: null when all arrived, else why not. */
-    private fun offerBatch(c: Conn, ss: Session, items: List<Source>, total: Long, flags: Int, title: String, peer: String, name: String, transfer: Int, picture: ByteArray? = null, ask: Int = 0): String? {
+    /**
+     * An offer of these files, then (answered yes) the files and the batch's end: null when all arrived, else why not and
+     * whether it broke with the connection (rather than by anyone's choice). Revision 10: the PC may say where to carry on.
+     */
+    private fun offerBatch(c: Conn, ss: Session, items: List<Source>, total: Long, flags: Int, title: String, peer: String, name: String, transfer: Int, picture: ByteArray? = null, ask: Int = 0, token: ByteArray? = null): Pair<String, Boolean>? {
         c.timeout(90_000)
-        // Revision 8: with a picture or an ask, each part carries its length (before, the title ran to the end).
+        // Revision 8: with a picture or an ask (revision 10: or a token), each part carries its length (before, the title ran to the end).
         val offer = Bytes().u8(Proto.FRAME_OFFER).u32(items.size).u64(total).u8(flags)
-        if (flags and (Proto.OFFER_PICTURE or Proto.OFFER_ASKED) != 0) { offer.string(title.take(1000)); if (flags and Proto.OFFER_PICTURE != 0) offer.blob(picture ?: ByteArray(0)); if (flags and Proto.OFFER_ASKED != 0) offer.u32(ask) } else offer.text(title)
+        if (flags and (Proto.OFFER_PICTURE or Proto.OFFER_ASKED or Proto.OFFER_RESUMABLE) != 0) {
+            offer.string(title.take(1000)); if (flags and Proto.OFFER_PICTURE != 0) offer.blob(picture ?: ByteArray(0)); if (flags and Proto.OFFER_ASKED != 0) offer.u32(ask)
+            if (flags and Proto.OFFER_RESUMABLE != 0) offer.raw(token!!)
+        } else offer.text(title)
         val offered = sealed(c, ss, offer.build())
         val reply = if (offered) opened(c, ss) else null
-        if (reply == null || reply.size != 1) return if (stopped(transfer)) "You stopped it" else "$name didn't answer"
-        if (reply[0].toInt() == 2) return "There isn't room on $name"
-        if (reply[0].toInt() != 1) return "$name declined it"
+        if (reply == null || (reply.size != 1 && reply.size != 13)) return (if (stopped(transfer)) "You stopped it" else "$name didn't answer") to true
+        if (reply[0].toInt() == 2) return "There isn't room on $name" to false
+        if (reply[0].toInt() != 1) return "$name declined it" to false
+        // Carrying on: the files before [from] arrived whole; [offset] bytes of that one did.
+        val rr = Reader(reply, 1); val from = if (reply.size == 13) (rr.u32() ?: 0L).toInt().coerceIn(0, items.size) else 0; val offset = if (reply.size == 13) rr.u64() ?: 0L else 0L
         c.timeout(30_000)
         val progress = Progress(transfer, peer, name, title, total, true)
         val hold = (target(peer).first?.revision ?: 0) >= 9
-        for (item in items) if (!streamFile(c, ss, item, progress, transfer, hold)) return if (stopped(transfer)) "You stopped it" else "The transfer to $name didn't finish"
+        items.take(from).forEach { progress.add(it.size) }
+        for ((i, item) in items.withIndex()) {
+            if (i < from) continue
+            if (!streamFile(c, ss, item, progress, transfer, hold, if (i == from) offset.coerceIn(0, item.size) else 0L)) return (if (stopped(transfer)) "You stopped it" else "The transfer to $name didn't finish") to true
+        }
         c.timeout(60_000)
         val ack = if (sealed(c, ss, byteArrayOf(Proto.FRAME_BATCH_END.toByte()))) opened(c, ss) else null
-        if (ack == null || ack.size != 1 || ack[0].toInt() != 1) return "The transfer to $name didn't finish"
+        if (ack == null || ack.size != 1 || ack[0].toInt() != 1) return "The transfer to $name didn't finish" to true
         return null
     }
     /** One file into the sealed stream: its header, its data in chunks, then its size and SHA-256. */
-    private fun streamFile(c: Conn, ss: Session, item: Source, progress: Progress, transfer: Int, hold: Boolean = false): Boolean {
+    private fun streamFile(c: Conn, ss: Session, item: Source, progress: Progress, transfer: Int, hold: Boolean = false, from: Long = 0L): Boolean {
         if (!sealed(c, ss, Bytes().u8(Proto.FRAME_HEADER).u64(item.size).text(item.rel).build())) return false
+        // Revision 10: carrying on part way: say where, and read through what the PC kept (for the whole file's hash).
+        if (from > 0 && !sealed(c, ss, Bytes().u8(Proto.FRAME_RESUME).u64(from).build())) return false
         val hash = MessageDigest.getInstance("SHA-256"); var done = 0L
         val ok = runCatching {
             item.open().use { input ->
                 val buffer = ByteArray(Proto.CHUNK)
+                while (done < from) { val n = input.read(buffer, 0, minOf(buffer.size.toLong(), from - done).toInt()); if (n < 0) return@use false; hash.update(buffer, 0, n); done += n; progress.add(n.toLong()) }
                 while (done < item.size) {
                     if (stopped(transfer)) return@use false
                     // 1.8: paused: a revision-9 PC hears a hold frame now and then, so it keeps waiting.
@@ -557,25 +618,32 @@ class Link(
         val peer = ss.peerId.hex(); val from = nameOf(peer, ss.peerName)
         val offer = opened(c, ss) ?: return
         val r = Reader(offer); if (r.u8() != Proto.FRAME_OFFER) return
-        val count = r.u32() ?: return; val total = r.u64() ?: return; val folder = (r.u8() ?: return) != 0
-        val title = cleanName(r.rest().toString(Charsets.UTF_8))
+        val head = offerHead(r) ?: return
+        val count = head.count; val total = head.total; val folder = head.flags and Proto.OFFER_FOLDER != 0; val title = head.title
         if (count == 0L || count > Proto.MAX_FILES || total < 0 || total > Proto.MAX_TOTAL) return
         val transfer = newTransfer(); live[transfer]?.socket = c.socket
-        val d = CompletableFuture<Int>(); decisions[transfer] = d
-        onEvent(LinkEvent.Offer(transfer, peer, from, title, count.toInt(), total, folder))
-        c.timeout(90_000)
-        var yes = decide(c, d)
+        // Revision 10: what came of this transfer before (a token), and files this phone asked for (accepted at once).
+        val kept = head.token?.takeIf { options.resumeDir != null }?.let { pruneKept(); Partial(it) }
+        var yes: Int
+        if (asked(head.ask) || (kept != null && (kept.done.isNotEmpty() || kept.offset > 0))) yes = 1
+        else {
+            val d = CompletableFuture<Int>(); decisions[transfer] = d
+            onEvent(LinkEvent.Offer(transfer, peer, from, title, count.toInt(), total, folder))
+            c.timeout(90_000)
+            yes = decide(c, d)
+        }
         decisions.remove(transfer)
         if (yes == -1) { finish(transfer); onEvent(LinkEvent.Failed(transfer, peer, from, title, "$from stopped sending it", false)); return }
         if (yes == 1 && !inbox.room(total)) yes = 2
-        val told = sealed(c, ss, byteArrayOf(yes.toByte()))
+        if (yes != 1) kept?.drop()
+        val told = sealed(c, ss, accept(yes, kept))
         if (!told || yes != 1) {
             val mine = stopped(transfer); finish(transfer)
             if (yes == 2) onEvent(LinkEvent.Failed(transfer, peer, from, title, "There isn't room on this phone", false))
             else if (yes == 1) onEvent(LinkEvent.Failed(transfer, peer, from, title, if (mine) "You stopped it" else "$from stopped sending it", false))
             return
         }
-        takeBatch(c, ss, peer, from, title, count.toInt(), total, transfer, false)
+        takeBatch(c, ss, peer, from, title, count.toInt(), total, transfer, false, kept)
     }
     /** Waits (up to a minute) for the person's answer; -1 if the other side closes the connection meanwhile. */
     private fun decide(c: Conn, d: CompletableFuture<Int>): Int {
@@ -591,26 +659,67 @@ class Link(
         return try { c.socket.soTimeout = 1; c.input.mark(1); val b = c.input.read(); if (b < 0) true else { c.input.reset(); false } }
         catch (e: SocketTimeoutException) { false } catch (e: Exception) { true } finally { runCatching { c.socket.soTimeout = saved } }
     }
-    private fun takeBatch(c: Conn, ss: Session, peer: String, from: String, title: String, count: Int, total: Long, transfer: Int, taken: Boolean) {
+    /** The files of a batch, one after another. [kept] (revision 10): a resumable one's state, carried on from where it broke. */
+    private fun takeBatch(c: Conn, ss: Session, peer: String, from: String, title: String, count: Int, total: Long, transfer: Int, taken: Boolean, kept: Partial? = null) {
         c.timeout(30_000)
         val progress = Progress(transfer, peer, from, title, total, false)
-        val tops = HashMap<String, String>(); val shown = mutableListOf<String>(); var files = 0; var whole = false
+        val tops = HashMap<String, String>(kept?.tops ?: emptyMap()); val shown = mutableListOf<String>(); var files = 0; var whole = false
+        // What arrived before, and how much of the next.
+        if (kept != null) { kept.done.forEach { (size, s) -> progress.add(size); if (s.isNotEmpty()) shown += s }; shown += tops.values.filter { it !in shown }; files = kept.done.size; progress.add(kept.offset) }
         while (true) {
             if (stopped(transfer)) break
             val f = opened(c, ss) ?: break; if (f.isEmpty()) break
             if (f[0].toInt() == Proto.FRAME_BATCH_END) { whole = files == count && progress.done == total; break }
             if (f[0].toInt() != Proto.FRAME_HEADER || f.size < 10 || files >= count) break
             val r = Reader(f, 1); val size = r.u64()!!; val parts = safePath(r.rest().toString(Charsets.UTF_8)).toMutableList()
-            if (parts.isEmpty() || size < 0 || size > Proto.MAX_FILE || progress.done + size > total) break
-            if (parts.size > 1) { val top = tops.getOrPut(parts[0]) { inbox.folder(parts[0]).also { shown += it } }; parts[0] = top }
-            val saved = takeFile(c, ss, size, parts, progress, transfer) ?: break
+            if (parts.isEmpty() || size < 0 || size > Proto.MAX_FILE || progress.done + size > total + (kept?.offset ?: 0)) break
+            if (parts.size > 1) { val original = parts[0]; val top = tops.getOrPut(original) { inbox.folder(original).also { shown += it; kept?.top(original, it) } }; parts[0] = top }
+            val saved = (if (kept != null) takePart(c, ss, size, parts, progress, transfer, kept, files) else takeFile(c, ss, size, parts, progress, transfer)) ?: break
             files++; if (parts.size == 1) shown += saved
         }
         val here = stopped(transfer)
         if (whole) sealed(c, ss, byteArrayOf(1))
         finish(transfer)
-        if (!whole) { onEvent(LinkEvent.Failed(transfer, peer, from, title, if (here) "You stopped it" else if (files > 0) "$files of $count files arrived from $from" else "It didn't arrive whole from $from", false)); return }
+        if (whole || here) kept?.drop()
+        if (!whole) { onEvent(LinkEvent.Failed(transfer, peer, from, title, if (here) "You stopped it" else if (kept != null) "It stopped part way; it carries on when $from sends it again" else if (files > 0) "$files of $count files arrived from $from" else "It didn't arrive whole from $from", false)); return }
         onEvent(LinkEvent.Received(transfer, peer, from, title, count, total, shown, taken))
+    }
+    /**
+     * Revision 10: one file of a resumable transfer, kept as it comes in "<index>.part" (so a dropped connection loses
+     * nothing), carried on from what was kept when the PC says so ([FRAME_RESUME]), checked whole, then put in its place.
+     */
+    private fun takePart(c: Conn, ss: Session, size: Long, parts: List<String>, progress: Progress, transfer: Int, kept: Partial, index: Int): String? {
+        kept.dir.mkdirs(); val part = kept.part(index)
+        val hash = MessageDigest.getInstance("SHA-256"); var got = 0L; var done = false
+        try {
+            var f = opened(c, ss) ?: return null
+            val resume = if (f.isNotEmpty() && f[0].toInt() == Proto.FRAME_RESUME && f.size == 9) Reader(f, 1).u64() ?: 0L else -1L
+            val have = if (part.exists()) part.length() else 0L
+            // Carrying on from what's kept (it must be at least as much as the PC says); otherwise from the start.
+            if (resume > 0 && have >= resume) {
+                java.io.RandomAccessFile(part, "rw").use { it.setLength(resume) }
+                part.inputStream().use { input -> val b = ByteArray(Proto.CHUNK); while (true) { val n = input.read(b); if (n < 0) break; hash.update(b, 0, n) } }
+                got = resume
+            } else if (part.exists()) part.delete()
+            if (resume >= 0) f = opened(c, ss) ?: return null
+            java.io.FileOutputStream(part, true).use { out ->
+                while (!stopped(transfer)) {
+                    when {
+                        f.isEmpty() -> break
+                        f[0].toInt() == Proto.FRAME_DATA -> { val n = f.size - 1; if (got + n > size) break; out.write(f, 1, n); hash.update(f, 1, n); got += n; progress.add(n.toLong()) }
+                        f[0].toInt() == Proto.FRAME_END && f.size == 1 + 8 + 32 -> { done = Reader(f, 1).u64() == size && got == size && hash.digest().contentEquals(f.copyOfRange(9, 41)); break }
+                        else -> break
+                    }
+                    if (paused(transfer) && !waitWhilePaused(transfer)) break
+                    f = opened(c, ss) ?: break
+                }
+            }
+        } catch (e: Exception) { done = false }
+        if (!done) { if (got != size) return null; part.delete(); return null }
+        // Whole: into Downloads, as any other file.
+        val sink = inbox.create(parts, size) ?: return null
+        val shown = runCatching { part.inputStream().use { it.copyTo(sink.out) }; sink.commit() }.getOrElse { sink.abort(); null } ?: return null
+        part.delete(); kept.keep(size, if (parts.size == 1) shown else ""); return shown
     }
     /** One incoming file (after its header), checked against its size and SHA-256 before it's kept. */
     private fun takeFile(c: Conn, ss: Session, size: Long, parts: List<String>, progress: Progress, transfer: Int, song: Boolean = false): String? {
@@ -716,16 +825,17 @@ class Link(
                     val r = offer?.let { Reader(it) }
                     if (offer == null || offer.size < 5 || r!!.u8() != Proto.FRAME_OFFER) why = if (stopped(transfer)) "You stopped it" else "$pcName didn't answer"
                     else {
-                        val count = r.u32() ?: 0
-                        if (offer.size < 14 || count == 0L) why = "It's no longer on $pcName’s Shelf"
+                        val head = if (offer.size < 14) null else offerHead(r)
+                        if (head == null || head.count == 0L) why = "It's no longer on $pcName’s Shelf"
                         else {
-                            val total = r.u64()!!; r.u8(); val title = cleanName(r.rest().toString(Charsets.UTF_8))
+                            val count = head.count; val total = head.total; val title = head.title
+                            val kept = head.token?.takeIf { options.resumeDir != null }?.let { pruneKept(); Partial(it) }
                             if (count > Proto.MAX_FILES || total > Proto.MAX_TOTAL) why = "That is too much to take at once"
                             else {
                                 val room = inbox.room(total)
-                                if (!sealed(c, ss, byteArrayOf(if (room) 1 else 2))) why = "$pcName stopped answering"
+                                if (!sealed(c, ss, accept(if (room) 1 else 2, kept))) why = "$pcName stopped answering"
                                 else if (!room) why = "There isn't room on this phone"
-                                else { takeBatch(c, ss, peer, pcName, title, count.toInt(), total, transfer, true); taken = true }
+                                else { takeBatch(c, ss, peer, pcName, title, count.toInt(), total, transfer, true, kept); taken = true }
                             }
                         }
                     }
@@ -794,6 +904,28 @@ class Link(
     fun levels(peer: String): Levels? = ask(peer, Proto.CMD_LEVELS)?.let { IslandWire.levels(it) }
     /** The PC's network adapters (their hardware addresses), for waking it from this phone. */
     fun machine(peer: String): List<Adapter>? = ask(peer, Proto.CMD_MACHINE)?.let { IslandWire.machine(it) }
+    // ---- revision 10 (island 0.27) ----
+    /** The PC's apps by CPU (sort 0) or memory (1), with icons when asked. */
+    fun processes(peer: String, sort: Int, max: Int = 20, icons: Boolean = false): List<PcProcess>? = ask(peer, Proto.CMD_PROCESSES, Bytes().u8(0).u8(sort).u8(max).u8(if (icons) 1 else 0).build())?.let { IslandWire.processes(it) }
+    /** Ends an app on the PC (gracefully first); the list afterwards, or null (with why) when it can't be. */
+    fun endTask(peer: String, pid: Long): RemoteReply? = remote(peer, Proto.CMD_PROCESSES, Bytes().u8(1).u32(pid).build())
+    fun sensors(peer: String): Sensors? = ask(peer, Proto.CMD_SENSORS)?.let { IslandWire.sensors(it) }
+    /** A page of a folder on the PC; the reply's status says when browsing is off there (NOT_ALLOWED). */
+    fun files(peer: String, path: String, sort: Int, offset: Int = 0, max: Int = 120, thumbs: Boolean = true): Pair<Int, FileList?> {
+        val r = remote(peer, Proto.CMD_FILES, Bytes().u8(0).string(path).u8(sort).u16(offset).u16(max).u8(if (thumbs) 1 else 0).build()) ?: return Proto.FAILED to null
+        return r.status to (if (r.ok) IslandWire.files(r.payload) else null)
+    }
+    /** Asks the PC to send a file (or a folder) here; it comes as a transfer, accepted at once. */
+    fun takeFromPc(peer: String, path: String): Boolean = ask(peer, Proto.CMD_FILES, Bytes().u8(1).string(path).u32(newAsk()).build()) != null
+    fun clips(peer: String, max: Int = 40): List<PcClip>? = ask(peer, Proto.CMD_CLIPS, byteArrayOf(0, max.toByte(), 1))?.let { IslandWire.clips(it) }
+    /** A clipboard history change (1 copy there, 2 pin with [arg], 3 delete): the list afterwards. */
+    fun clipOp(peer: String, op: Int, id: Long, arg: Int = 0): List<PcClip>? = ask(peer, Proto.CMD_CLIPS, Bytes().u8(op).u32(id).apply { if (op == 2) u8(arg) }.build())?.let { IslandWire.clips(it) }
+    fun clipHere(peer: String, id: Long): PcClipFull? = ask(peer, Proto.CMD_CLIPS, Bytes().u8(4).u32(id).build())?.let { IslandWire.clip(it) }
+    /** A screenshot of the PC (0 every screen, 1 the one with the pointer, 2 the active window), sent here as a file. */
+    fun screenshot(peer: String, what: Int): Pair<Int, Int>? = ask(peer, Proto.CMD_SCREENSHOT, Bytes().u8(what).u32(newAsk()).build())?.let { val r = Reader(it); if (r.u8() != 1) null else (r.u16() ?: 0) to (r.u16() ?: 0) }
+    /** One step of the speed test: [bytes] down (op 0) or up (op 1); true when it went. */
+    fun speed(peer: String, down: Boolean, bytes: Int): Boolean =
+        if (down) (ask(peer, Proto.CMD_SPEED, Bytes().u8(0).u32(bytes).build())?.size ?: 0) >= bytes else ask(peer, Proto.CMD_SPEED, Bytes().u8(1).raw(ByteArray(bytes)).build()) != null
 
     // ---- revision 4: connections kept for more ----
     /** A remote (or notices) connection kept open, the path it went by (3 this network, 2 direct, 1 relay) and when last used. */

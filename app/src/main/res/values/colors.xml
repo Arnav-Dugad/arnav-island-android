@@ -18,4 +18,15 @@
     <color name="widget_you_ring_gpu">#FF8FA8FF</color>
     <color name="widget_you_ring_ram">#FF5FD98A</color>
     <color name="widget_you_dim">#73FFFFFF</color>
+    <!-- 1.9: the controls widget's tiles, filled with their colour when on (glass), and Material You's before Android 12. -->
+    <color name="widget_tile_off">#1FFFFFFF</color>
+    <color name="widget_tile_dim">#0AFFFFFF</color>
+    <color name="widget_tile_blue">#FF0A84FF</color>
+    <color name="widget_tile_indigo">#FF5E5CE6</color>
+    <color name="widget_tile_red">#FFFF453A</color>
+    <color name="widget_tile_orange">#FFFF9F0A</color>
+    <color name="widget_you_tile_1">#FFA5D8C5</color>
+    <color name="widget_you_tile_2">#FF8FA8FF</color>
+    <color name="widget_you_tile_3">#FF5FD98A</color>
+    <color name="widget_you_tile_dim">#0AFFFFFF</color>
 </resources>

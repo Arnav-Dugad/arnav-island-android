@@ -1,5 +1,6 @@
 package io.github.arnavdugad.arnavisland
 
+import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -38,7 +39,7 @@ import kotlinx.coroutines.delay
     val f = if (now.duration > 0) (now.positionNow(tick) / now.duration).toFloat().coerceIn(0f, 1f) else 0f
     Box(modifier.height(66.dp).glass(GlassShapes.capsule, GlassLevel.Bar)) {
         Row(Modifier.fillMaxSize().padding(start = 9.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(48.dp).clip(RoundedCornerShape(15.dp)).background(t.accent.copy(alpha = .2f)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)).background(t.fill), contentAlignment = Alignment.Center) {
                 if (cover != null) Image(cover.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                 else Icon(Icons.Rounded.MusicNote, null, tint = t.accent, modifier = Modifier.size(24.dp))
             }
@@ -51,7 +52,7 @@ import kotlinx.coroutines.delay
                 PlayPause(now.playing, t.text, Modifier.size(22.dp))
             }
             Box(Modifier.size(44.dp).clip(CircleShape).clickable(role = Role.Button) { Player.sendBack(context) }.semantics { contentDescription = "Continue on ${now.from}" }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.Laptop, null, tint = t.accent, modifier = Modifier.size(22.dp))
+                Icon(Icons.Rounded.Cast, null, tint = t.text, modifier = Modifier.size(22.dp))
             }
             Box(Modifier.size(40.dp).clip(CircleShape).clickable(role = Role.Button) { Player.close(context) }.semantics { contentDescription = "Stop" }, contentAlignment = Alignment.Center) {
                 Icon(Icons.Rounded.Close, null, tint = t.muted, modifier = Modifier.size(19.dp))
@@ -59,7 +60,7 @@ import kotlinx.coroutines.delay
         }
         // How far the song has got: a hairline along the bar's lower edge.
         Box(Modifier.align(Alignment.BottomStart).padding(horizontal = 28.dp).padding(bottom = 5.dp).fillMaxWidth().height(2.dp).clip(CircleShape).background(t.track)) {
-            Box(Modifier.fillMaxWidth(f).fillMaxHeight().background(t.accent))
+            Box(Modifier.fillMaxWidth(f).fillMaxHeight().background(t.text.copy(alpha = .85f)))
         }
     }
 }

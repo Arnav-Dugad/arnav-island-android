@@ -480,6 +480,19 @@ private fun lerpColor(a: Color, b: Color, f: Float) = androidx.compose.ui.graphi
                 if (pc.revision < 3 && pc.online) Hub.banners.tryEmit(Banner(Banner.Kind.Failed, "Update Arnav Island on ${pc.name}", "The air mouse needs version 0.20 or later")) else Ui.trackpad = TRACKPAD_AIR
             }
         }
+        // 1.9: the clipboard's history both ways, the PC's files and a screenshot of it (island 0.27).
+        val missing by Hub.missing.collectAsState()
+        val files = pc.revision >= 10 && Proto.CMD_FILES !in missing; val shot = pc.revision >= 10 && Proto.CMD_SCREENSHOT !in missing
+        Pair {
+            GlassTile(Icons.Rounded.ContentPasteSearch, "Clipboard", "What you’ve copied, both ways", Modifier.weight(1f).fillMaxHeight(), tint = t.indigo) { Ui.clipboard() }
+            if (files) GlassTile(Icons.Rounded.FolderOpen, "${pc.name}’s files", "Browse and bring them here", Modifier.weight(1f).fillMaxHeight(), tint = t.blue) { MoreUi.files = "" }
+            else GlassTile(Icons.Rounded.Lan, "Connection", quality(pc).text.substringBefore("  ·"), Modifier.weight(1f).fillMaxHeight(), tint = qualityColor(quality(pc).kind)) { Ui.connection = pc.id }
+        }
+        if (files || shot) Pair {
+            if (shot) GlassTile(Icons.Rounded.Screenshot, "Screenshot", "Of ${pc.name}, here", Modifier.weight(1f).fillMaxHeight(), tint = t.gray) { Hub.screenshot(0) }
+            if (files) GlassTile(Icons.Rounded.Lan, "Connection", quality(pc).text.substringBefore("  ·"), Modifier.weight(1f).fillMaxHeight(), tint = qualityColor(quality(pc).kind)) { Ui.connection = pc.id }
+            if (!shot || !files) Spacer(Modifier.weight(1f))
+        }
         Pair {
             // 1.8: slides, a laser and a timer (#64).
             GlassTile(Icons.Rounded.Slideshow, "Present", "Slides, laser, timer", Modifier.weight(1f).fillMaxHeight(), tint = t.warn) { Ui.presenter = true }

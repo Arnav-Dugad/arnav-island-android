@@ -1,5 +1,10 @@
 package io.github.arnavdugad.arnavisland
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.background
+import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material.icons.rounded.CheckCircle
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -110,23 +115,31 @@ data class ShareRequest(val uris: List<Uri>, val text: String?, val target: Stri
             Text(if (started.isEmpty()) "Tap a PC to send it to its Shelf" else if (finished.size == started.size && finished.values.all { it }) "On its Shelf" else "Sending…", style = Type.caption, color = t.muted)
             Spacer(Modifier.height(14.dp))
             if (paired.isEmpty()) { Text("Pair with your PC first (Devices › Pair a PC)", style = Type.body, color = t.muted); return@GlassSheet }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                paired.take(4).forEach { p ->
+            // As AirDrop's row of people: each PC in its own colour, scrolling when there are many; all at once with several.
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
+                paired.forEach { p ->
                     val id = started[p.id]; val tr = id?.let { transfers[it] }
                     Bubble(p, when { finished[p.id] == true -> 1f; id == null -> -1f; tr != null && tr.total > 0 -> tr.done.toFloat() / tr.total; else -> 0f }, finished[p.id]) { go(p) }
                 }
+                if (paired.count { it.online } > 1) Column(Modifier.width(88.dp).clip(RoundedCornerShape(18.dp)).clickable { paired.filter { it.online }.forEach { go(it) } }, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.size(78.dp), contentAlignment = Alignment.Center) { IconTile(Icons.Rounded.Devices, t.gray, Modifier.clip(CircleShape), size = 64.dp) }
+                    Spacer(Modifier.height(6.dp)); Text("All PCs", style = Type.caption, color = t.text); Text("At once", style = Type.caption, color = t.muted)
+                }
             }
         } else {
-            Text("Send to your PC", style = Type.title, color = t.text)
+            Text("Send to your PC", style = Type.title2, color = t.text)
             Spacer(Modifier.height(4.dp))
             Text(request.text?.lineSequence()?.firstOrNull()?.take(80).orEmpty(), style = Type.caption, color = t.muted, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
             Spacer(Modifier.height(18.dp))
             if (paired.isEmpty()) { Text("Pair with your PC first (Devices › Pair a PC)", style = Type.body, color = t.muted); return@GlassSheet }
-            paired.forEach { p ->
-                GlassButton({ Hub.choose(p.id) }, Modifier.fillMaxWidth().padding(vertical = 4.dp), prominent = p.id == pc?.id) {
-                    Icon(Icons.Rounded.Laptop, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(p.name, style = Type.bodyStrong, modifier = Modifier.weight(1f)); LiveDot(p.online, size = 7.dp)
+            GlassPanel(Modifier.fillMaxWidth()) { Column {
+                paired.forEachIndexed { i, p ->
+                    if (i > 0) Hairline()
+                    GlassRow(pcIcon(p.id), p.name, quality(p).text.substringBefore("  ·"), tint = if (p.online) pcColor(p.id) else t.gray, onClick = { Hub.choose(p.id) }) {
+                        if (p.id == pc?.id) Icon(Icons.Rounded.CheckCircle, "Chosen", tint = t.blue, modifier = Modifier.size(20.dp))
+                    }
                 }
-            }
+            } }
             Spacer(Modifier.height(14.dp))
             val target = pc; val text = request.text.orEmpty(); val link = text.trim().takeIf { (it.startsWith("http://") || it.startsWith("https://")) && !it.contains(' ') }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -181,9 +194,11 @@ data class ShareRequest(val uris: List<Uri>, val text: String?, val target: Stri
     val breathe = rememberInfiniteTransition(label = "Waiting"); val wait by breathe.animateFloat(0f, 1f, infiniteRepeatable(tween(1100), RepeatMode.Restart), label = "Spin")
     Column(Modifier.width(88.dp).clickable(source, null, enabled = pc.online && progress < 0) { onTap() }.graphicsLayer { alpha = if (pc.online) 1f else .45f }, horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.size(78.dp), contentAlignment = Alignment.Center) {
-            Box(Modifier.size(64.dp).glass(CircleShape, GlassLevel.Control, if (done == true) t.good else t.accent), contentAlignment = Alignment.Center) {
-                if (tick > .01f) Icon(Icons.Rounded.Check, "Sent", tint = t.text, modifier = Modifier.size(30.dp).graphicsLayer { scaleX = tick; scaleY = tick })
-                else Icon(Icons.Rounded.Laptop, null, tint = t.text, modifier = Modifier.size(28.dp))
+            // The PC as an avatar in its own colour, as AirDrop shows people; green with a tick once it's there.
+            val colour = if (done == true) t.good else pcColor(pc.id)
+            Box(Modifier.size(64.dp).clip(CircleShape).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.lerp(colour, Color.White, .15f), colour))), contentAlignment = Alignment.Center) {
+                if (tick > .01f) Icon(Icons.Rounded.Check, "Sent", tint = Color.White, modifier = Modifier.size(30.dp).graphicsLayer { scaleX = tick; scaleY = tick })
+                else Icon(pcIcon(pc.id), null, tint = Color.White, modifier = Modifier.size(28.dp))
             }
             if (progress >= 0f) Canvas(Modifier.fillMaxSize()) {
                 val w = 3.dp.toPx(); val inset = w / 2

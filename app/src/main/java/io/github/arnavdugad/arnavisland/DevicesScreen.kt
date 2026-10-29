@@ -237,6 +237,9 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
         Entry(1, "Your hotspot", "hotspot tethering join wifi") {
             GlassRow(Icons.Rounded.WifiTethering, "Your hotspot", when { hotspot.name.isEmpty() -> "Show it on your PC’s island while it’s on, to join in one tap"; hotspotOn && hotspot.enabled -> "“${hotspot.name}” is on: the island offers to join"; else -> "“${hotspot.name}”, while it’s on" },
                 tint = t.good, onClick = { Ui.hotspot = true }) { GlassSwitch(hotspot.enabled && hotspot.name.isNotEmpty(), { on -> if (on && hotspot.name.isEmpty()) Ui.hotspot = true else Hub.setHotspot(enabled = on) }) } },
+        Entry(1, "Live activities on your PC", "live activity delivery swiggy zomato blinkit zepto ride uber ola timer tracking order") {
+            GlassRow(Icons.Rounded.DeliveryDining, "Live activities on your PC", if (!mirrorAllowed) "Allow notification access first" else "Deliveries, rides, timers: what’s on its way shows live on the island, with its tracking line (island 0.27)", tint = t.warn) {
+                GlassSwitch(mirrorAllowed && flag("mirror") && LiveCapture.enabled(), { on -> if (on && !mirrorAllowed) open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)); if (on) set("mirror", true); LiveCapture.setEnabled(on); version++ }) } },
         Entry(1, "Your phone’s details", "details storage memory network") {
             GlassRow(Icons.Rounded.PhoneAndroid, "Your phone’s details", "Storage, memory, network, sound and more, on the island", tint = t.gray) { GlassSwitch(flag("details"), { set("details", it); if (it) Hub.sendDetails(force = true) }) } },
         Entry(1, "Photos you take", "photos screenshots paste shelf camera") {
@@ -253,10 +256,12 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
             Column {
                 GlassRow(Icons.Rounded.Widgets, "Widgets", if (widgets.isRequestPinAppWidgetSupported) "Add one to your home screen" else "Add them from your home screen’s widget list", tint = t.blue)
                 if (widgets.isRequestPinAppWidgetSupported) Row(Modifier.horizontalScroll(rememberScrollState()).padding(start = 60.dp, end = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Now playing" to PcWidget::class.java, "Quick actions" to ActionsWidget::class.java, "Lyrics" to LyricsWidget::class.java, "Batteries" to BatteriesWidget::class.java, "Transfers" to TransferWidget::class.java,
+                    listOf("Now playing" to PcWidget::class.java, "Controls" to ControlsWidget::class.java, "Mixer" to MixerWidget::class.java, "Quick actions" to ActionsWidget::class.java, "Lyrics" to LyricsWidget::class.java, "Batteries" to BatteriesWidget::class.java, "Transfers" to TransferWidget::class.java,
                         "PC’s numbers" to StatsWidget::class.java, "Focus" to FocusWidget::class.java).forEach { (name, c) -> GlassChip(name, icon = Icons.Rounded.Add) { runCatching { widgets.requestPinAppWidget(ComponentName(context, c), null, null) } } }
                 }
             } },
+        Entry(2, "Use with Gemini", "gemini assistant voice google ask hey app functions shortcuts routines") {
+            GlassRow(Icons.Rounded.Mic, "Use with Gemini", "Ask Gemini to lock, wake or play on your PC, or anything its command bar understands", tint = t.purple, chevron = true, onClick = { MoreUi.gemini = true }) },
         Entry(2, "Live wallpaper", "wallpaper ambient light colours home lock screen") {
             GlassRow(Icons.Rounded.Wallpaper, "Live wallpaper", "The app’s light, in the colours of what plays on your PC, behind your home screen", tint = t.purple, chevron = true, onClick = { open(AmbientWallpaper.chooserIntent(context)) }) },
         Entry(2, "Clear song history", "history songs recently played loved") {
@@ -270,7 +275,7 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
             GlassRow(Icons.Rounded.GraphicEq, "Your PC’s song as a live update", if (Build.VERSION.SDK_INT >= 36) "Counting down in the status bar’s chip while it plays" else "Needs Android 16", tint = t.pink) {
                 GlassSwitch(flag("liveSong") && Build.VERSION.SDK_INT >= 36, { set("liveSong", it); if (!it) LiveUpdates.song(context, null, null) }, enabled = Build.VERSION.SDK_INT >= 36) } },
         Entry(4, "Theme", "appearance dark light automatic theme") {
-            Column(Modifier.padding(16.dp)) { Text("Theme", style = Type.body, color = t.text); Spacer(Modifier.height(10.dp)); Segmented(listOf("Automatic", "Dark", "Light"), look.appearance, { onLook(look.copy(appearance = it)) }, Modifier.fillMaxWidth()) } },
+            Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 14.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { IconTile(Icons.Rounded.Contrast, t.indigo); Spacer(Modifier.width(14.dp)); Text("Theme", style = Type.body, color = t.text) }; Spacer(Modifier.height(12.dp)); Segmented(listOf("Automatic", "Dark", "Light"), look.appearance, { onLook(look.copy(appearance = it)) }, Modifier.fillMaxWidth()) } },
         Entry(4, "Liquid glass", "glass blur refraction solid") {
             GlassRow(Icons.Rounded.BlurOn, "Liquid glass", if (look.glass) "Surfaces bend and blur what’s behind them, and catch the light as you tilt the phone" else "Off: solid surfaces, calmer and lighter on the battery", tint = t.teal) { GlassSwitch(look.glass, { onLook(look.copy(glass = it)) }) } },
         Entry(4, "Widgets in Material You", "widgets material you wallpaper colours") {
@@ -428,6 +433,7 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
                     MorphGraph(samples.map { it.second.toFloat() }, qualityColor(q.kind), Modifier.fillMaxWidth().height(70.dp))
                 }
             }
+            if (p.online && !p.phone) SpeedTest(p)
             Section("Details") {
                 GlassRow(Icons.Rounded.Route, "Path", tint = t.blue, value = when { !p.online -> "—"; !p.internet -> "Local"; p.path == 2 -> "Direct"; else -> "Relay" }); Hairline()
                 if (p.internet) { GlassRow(Icons.Rounded.Speed, "Round trip", tint = t.good, value = if (p.rtt > 0) "${p.rtt.roundToInt()} ms" else "—"); Hairline()

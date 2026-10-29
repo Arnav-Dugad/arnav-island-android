@@ -15,8 +15,10 @@ object Proto {
     /** Revision 4 (1.3, island 0.21): remote and notices connections stay open for more; the relay has a direct path. Revision 5 (1.4, island 0.22): the whole island. Revision 6 (1.5, island 0.23): the PC's battery, each core, and the PC asking this phone. Revision 7 (1.6, island 0.24): screens either way. Revision 8 (1.7, island 0.25): offers with a picture,
      * photos just taken, pages handed over where they were scrolled to. Revision 9 (1.8, island 0.26): shuffle, repeat and
      * up next, the PC's apps each with its volume, its sound's levels, its adapters (to wake it), paused transfers, and
-     * this phone's camera and microphone on the PC. */
-    const val REVISION = 9
+     * this phone's camera and microphone on the PC. Revision 10 (1.9, island 0.27): the PC's top apps, temperatures, files,
+     * clipboard history, screenshots, slides and a speed test; transfers that resume after a dropped connection; this
+     * phone's live activities on the island; compressed microphone audio and a real camera on the PC. */
+    const val REVISION = 10
     const val TCP_PORT = 47820
     const val UDP_PORT = 47821
     val MAGIC = byteArrayOf('A'.code.toByte(), 'R'.code.toByte(), 'N'.code.toByte(), 'V'.code.toByte())
@@ -33,6 +35,8 @@ object Proto {
     const val FRAME_MUSIC = 5; const val FRAME_SHELF = 6; const val FRAME_TAKE = 7
     /** Revision 9: a sender that paused says so every few seconds (one byte), so the receiver keeps waiting. */
     const val FRAME_HOLD = 8
+    /** Revision 10: a resumed file's data starts here: [9, u64 offset], right after its header. */
+    const val FRAME_RESUME = 9
     // Revision 2.
     const val FRAME_REQUEST = 0x20; const val FRAME_REPLY = 0x21
     const val FRAME_NOTICE = 0x30; const val FRAME_NOTICE_ACK = 0x31
@@ -83,8 +87,12 @@ object Proto {
      * levels (u8 level, u8 resting, u8 n bands); 23 machine (u8 n x (6-byte MAC, name, IPv4, u8 prefix)).
      */
     const val CMD_PLAYBACK = 20; const val CMD_MIXER = 21; const val CMD_LEVELS = 22; const val CMD_MACHINE = 23
+    /** Revision 10 (island 0.27): 24 processes, 25 sensors, 26 files, 27 clipboard history, 28 screenshot, 29 slides, 30 speed. */
+    const val CMD_PROCESSES = 24; const val CMD_SENSORS = 25; const val CMD_FILES = 26; const val CMD_CLIPS = 27; const val CMD_SCREENSHOT = 28; const val CMD_SLIDES = 29; const val CMD_SPEED = 30
     /** An offer's flags: 1 a folder, 2 for the Shelf; revision 8: 4 with a picture, 8 a photo the PC asked for. */
     const val OFFER_FOLDER = 1; const val OFFER_SHELF = 2; const val OFFER_PICTURE = 4; const val OFFER_ASKED = 8
+    /** Revision 10: the offer carries a 16-byte token, and the accept may say where to carry on ([1, u32 file, u64 offset]). */
+    const val OFFER_RESUMABLE = 16
     // Remote answers.
     const val OK = 0; const val NOT_ALLOWED = 1; const val UNSUPPORTED = 2; const val FAILED = 3
     // Notices.
@@ -128,6 +136,7 @@ class Reader(val b: ByteArray, var at: Int = 0) {
     fun rest(): ByteArray = b.copyOfRange(at, b.size).also { at = b.size }
     fun string(limit: Int = 1 shl 20): String? { val n = u32() ?: return null; if (n > limit) return null; return bytes(n.toInt())?.toString(Charsets.UTF_8) }
     fun blob(limit: Int): ByteArray? { val n = u32() ?: return null; if (n > limit) return null; return bytes(n.toInt()) }
+    fun f32(): Float? = u32()?.let { java.lang.Float.intBitsToFloat(it.toInt()) }
 }
 
 /** Framing: a 32-bit little-endian length, then the bytes. */

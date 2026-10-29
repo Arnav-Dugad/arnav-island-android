@@ -71,6 +71,7 @@ import io.github.arnavdugad.arnavisland.link.CommandRow
 import io.github.arnavdugad.arnavisland.link.IslandSettings
 import io.github.arnavdugad.arnavisland.link.IslandSetting
 import io.github.arnavdugad.arnavisland.link.IslandWire
+import io.github.arnavdugad.arnavisland.link.Proto
 import io.github.arnavdugad.arnavisland.link.PcControls
 import io.github.arnavdugad.arnavisland.link.PcStats
 import io.github.arnavdugad.arnavisland.link.PcBattery
@@ -81,9 +82,6 @@ import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-/** The Island tab's sections, in order: their keys (for folding and jumping) and their names. */
-private val Sections = listOf("overview" to "Overview", "performance" to "Performance", "battery" to "Battery", "sound" to "Sound", "controls" to "Controls",
-    "focus" to "Focus", "run" to "Run", "power" to "Power", "alerts" to "Alerts", "pages" to "On the PC", "settings" to "Settings", "about" to "About")
 
 /**
  * Everything on your PC's island, from here (island 0.22), as a dashboard: an overview (the PC, its rings, its
@@ -104,17 +102,20 @@ private val Sections = listOf("overview" to "Overview", "performance" to "Perfor
         Hub.loadOutputs(); if (Hub.islandSettings.value == null) Hub.loadIslandSettings()
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             var n = 0
-            while (true) { Hub.refreshIsland(withStats = true); if ((pc?.revision ?: 0) >= 9) Hub.refreshMixer(); if (++n % 10 == 0) Hub.loadOutputs(); delay(1000) }
+            while (true) { Hub.refreshIsland(withStats = true); if ((pc?.revision ?: 0) >= 9) Hub.refreshMixer(); if (n % 3 == 0 && Hub.rev10(pc)) Hub.refreshSensors(); if (++n % 10 == 0) Hub.loadOutputs(); delay(1000) }
         }
     }
     val scroll = rememberScrollState()
     // Where each section starts (in the scrolled column), for the jump row.
     val anchors = remember { mutableStateMapOf<String, Int>() }
-    val shown = Sections.filter { (k, _) -> k in anchors }
+    val order by Hub.sectionOrder.collectAsState(); val pins by Hub.sectionPins.collectAsState()
+    val sequence = remember(order, pins) { orderedSections(order, pins) }
+    val shown = sequence.mapNotNull { k -> IslandSections.firstOrNull { it.first == k } }.filter { (k, _) -> k in anchors }
     val offset = with(density) { 58.dp.roundToPx() }
     val current by remember { derivedStateOf { shown.lastOrNull { (k, _) -> (anchors[k] ?: Int.MAX_VALUE) <= scroll.value + offset + 4 }?.first ?: shown.firstOrNull()?.first } }
     fun jump(key: String) { anchors[key]?.let { y -> scope.launch { scroll.animateScrollTo((y - offset).coerceAtLeast(0)) } } }
-    bar.follow("Island", scroll, accessory = if (ready) ({ JumpRow(shown, current, ::jump) }) else null)
+    bar.follow("Island", scroll, actions = if (ready) ({ GlassButton({ MoreUi.sections = true }, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) { Text("Edit", style = Type.bodyStrong) } }) else null,
+        accessory = if (ready) ({ JumpRow(shown, current, ::jump) }) else null)
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().imePadding().verticalScroll(scroll).padding(padding).padding(horizontal = 16.dp)) {
             ScreenTitle("Island", over = pc?.let { if (!it.online) "${it.name}  ·  away" else "${it.name}  ·  ${quality(it).text}" } ?: "No PC yet") { if (pc != null) LiveDot(pc.online) }
@@ -128,18 +129,22 @@ private val Sections = listOf("overview" to "Overview", "performance" to "Perfor
                 pc.revision < 5 -> Notice(Icons.Rounded.SystemUpdate, "Update Arnav Island on ${pc.name}", "Version 0.22 or later lets this phone control everything on its island.", null) {}
                 else -> {
                     if (shown.size > 1) { JumpRow(shown, current, ::jump, inset = false); Spacer(Modifier.height(4.dp)) }
-                    Fold("overview", anchors) { Overview(pc, stats, controls) }
-                    Fold("performance", anchors) { Performance(stats) }
-                    if (battery?.present == true) Fold("battery", anchors) { BatteryPanel(battery!!) }
-                    Fold("sound", anchors) { SoundPanel(pc, controls, outputs, settings) }
-                    Fold("controls", anchors) { ControlsPanel(controls) }
-                    Fold("focus", anchors) { FocusPanel(controls) }
-                    Fold("run", anchors, "Run on ${pc.name}") { CommandPanel(pc.name, confirm) }
-                    Fold("power", anchors) { PowerPanel(pc, confirm) }
-                    Fold("alerts", anchors) { AlertsPanel() }
-                    Fold("pages", anchors, "Show on ${pc.name}") { PagesPanel() }
-                    Fold("settings", anchors, "Island settings") { SettingsPanel(settings) { IslandUi.section = it } }
-                    Fold("about", anchors, "About ${pc.name}") { AboutPanel(pc, stats) }
+                    // 1.9: in your order, the pinned ones first.
+                    for (key in sequence) when (key) {
+                        "overview" -> Fold(key, anchors, pinned = key in pins) { Overview(pc, stats, controls) }
+                        "performance" -> Fold(key, anchors, pinned = key in pins) { Performance(stats); Spacer(Modifier.height(12.dp)); HourPanel() }
+                        "apps" -> if (Hub.rev10(pc) && Proto.CMD_PROCESSES !in Hub.missing.collectAsState().value) Fold(key, anchors, "Apps on ${pc.name}", pinned = key in pins) { AppsPanel(pc, visible, confirm) }
+                        "battery" -> if (battery?.present == true) Fold(key, anchors, pinned = key in pins) { BatteryPanel(battery!!) }
+                        "sound" -> Fold(key, anchors, pinned = key in pins) { SoundPanel(pc, controls, outputs, settings) }
+                        "controls" -> Fold(key, anchors, pinned = key in pins) { ControlsPanel(controls) }
+                        "focus" -> Fold(key, anchors, pinned = key in pins) { FocusPanel(controls) }
+                        "run" -> Fold(key, anchors, "Run on ${pc.name}", pinned = key in pins) { CommandPanel(pc.name, confirm) }
+                        "power" -> Fold(key, anchors, pinned = key in pins) { PowerPanel(pc, confirm) }
+                        "alerts" -> Fold(key, anchors, pinned = key in pins) { AlertsPanel() }
+                        "pages" -> Fold(key, anchors, "Show on ${pc.name}", pinned = key in pins) { PagesPanel() }
+                        "settings" -> Fold(key, anchors, "Island settings", pinned = key in pins) { SettingsPanel(settings) { IslandUi.section = it } }
+                        "about" -> Fold(key, anchors, "About ${pc.name}", pinned = key in pins) { AboutPanel(pc, stats) }
+                    }
                     Spacer(Modifier.height(24.dp))
                 }
             }
@@ -162,14 +167,14 @@ private val Sections = listOf("overview" to "Overview", "performance" to "Perfor
  * A section that folds: its header (a tap folds or opens it, remembered), and its content easing open or shut. It notes
  * where it starts, for the jump row.
  */
-@Composable private fun Fold(key: String, anchors: MutableMap<String, Int>, title: String = Sections.first { it.first == key }.second, content: @Composable ColumnScope.() -> Unit) {
+@Composable private fun Fold(key: String, anchors: MutableMap<String, Int>, title: String = IslandSections.first { it.first == key }.second, pinned: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     var open by remember { mutableStateOf(!Hub.prefs.getBoolean("fold_$key", false)) }
     val haptics = LocalHapticFeedback.current
     DisposableEffect(key) { onDispose { anchors.remove(key) } }
     Column(Modifier.fillMaxWidth().onPlaced { anchors[key] = it.positionInParent().y.roundToInt() }) {
         SectionLabel(title, Modifier.clip(RoundedCornerShape(10.dp)).clickable(role = Role.Button) {
             haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); open = !open; Hub.prefs.edit().putBoolean("fold_$key", !open).apply()
-        }.semantics { contentDescription = "$title, ${if (open) "open" else "folded"}" }) { FoldArrow(open) }
+        }.semantics { contentDescription = "$title, ${if (open) "open" else "folded"}" }) { if (pinned) { Icon(Icons.Rounded.PushPin, "Pinned", tint = LocalTokens.current.warn, modifier = Modifier.size(15.dp)); Spacer(Modifier.width(6.dp)) }; FoldArrow(open) }
         AnimatedVisibility(open, enter = expandVertically(spring(dampingRatio = .9f, stiffness = 420f)) + fadeIn(tween(220)), exit = shrinkVertically(spring(dampingRatio = 1f, stiffness = 500f)) + fadeOut(tween(140))) {
             Column(Modifier.fillMaxWidth(), content = content)
         }
@@ -251,6 +256,10 @@ class Confirm(val title: String, val detail: String, val action: String, val dan
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val q = quality(pc)
                 GlassChip(q.text, icon = if (pc.internet) Icons.Rounded.Public else Icons.Rounded.Wifi, iconTint = qualityColor(q.kind), onClick = { Ui.connection = pc.id })
+                // 1.9: its temperatures (island 0.27), first after how it's reached.
+                val heat by Hub.sensors.collectAsState()
+                heat?.cpu?.takeIf { !it.isNaN() }?.let { GlassChip("CPU ${it.roundToInt()}°C", icon = Icons.Rounded.Thermostat, iconTint = if (it >= 85) t.danger else if (it >= 70) t.warn else t.good) }
+                heat?.gpu?.takeIf { !it.isNaN() }?.let { GlassChip("GPU ${it.roundToInt()}°C", icon = Icons.Rounded.LocalFireDepartment, iconTint = if (it >= 85) t.danger else if (it >= 70) t.warn else t.good) }
                 if (s != null) GlassChip("On ${span(s.uptime)}", icon = Icons.Rounded.Timer)
                 if (s != null && s.logical > 0) GlassChip("${s.logical} threads", icon = Icons.Rounded.Memory)
                 if (c != null && c.focusRunning) GlassChip("Focusing", icon = Icons.Rounded.CenterFocusStrong, iconTint = t.purple)
@@ -809,6 +818,9 @@ private fun kindColour(kind: Int, t: Tokens): Color = when (kind) {
                 if (s.os.isNotBlank()) { Fact(Icons.Rounded.DesktopWindows, "Windows", s.os, t.blue); Hairline() }
                 if (s.model.isNotBlank()) { Fact(Icons.Rounded.Laptop, "Model", s.model, t.gray); Hairline() }
                 Fact(Icons.Rounded.Timer, "On for", span(s.uptime), t.warn); Hairline()
+                val heat = Hub.sensors.collectAsState().value
+                heat?.zones?.filter { !it.second.isNaN() }?.forEach { (n, c) -> Fact(Icons.Rounded.Thermostat, n.ifBlank { "Temperature" }, "${c.roundToInt()}°C", t.warn); Hairline() }
+                heat?.fans?.forEach { (n, rpm) -> Fact(Icons.Rounded.Air, n.ifBlank { "Fan" }, "$rpm rpm", t.teal); Hairline() }
             }
             Fact(Icons.Rounded.Lan, "Connection", quality(pc).text, qualityColor(quality(pc).kind)) { Ui.connection = pc.id }
             Hairline()

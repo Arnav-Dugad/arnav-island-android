@@ -66,13 +66,20 @@ class TransferWidget : AppWidgetProvider() {
  * 1.8: keeps the lyrics, batteries and transfer widgets up to date. It follows the app's flows only while such a widget
  * is on a home screen, redraws a widget only when what it shows changed, and asks the PC itself only when nothing else
  * does (the service already asks for the PC's player and the now-playing widget).
+ * 1.9: and the controls and mixer widgets, asked for only while the screen is on.
  */
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 object WidgetFeeds {
-    private data class Present(val lyrics: Boolean = false, val batteries: Boolean = false, val transfer: Boolean = false) { val any get() = lyrics || batteries || transfer }
+    private data class Present(val lyrics: Boolean = false, val batteries: Boolean = false, val transfer: Boolean = false, val controls: Boolean = false, val mixer: Boolean = false) {
+        val any get() = lyrics || batteries || transfer
+        /** 1.9: a widget that follows the screen going on and off. */
+        val timed get() = lyrics || controls || mixer
+    }
     private val present = MutableStateFlow(Present())
     /** This phone's battery (level, charging), heard while the batteries widget is out. */
     private val phone = MutableStateFlow(-1 to false)
+    /** 1.9: whether the screen is on, heard while a widget that follows it is out. */
+    private val screenOn = MutableStateFlow(true)
     @Volatile private var started = false
 
     private val battery = object : BroadcastReceiver() {
@@ -81,9 +88,12 @@ object WidgetFeeds {
             phone.value = (if (raw >= 0 && scale > 0) raw * 100 / scale else -1) to (status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL)
         }
     }
-    /** The lyrics keep time only while the screen is on. */
+    /** The lyrics keep time only while the screen is on (1.9: and the controls and mixer are asked for only then). */
     private val screen = object : BroadcastReceiver() {
-        override fun onReceive(c: Context, i: Intent) { if (i.action == Intent.ACTION_SCREEN_OFF) LyricsWidgets.stop() else Hub.scope.launch { LyricsWidgets.refresh(c.applicationContext) } }
+        override fun onReceive(c: Context, i: Intent) {
+            val on = i.action != Intent.ACTION_SCREEN_OFF; screenOn.value = on
+            if (!on) LyricsWidgets.stop() else Hub.scope.launch { LyricsWidgets.refresh(c.applicationContext) }
+        }
     }
 
     fun start(context: Context) {
@@ -95,7 +105,9 @@ object WidgetFeeds {
             present.map { it.batteries }.distinctUntilChanged().collect { on -> withContext(Dispatchers.Main) { if (on) listen(app, battery, Intent.ACTION_BATTERY_CHANGED) else quiet(app, battery) } }
         }
         Hub.scope.launch {
-            present.map { it.lyrics }.distinctUntilChanged().collect { on -> withContext(Dispatchers.Main) { if (on) listen(app, screen, Intent.ACTION_SCREEN_ON, Intent.ACTION_SCREEN_OFF) else { quiet(app, screen); LyricsWidgets.stop() } } }
+            present.map { it.timed }.distinctUntilChanged().collect { on -> withContext(Dispatchers.Main) {
+                if (on) { screenOn.value = lit(app); listen(app, screen, Intent.ACTION_SCREEN_ON, Intent.ACTION_SCREEN_OFF) } else { quiet(app, screen); LyricsWidgets.stop(); screenOn.value = true }
+            } }
         }
         // Each widget's flows, debounced (a status read changes several at once).
         Hub.scope.launch {
@@ -113,6 +125,35 @@ object WidgetFeeds {
             present.map { it.transfer }.distinctUntilChanged()
                 .flatMapLatest { on -> if (on) combine(Hub.transfers, Hub.moments, Hub.status, Hub.peers) { _, _, _, _ -> } else emptyFlow() }
                 .conflate().collect { TransferWidgets.refresh(app); delay(500) }
+        }
+        // 1.9: the controls and the mixer as the PC's answers come (a tap redraws them itself, at once).
+        Hub.scope.launch {
+            present.map { it.controls }.distinctUntilChanged()
+                .flatMapLatest { on -> if (on) combine(Hub.pcControls, Hub.status, Hub.peers, Hub.selected) { _, _, _, _ -> }.debounce(100) else emptyFlow() }
+                .collect { ControlsWidgets.refresh(app) }
+        }
+        Hub.scope.launch {
+            present.map { it.mixer }.distinctUntilChanged()
+                .flatMapLatest { on -> if (on) combine(listOf<Flow<Any?>>(Hub.mixer, Hub.mixerIcons, Hub.pcControls, Hub.status, Hub.peers, Hub.selected)) { }.debounce(150) else emptyFlow() }
+                .collect { MixerWidgets.refresh(app) }
+        }
+        // 1.9: and asks the PC for them: its mixer every 3 s and its controls every 6 (15 with only the controls out),
+        // only while the screen is on and the app isn't in front (the home screen isn't showing then).
+        Hub.scope.launch {
+            combine(present.map { it.controls to it.mixer }.distinctUntilChanged(), screenOn) { out, on -> out to on }.collectLatest { (out, on) ->
+                val (controls, mixer) = out
+                if (!on || !(controls || mixer)) return@collectLatest
+                var controlsAt = 0L
+                while (currentCoroutineContext().isActive) {
+                    val pc = Hub.pc()
+                    if (!Hub.visible && Hub.link != null && pc != null && pc.online) {
+                        val now = System.currentTimeMillis()
+                        if (Hub.islandReady(pc) && now - controlsAt >= (if (mixer) 6_000L else 15_000L)) { controlsAt = now; Hub.refreshIsland(false) }
+                        if (mixer && pc.revision >= 9) Hub.refreshMixer()
+                    }
+                    delay(if (mixer) 3_000L else 15_000L)
+                }
+            }
         }
         // The PC's status and battery while the screen is on (when nothing else asks), and "2 min ago" moving on.
         Hub.scope.launch {
@@ -142,8 +183,12 @@ object WidgetFeeds {
     fun refresh(context: Context, force: Boolean = false) {
         val app = context.applicationContext
         LyricsWidgets.refresh(app, force); BatteryWidgets.refresh(app, force); TransferWidgets.refresh(app, force)
+        ControlsWidgets.refresh(app, force); MixerWidgets.refresh(app, force)
     }
-    private fun look(app: Context) { present.value = Present(idsOf(app, LyricsWidget::class.java).isNotEmpty(), idsOf(app, BatteriesWidget::class.java).isNotEmpty(), idsOf(app, TransferWidget::class.java).isNotEmpty()) }
+    private fun look(app: Context) {
+        present.value = Present(idsOf(app, LyricsWidget::class.java).isNotEmpty(), idsOf(app, BatteriesWidget::class.java).isNotEmpty(), idsOf(app, TransferWidget::class.java).isNotEmpty(),
+            idsOf(app, ControlsWidget::class.java).isNotEmpty(), idsOf(app, MixerWidget::class.java).isNotEmpty())
+    }
     private fun listen(app: Context, r: BroadcastReceiver, vararg actions: String) {
         runCatching { ContextCompat.registerReceiver(app, r, IntentFilter().apply { actions.forEach { addAction(it) } }, ContextCompat.RECEIVER_NOT_EXPORTED) }
     }

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.9: what agents such as Gemini read about Arnav Island's App Functions as a whole. -->
+<AppFunctionAppMetadata xmlns:appfn="http://schemas.android.com/apk/androidx.appfunctions"
+    appfn:description="@string/appfn_description"
+    appfn:displayDescription="@string/appfn_display_description" />

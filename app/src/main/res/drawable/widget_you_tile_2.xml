@@ -1,0 +1,5 @@
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="false" android:drawable="@drawable/widget_you_tile_dim" />
+    <item android:state_checked="true" android:drawable="@drawable/widget_you_tile_on_2" />
+    <item android:drawable="@drawable/widget_you_tile_off" />
+</selector>

@@ -179,7 +179,7 @@ class PhoneScreenService : Service() {
             setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 200_000)
             if (plain < 2) {
                 setInteger(MediaFormat.KEY_PRIORITY, 0); setInteger(MediaFormat.KEY_LATENCY, 1)
-                if (caps.encoderCapabilities.isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)) setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+                if (caps.encoderCapabilities?.isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR) == true) setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
                 if (Build.VERSION.SDK_INT >= 29) { setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0); setFloat("max-fps-to-encoder", fps.toFloat()) }
             }
             if (plain == 0) {

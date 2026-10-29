@@ -208,6 +208,20 @@
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_transfer_info" />
         </receiver>
+        <!-- 1.9: the PC's controls and its mixer, and their buttons. -->
+        <receiver android:name=".ControlActions" android:exported="false" />
+        <receiver android:name=".ControlsWidget" android:exported="false" android:label="@string/widget_controls_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_controls_info" />
+        </receiver>
+        <receiver android:name=".MixerWidget" android:exported="false" android:label="@string/widget_mixer_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_mixer_info" />
+        </receiver>
         <!-- 1.8: the app's ambient light as a live wallpaper. -->
         <service
             android:name=".AmbientWallpaper"
@@ -223,6 +237,33 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <!-- 1.9: one action on your PC, with no screen: App Actions, shortcuts and arnavisland://do/<action> links (not from
+             web pages: no BROWSABLE). -->
+        <activity
+            android:name=".VoiceActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:label="@string/voice_label"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="arnavisland" android:host="do" />
+            </intent-filter>
+        </activity>
+        <!-- 1.9: the app's actions for Gemini and other agents (Android 16+): the service and schema written by the App Functions compiler. -->
+        <service
+            android:name="io.github.arnavdugad.arnavisland.PcAppFunctionService"
+            android:permission="android.permission.BIND_APP_FUNCTION_SERVICE"
+            android:exported="true">
+            <property android:name="android.app.appfunctions.schema" android:value="app_functions_schema.xsd" />
+            <property android:name="android.app.appfunctions.v2" android:value="pc_app_functions.xml" />
+            <intent-filter>
+                <action android:name="android.app.appfunctions.AppFunctionService" />
+            </intent-filter>
+        </service>
+        <property android:name="android.app.appfunctions.app_metadata" android:resource="@xml/app_functions" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

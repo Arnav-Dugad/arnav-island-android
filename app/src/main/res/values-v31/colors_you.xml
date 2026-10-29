@@ -13,4 +13,9 @@
     <color name="widget_you_ring_gpu">@android:color/system_accent2_600</color>
     <color name="widget_you_ring_ram">@android:color/system_accent3_600</color>
     <color name="widget_you_dim">@android:color/system_neutral2_500</color>
+    <!-- 1.9: the controls widget's tiles when on, and when away. -->
+    <color name="widget_you_tile_1">@android:color/system_accent1_300</color>
+    <color name="widget_you_tile_2">@android:color/system_accent2_300</color>
+    <color name="widget_you_tile_3">@android:color/system_accent3_300</color>
+    <color name="widget_you_tile_dim">@android:color/system_neutral2_100</color>
 </resources>

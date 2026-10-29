@@ -148,9 +148,9 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 when (stage) {
                     0, 1 -> {
-                        Text("Pair with your PC", style = Type.title, color = t.text)
+                        Text("Pair with your PC", style = Type.title2, color = t.text)
                         Spacer(Modifier.height(4.dp))
-                        Text(if (stage == 1) "Asking ${peers.firstOrNull { it.id == asking }?.name ?: "your PC"}…" else "On your PC, turn on Settings › Privacy & productivity › Share with my PCs", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
+                        Text(if (stage == 1) "Asking ${peers.firstOrNull { it.id == asking }?.name ?: "your PC"}…" else "Your PCs on this Wi-Fi appear here. On the PC, turn on Settings › Privacy & productivity › Share with my PCs", style = Type.caption, color = t.muted, textAlign = TextAlign.Center)
                         val found = peers.filter { !it.paired && it.online && !it.phone }
                         Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
                             Radar(t.accent, Modifier.size(280.dp))
@@ -160,24 +160,19 @@ const val PAIR_NEARBY = 0; const val PAIR_TYPE = 4; const val PAIR_SCAN = 5; con
                                 val pop = remember(p.id) { Animatable(0f) }
                                 LaunchedEffect(p.id) { pop.animateTo(1f, spring(dampingRatio = .5f, stiffness = 260f)) }
                                 Box(Modifier.offset { IntOffset((cos(angle) * 100.dp.toPx()).roundToInt(), (sin(angle) * 100.dp.toPx()).roundToInt()) }.graphicsLayer { scaleX = pop.value; scaleY = pop.value }) {
-                                    GlassButton({ asking = p.id; Hub.pair(p.id) }, prominent = asking == p.id, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp), description = "Pair with ${p.name}") {
-                                        Icon(Icons.Rounded.Laptop, null, Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text(p.name, style = Type.caption, maxLines = 1)
+                                    Column(Modifier.width(92.dp).clip(RoundedCornerShape(18.dp)).clickable { asking = p.id; Hub.pair(p.id) }.semantics { contentDescription = "Pair with ${p.name}" }, horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Box(Modifier.size(56.dp).clip(CircleShape).background(if (asking == p.id) t.accent else t.blue), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Laptop, null, tint = Color.White, modifier = Modifier.size(26.dp)) }
+                                        Spacer(Modifier.height(5.dp)); Text(p.name, style = Type.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium), color = t.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                             }
                         }
                         if (result?.ok == false) Text(result.detail, style = Type.caption, color = t.danger, textAlign = TextAlign.Center)
                         else if (found.isEmpty()) Text("Looking on this Wi-Fi…", style = Type.caption, color = t.muted)
-                        Spacer(Modifier.height(14.dp))
-                        Text("On another network?", style = Type.caption, color = t.faint)
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            GlassButton({ Hub.pairResult.value = null; mode = PAIR_SCAN }, prominent = true, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp), description = "Scan the island’s QR code") {
-                                Icon(Icons.Rounded.QrCodeScanner, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Scan QR code", style = Type.caption)
-                            }
-                            GlassButton({ Hub.pairResult.value = null; mode = PAIR_TYPE }, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 11.dp), description = "Type the island’s code") {
-                                Icon(Icons.Rounded.Keyboard, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Type a code", style = Type.caption)
-                            }
+                        Section("On another network", footer = "The island shows its code at Shelf › Nearby › Pair with a code.") {
+                            GlassRow(Icons.Rounded.QrCodeScanner, "Scan the island’s QR code", tint = t.blue, chevron = true, onClick = { Hub.pairResult.value = null; mode = PAIR_SCAN })
+                            Hairline()
+                            GlassRow(Icons.Rounded.Keyboard, "Type its code", tint = t.gray, chevron = true, onClick = { Hub.pairResult.value = null; mode = PAIR_TYPE })
                         }
                     }
                     PAIR_TYPE -> CodeEntry(finding != null, result?.takeIf { !it.ok }?.detail, onScan = { Hub.pairResult.value = null; mode = PAIR_SCAN }, onBack = { mode = PAIR_NEARBY; Hub.pairResult.value = null }) { typed -> Hub.pairWithCode(typed) }

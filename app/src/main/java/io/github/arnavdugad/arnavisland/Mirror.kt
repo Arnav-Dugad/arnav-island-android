@@ -25,8 +25,17 @@ class Mirror : NotificationListenerService() {
     private val sent = LinkedHashMap<String, String>()
     private val icons = HashMap<String, ByteArray?>()
 
+    /** 1.9: the live activities already showing are tracked from the start, and PCs that arrive get them. */
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        Hub.init(this); LiveCapture.start(this)
+        runCatching { activeNotifications }.getOrNull()?.forEach { LiveCapture.posted(this, it, currentRanking) }
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         Hub.init(this)
+        // 1.9: a live activity (a delivery, a ride, navigation, a timer, a download) also goes as notice 7; mirroring below is unchanged.
+        LiveCapture.start(this); LiveCapture.posted(this, sbn, currentRanking)
         if (!Hub.prefs.getBoolean("mirror", true)) return
         val n = sbn.notification ?: return
         val call = n.category == Notification.CATEGORY_CALL
@@ -67,6 +76,7 @@ class Mirror : NotificationListenerService() {
 
     /** A notification the phone no longer shows (read, answered, a call picked up): its card leaves the island too. */
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        LiveCapture.removed(sbn.key)
         synchronized(sent) { sent.remove(sbn.key) }
         val key = NoticeActions.removed(sbn.key) ?: return
         val link = Hub.link ?: return
