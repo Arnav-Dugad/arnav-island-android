@@ -319,6 +319,13 @@ class InteropTest {
             // A notification with its key and actions, the phone's details, and a notification gone.
             assertTrue(phone.notice(pcId, Link.notificationFrame("Messages", "Mum", "Dinner?", "Test Phone", false, null, "k1", listOf("Reply" to true, "Mark read" to false))))
             assertEquals("Messages|Mum|Dinner?|0|0|k1|Reply*|Mark read", line("PHONENOTICE "))
+            // Revision 12: a notification in full (its chat, faces, a photo, suggested replies) and a third action.
+            val full = NoticeWire.Full("com.whatsapp", "com.whatsapp|family", "Family", NoticeWire.GROUP or NoticeWire.CONVERSATION or NoticeWire.CLEARABLE, 1_761_700_000_000,
+                listOf(NoticeWire.Message("Mum", "Dinner at 8", 1, false), NoticeWire.Message("", "Coming", 2, true), NoticeWire.Message("Ravi", "Getting naan", 3, false)),
+                ByteArray(900) { 5 }, ByteArray(40_000) { 6 }, listOf("On my way", "Running late", "On my way"))
+            assertTrue(phone.notice(pcId, Link.notificationFrame("WhatsApp", "Ravi", "Getting naan", "Test Phone", false, null, "k2", listOf("Reply" to true, "Mark read" to false, "Mute" to false), full)))
+            assertEquals("WhatsApp|Ravi|Getting naan|0|0|k2|Reply*|Mark read|Mute", line("PHONENOTICE "))
+            assertEquals("com.whatsapp|com.whatsapp|family|Family|11|Mum:Dinner at 8;:Coming*;Ravi:Getting naan|900|40000|On my way;Running late|1", line("NOTICEFULL "))
             assertTrue(phone.notice(pcId, Link.detailsFrame(listOf("Battery" to "81%", "Storage" to "40 GB free")))); assertEquals("Battery\t81%", line("DETAILS "))
             assertTrue(phone.notice(pcId, Link.goneFrame("k1"))); assertEquals("k1", line("GONE "))
             // Revision 5: the hotspot, on (its name and password) and off.
@@ -327,6 +334,9 @@ class InteropTest {
             // The PC runs an action with a reply, sets the clipboard, asks for a photo.
             val acted = LinkedBlockingQueue<String>(); phone.onAction = { key, index, reply -> acted.put("$key|$index|$reply"); 0 }
             tell("action ${phone.identity} k1 0 See you at 8"); assertEquals("k1|0|See you at 8", acted.poll(20, TimeUnit.SECONDS))
+            // Revision 12: the PC hears that it went (a reply is confirmed there), and can dismiss a notification here.
+            assertEquals("k1 0 See you at 8", line("ACTIONDONE "))
+            tell("dismiss ${phone.identity} k2"); assertEquals("k2|${NoticeWire.DISMISS}|", acted.poll(20, TimeUnit.SECONDS))
             val clipped = LinkedBlockingQueue<String>(); phone.onClipboard = { text, _ -> clipped.put(text); true }
             tell("clip ${phone.identity} from the PC"); assertEquals("from the PC", clipped.poll(20, TimeUnit.SECONDS))
             tell("photo ${phone.identity}"); await<LinkEvent.PhotoRequested>()

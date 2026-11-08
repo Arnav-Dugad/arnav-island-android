@@ -10,6 +10,7 @@ import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import io.github.arnavdugad.arnavisland.link.Link
+import io.github.arnavdugad.arnavisland.link.NoticeWire
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 
@@ -28,6 +29,7 @@ class Mirror : NotificationListenerService() {
     /** 1.9: the live activities already showing are tracked from the start, and PCs that arrive get them. */
     override fun onListenerConnected() {
         super.onListenerConnected()
+        running = this
         Hub.init(this); LiveCapture.start(this)
         runCatching { activeNotifications }.getOrNull()?.forEach { runCatching { LiveCapture.posted(this, it, currentRanking) } }
     }
@@ -67,13 +69,63 @@ class Mirror : NotificationListenerService() {
         val app = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString() }.getOrDefault(sbn.packageName)
         val urgent = call || n.category == Notification.CATEGORY_ALARM
         val (key, actions) = NoticeActions.offer(sbn.key, n, incoming)
+        // 1.12: the replies Android suggests for it (smart replies), read now while its ranking is at hand.
+        val smart = if (!incoming && Build.VERSION.SDK_INT >= 29) runCatching { ranking.smartReplies.map { it.toString() } }.getOrDefault(emptyList()) else emptyList()
         Hub.scope.launch {
             val icon = synchronized(icons) { if (icons.containsKey(sbn.packageName)) icons[sbn.packageName] else null } ?: iconOf(sbn.packageName).also { synchronized(icons) { icons[sbn.packageName] = it } }
-            // Islands before 0.20 read no key or actions after the icon; they get the notification as it was.
-            val full = Link.notificationFrame(app, if (incoming && title.isEmpty()) "Incoming call" else title, text, Hub.phoneName(), urgent, icon, key, actions)
+            val shownTitle = if (incoming && title.isEmpty()) "Incoming call" else title
+            // Islands before 0.20 read no key or actions after the icon; they get the notification as it was. 0.29 (revision
+            // 12) gets it in full: its conversation, faces, a picture it carries and suggested replies.
+            val rich by lazy { Link.notificationFrame(app, shownTitle, text, Hub.phoneName(), urgent, icon, key, actions, runCatching { fullOf(sbn, n, title, smart) }.getOrNull()) }
+            val keyed by lazy { Link.notificationFrame(app, shownTitle, text, Hub.phoneName(), urgent, icon, key, actions) }
             val plain by lazy { Link.notificationFrame(app, title, text, Hub.phoneName(), urgent, icon) }
-            targets.forEach { link.notice(it.id, if (it.revision >= 3) full else plain) }
+            targets.forEach { link.notice(it.id, when { it.revision >= NoticeWire.REVISION -> rich; it.revision >= 3 -> keyed; else -> plain }) }
         }
+    }
+
+    /** 1.12: the notification in full, for islands 0.29 and later. Pictures only while "Photos in notifications" is on. */
+    private fun fullOf(sbn: StatusBarNotification, n: Notification, title: String, smart: List<String>): NoticeWire.Full {
+        val x = n.extras; val pictures = Hub.prefs.getBoolean("noticePictures", true)
+        @Suppress("DEPRECATION") val bundles = x.getParcelableArray(Notification.EXTRA_MESSAGES)
+        val raw = if (bundles != null) runCatching { Notification.MessagingStyle.Message.getMessagesFromBundleArray(bundles) }.getOrDefault(emptyList()) else emptyList()
+        val messages = raw.takeLast(8).map { m ->
+            val person = if (Build.VERSION.SDK_INT >= 28) m.senderPerson else null
+            @Suppress("DEPRECATION") val sender = plain(person?.name ?: m.sender)
+            @Suppress("DEPRECATION") val mine = person == null && m.sender == null
+            NoticeWire.Message(sender, plain(m.text), m.timestamp, mine)
+        }
+        val conversationTitle = plain(x.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE))
+        val group = x.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION) || messages.filter { !it.me }.map { it.sender }.distinct().size > 1
+        // A conversation is known by its shortcut (the chat), else by its app and who it's with.
+        val shortcut = if (Build.VERSION.SDK_INT >= 26) n.shortcutId?.takeIf { it.isNotBlank() } else null
+        val conversation = when { shortcut != null -> "${sbn.packageName}|$shortcut"; messages.isNotEmpty() -> "${sbn.packageName}|${conversationTitle.ifEmpty { title }}"; else -> "" }
+        var flags = 0
+        if (group) flags = flags or NoticeWire.GROUP
+        if (messages.isNotEmpty()) flags = flags or NoticeWire.CONVERSATION
+        if (sbn.isClearable) flags = flags or NoticeWire.CLEARABLE
+        val avatar = if (pictures) runCatching { avatarOf(n, raw) }.getOrNull() else null
+        val picture = if (pictures) runCatching { pictureOf(n, raw) }.getOrNull() else null
+        // The reply action's own choices ("Yes", "No"), after Android's suggestions.
+        val choices = n.actions.orEmpty().flatMap { a -> a.remoteInputs.orEmpty().flatMap { r -> r.choices.orEmpty().map { it.toString() } } }
+        return NoticeWire.Full(sbn.packageName, conversation, conversationTitle, flags, sbn.postTime, messages, avatar, picture, smart + choices)
+    }
+    /** The sender's face: the notification's large icon (a contact's photo), else the last sender's own picture. */
+    private fun avatarOf(n: Notification, raw: List<Notification.MessagingStyle.Message>): ByteArray? {
+        val icon = n.getLargeIcon() ?: if (Build.VERSION.SDK_INT >= 28) raw.lastOrNull { it.senderPerson?.icon != null }?.senderPerson?.icon else null
+        val d = icon?.loadDrawable(this) ?: return null
+        return Pictures.square(d, 112, NoticeWire.AVATAR_LIMIT)
+    }
+    /** A picture it carries: a big picture, else the last message's image (when this app may read it). */
+    private fun pictureOf(n: Notification, raw: List<Notification.MessagingStyle.Message>): ByteArray? {
+        val x = n.extras
+        @Suppress("DEPRECATION") val big = if (Build.VERSION.SDK_INT >= 33) x.getParcelable(Notification.EXTRA_PICTURE, Bitmap::class.java) else x.getParcelable(Notification.EXTRA_PICTURE) as? Bitmap
+        if (big != null) return Pictures.jpeg(big, 480, NoticeWire.PICTURE_LIMIT)
+        if (Build.VERSION.SDK_INT >= 31) {
+            @Suppress("DEPRECATION") val icon = if (Build.VERSION.SDK_INT >= 33) x.getParcelable(Notification.EXTRA_PICTURE_ICON, android.graphics.drawable.Icon::class.java) else x.getParcelable(Notification.EXTRA_PICTURE_ICON) as? android.graphics.drawable.Icon
+            icon?.loadDrawable(this)?.let { return Pictures.drawn(it, 480, NoticeWire.PICTURE_LIMIT) }
+        }
+        val m = raw.lastOrNull { it.dataMimeType?.startsWith("image/") == true && it.dataUri != null } ?: return null
+        return Pictures.uri(this, m.dataUri!!, 480, NoticeWire.PICTURE_LIMIT)
     }
 
     /** A notification the phone no longer shows (read, answered, a call picked up): its card leaves the island too. */
@@ -107,7 +159,14 @@ class Mirror : NotificationListenerService() {
         null
     }.getOrNull()
 
+    override fun onListenerDisconnected() { if (running === this) running = null; super.onListenerDisconnected() }
+    override fun onDestroy() { if (running === this) running = null; super.onDestroy() }
+
     companion object {
+        /** 1.12: the listener while Android has it connected (a PC's "dismiss" goes through it). */
+        @Volatile var running: Mirror? = null
+        /** Dismisses one of this phone's notifications, as swiping it away would; false when it can't be. */
+        fun dismiss(sbnKey: String): Boolean = runCatching { val m = running ?: return false; m.cancelNotification(sbnKey); true }.getOrDefault(false)
         /** Invisible direction marks (a caller's number is wrapped in them) are left out. */
         private val marks = Regex("[\u200E\u200F\u202A-\u202E\u2066-\u2069]")
         fun plain(s: CharSequence?): String = s?.toString()?.replace(marks, "")?.trim().orEmpty()

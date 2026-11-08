@@ -26,6 +26,7 @@ class LiveWireTest {
         assertArrayEquals(icon, r.blob(8 * 1024)); assertArrayEquals(tracker, r.blob(8 * 1024))
         assertEquals(0, r.blob(8 * 1024)!!.size); assertEquals(0, r.blob(8 * 1024)!!.size)
         assertArrayEquals(large, r.blob(24 * 1024)); assertArrayEquals(snap, r.blob(64 * 1024))
+        assertEquals("", r.string())   // 1.12: the app's own words (none here)
         assertEquals(0, r.left)
     }
 
@@ -36,12 +37,13 @@ class LiveWireTest {
         val r = Reader(LiveWire.shown(l)); r.u8(); r.u8(); r.u8()
         assertEquals(200, r.string()!!.length); r.string(); r.string()
         assertEquals(200, r.string()!!.length); assertEquals(400, r.string()!!.length); assertEquals(200, r.string()!!.length)
-        assertEquals(0x7F, r.u8()); assertEquals(1000, r.u16())
+        assertEquals(0xFF, r.u8()); assertEquals(1000, r.u16())   // 1.12: every flag bit goes (RIDE is 128)
         assertEquals(10, r.u8()); val lengths = List(10) { r.u16()!!.also { r.u32() } }
         assertEquals(65535, lengths.last()); assertTrue(lengths.zipWithNext().all { (a, b) -> a < b })
         assertEquals(10, r.u8()); repeat(10) { assertEquals(1000, r.u16()); r.u32() }
         assertEquals(0L, r.u64()); assertEquals(0L, r.u32())
         repeat(6) { assertEquals(0, r.blob(1 shl 20)!!.size) }   // too big to send: left out
+        assertEquals("", r.string())
         assertEquals(0, r.left)
     }
 

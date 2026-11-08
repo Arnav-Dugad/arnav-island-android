@@ -1032,13 +1032,15 @@ class Link(
         fun keyPrint(pub: ByteArray): ByteArray = Crypto.sha256(pub).copyOf(10)
         /**
          * A notification for the island: app, title and text (each trimmed), the phone's name, an optional small PNG icon;
-         * with revision 3 its key and up to three actions (a title each, and whether it takes a reply).
+         * with revision 3 its key and up to three actions (a title each, and whether it takes a reply); with revision 12 the
+         * notification in full ([full]: NoticeWire's block, after the actions).
          */
-        fun notificationFrame(app: String, title: String, text: String, phone: String, urgent: Boolean, icon: ByteArray?, key: String = "", actions: List<Pair<String, Boolean>> = emptyList()): ByteArray {
+        fun notificationFrame(app: String, title: String, text: String, phone: String, urgent: Boolean, icon: ByteArray?, key: String = "", actions: List<Pair<String, Boolean>> = emptyList(), full: NoticeWire.Full? = null): ByteArray {
             val lines = listOf(app.take(80), title.take(200), text.take(600), phone.take(64)).joinToString("\n") { it.replace('\n', ' ') }
             val b = Bytes().u8(Proto.FRAME_NOTICE).u8(Proto.NOTICE_NOTIFICATION).u8(if (urgent) 1 else 0).string(lines).blob(icon?.takeIf { it.size <= 24 * 1024 } ?: ByteArray(0))
             b.string(key.take(200)).u8(minOf(actions.size, 3))
             actions.take(3).forEach { (label, reply) -> val t = label.take(24).toByteArray(Charsets.UTF_8); b.u8(if (reply) 1 else 0).u8(t.size).raw(t) }
+            if (full != null) b.raw(NoticeWire.block(full))
             return b.build()
         }
         fun parseLyrics(p: ByteArray): Lyrics? {

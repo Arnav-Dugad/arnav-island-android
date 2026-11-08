@@ -28,8 +28,9 @@ object NoticeActions {
     private var next = 1
 
     /**
-     * The actions the island shows for a notification (at most two: a reply first, as the notification orders them), and
-     * the key they are asked for by. Actions that would open a screen on the phone are left out (they can't from a PC).
+     * The actions the island shows for a notification (1.12: at most three, island 0.29 shows them all; older islands
+     * show the first two: a reply first, as the notification orders them), and the key they are asked for by. Actions that
+     * would open a screen on the phone are left out (they can't from a PC).
      */
     fun offer(sbnKey: String, n: Notification, call: Boolean): Pair<String, List<Pair<String, Boolean>>> {
         val usable = n.actions.orEmpty().filter { a ->
@@ -37,7 +38,7 @@ object NoticeActions {
         }
         val chosen = if (call) usable.take(2) else {
             val reply = usable.firstOrNull { replies(it) }
-            (listOfNotNull(reply) + usable.filter { it !== reply }).take(2)
+            (listOfNotNull(reply) + usable.filter { it !== reply }).take(3)
         }
         val key = synchronized(held) {
             val k = bySbn[sbnKey] ?: "n${next++}"
@@ -53,6 +54,8 @@ object NoticeActions {
     /** Runs an action asked for by a PC: 0 done, 1 the notification is gone, 2 it couldn't be done. */
     fun perform(context: Context, key: String, index: Int, reply: String): Int {
         val h = synchronized(held) { held[key] } ?: return 1
+        // 1.12: a PC dismissed the notification (× on the island, with its "dismiss on my phone" on).
+        if (index == io.github.arnavdugad.arnavisland.link.NoticeWire.DISMISS) return if (Mirror.dismiss(h.sbnKey)) 0 else 2
         val a = h.actions.getOrNull(index) ?: return 2
         return runCatching {
             val inputs = a.remoteInputs?.filter { it.allowFreeFormInput }.orEmpty()

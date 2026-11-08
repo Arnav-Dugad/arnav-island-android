@@ -229,6 +229,9 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
         Entry(1, "Your notifications", "notifications mirror island reply") {
             GlassRow(Icons.Rounded.NotificationsActive, "Your notifications", if (!mirrorAllowed) "Needs notification access" else null, tint = t.danger) {
                 GlassSwitch(mirrorAllowed && flag("mirror"), { on -> if (on && !mirrorAllowed) open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)); set("mirror", on) }) } },
+        // 1.12: faces and photos with notifications (island 0.29), and where the rest is set.
+        Entry(1, "Photos in notifications", "pictures photos faces contact images avatar notifications") {
+            GlassRow(Icons.Rounded.Image, "Photos in notifications", "Faces and photos go to your PC with them", tint = t.pink) { GlassSwitch(flag("noticePictures"), { set("noticePictures", it) }) } },
         Entry(1, "Calls", "calls ringing decline phone") {
             GlassRow(Icons.Rounded.Call, "Calls", tint = t.good) {
                 GlassSwitch(mirrorAllowed && flag("calls"), { on -> if (on && !mirrorAllowed) open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)); set("calls", on) }) } },

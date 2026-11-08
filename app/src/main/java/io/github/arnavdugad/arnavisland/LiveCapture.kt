@@ -53,7 +53,20 @@ object LiveCapture {
         "com.deliveroo.orderapp", "com.theporter.android.customerapp",
         "com.ubercab", "com.olacabs.customer", "com.rapido.passenger", "com.blusmart.rider", "in.juspay.nammayatri", "com.lyft.android",
         "ee.mtakso.client", "com.grabtaxi.passenger", "sinet.startup.inDriver",
+        // 1.12: more of India's: fashion, beauty, medicines, local stores, buses.
+        "com.myntra.android", "com.meesho.supply", "com.ril.ajio", "com.fsn.nykaa", "com.aranoah.healthkart.plus", "com.phonegap.rxpal",
+        "com.magicpin.local", "in.redbus.android",
     )
+    /** 1.12: trips that carry you (marked RIDE as well as TRIP, so the island can tell them from deliveries). */
+    private val rides = setOf("com.ubercab", "com.olacabs.customer", "com.rapido.passenger", "com.blusmart.rider", "in.juspay.nammayatri", "com.lyft.android",
+        "ee.mtakso.client", "com.grabtaxi.passenger", "sinet.startup.inDriver", "in.redbus.android")
+    /** 1.12: words an ongoing notification from an app not listed here uses when it tracks a delivery or a ride. */
+    private val tripWords = listOf("out for delivery", "delivery partner", "delivery executive", "on the way", "picked up", "arriving in", "your order",
+        "order is", "valet", "rider is", "track order", "track your order", "driver is", "captain is", "your ride", "otp", "डिलीवरी", "रास्ते में")
+    private val rideWords = listOf("driver", "captain", "your ride", "pickup", "pick-up", "cab", "auto is", "bike taxi")
+    private fun said(n: Notification): String { val x = n.extras; return listOf(Notification.EXTRA_TITLE, Notification.EXTRA_TEXT, Notification.EXTRA_BIG_TEXT, Notification.EXTRA_SUB_TEXT).joinToString(" ") { x.getCharSequence(it)?.toString().orEmpty() }.lowercase() }
+    private fun saysTrip(n: Notification): Boolean { val s = said(n); return tripWords.any { it in s } }
+    private fun saysRide(n: Notification): Boolean { val s = said(n); return rideWords.any { it in s } }
     private val navigators = setOf("com.google.android.apps.maps", "com.google.android.apps.mapslite", "com.waze", "com.mmi.maps", "com.here.app.maps", "com.sygic.aura")
     private val tracking = setOf(Notification.CATEGORY_PROGRESS, Notification.CATEGORY_TRANSPORT, Notification.CATEGORY_NAVIGATION, Notification.CATEGORY_STATUS, Notification.CATEGORY_SERVICE)
     private const val PROGRESS_STYLE = "android.app.Notification\$ProgressStyle"
@@ -112,9 +125,10 @@ object LiveCapture {
         scheduled.remove(key)
         val sbn = pending.remove(key) ?: return
         last[key] = SystemClock.elapsedRealtime()
-        val picture = runCatching { snapshot(context, sbn.notification) }.getOrNull()
+        // 1.12: the words the app's own view shows come with its picture (many delivery apps say everything there).
+        val words = ArrayList<String>(); val picture = runCatching { snapshot(context, sbn.notification, words) }.getOrNull()
         Hub.scope.launch(lane) {
-            val l = runCatching { extract(context, key, sbn, picture) }.getOrNull(); picture?.recycle(); l ?: return@launch
+            val l = runCatching { extract(context, key, sbn, picture, words.joinToString("\n")) }.getOrNull(); picture?.recycle(); l ?: return@launch
             val frame = LiveWire.shown(l)
             if (frames[key]?.contentEquals(frame) == true) return@launch
             frames.remove(key); frames[key] = frame
@@ -146,14 +160,15 @@ object LiveCapture {
         if (pkg == context.packageName || n.flags and Notification.FLAG_GROUP_SUMMARY != 0 || n.category == Notification.CATEGORY_CALL) return false
         val x = n.extras
         if (x.containsKey(Notification.EXTRA_MEDIA_SESSION) || x.getString(Notification.EXTRA_TEMPLATE)?.contains("MediaStyle") == true) return false
-        val known = pkg in trips || pkg in navigators
+        // 1.12: an app not listed whose ongoing notification reads like a delivery or a ride counts too.
+        val known = pkg in trips || pkg in navigators || (sbn.isOngoing && saysTrip(n))
         if (!known && ranking != null && ranking.importance <= NotificationManager.IMPORTANCE_MIN) return false
         val progress = hasProgress(n); val promoted = promoted(n)
         val chrono = x.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER)
         return (sbn.isOngoing && (progress || promoted || chrono || known)) || (known && (progress || promoted || n.category in tracking))
     }
 
-    private fun extract(context: Context, key: String, sbn: StatusBarNotification, picture: Bitmap?): Live {
+    private fun extract(context: Context, key: String, sbn: StatusBarNotification, picture: Bitmap?, words: String = ""): Live {
         val n = sbn.notification; val x = n.extras; val pkg = sbn.packageName
         val app = names.getOrPut(pkg) { runCatching { context.packageManager.let { pm -> pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } }.getOrDefault(pkg) }
         val title = Mirror.plain(x.getCharSequence(Notification.EXTRA_TITLE) ?: x.getCharSequence(Notification.EXTRA_TITLE_BIG))
@@ -177,7 +192,8 @@ object LiveCapture {
         if (promoted(n)) flags = flags or LiveWire.PROMOTED
         if (max > 0 || indeterminate) flags = flags or LiveWire.PROGRESS
         if (indeterminate) flags = flags or LiveWire.INDETERMINATE
-        if (pkg in trips) flags = flags or LiveWire.TRIP
+        if (pkg in trips || (pkg !in navigators && sbn.isOngoing && saysTrip(n))) flags = flags or LiveWire.TRIP
+        if (pkg in rides || (pkg !in trips && pkg !in navigators && flags and LiveWire.TRIP != 0 && saysRide(n))) flags = flags or LiveWire.RIDE or LiveWire.TRIP
         if (pkg in navigators || n.category == Notification.CATEGORY_NAVIGATION) flags = flags or LiveWire.NAVIGATION
         val now = System.currentTimeMillis()
         val whenMs = when {
@@ -189,7 +205,7 @@ object LiveCapture {
         val large = runCatching { n.getLargeIcon()?.loadDrawable(context) }.getOrNull()?.let { picture(it, LiveWire.LARGE_LIMIT) }
         return Live(key.take(200), app, pkg, title, text, status, flags, if (max > 0) (at.toLong() * 1000 / max).toInt().coerceIn(0, 1000) else 0,
             segments, points, whenMs, accent, icon, tracker?.let { iconPng(context, it) }, startIcon?.let { iconPng(context, it) }, endIcon?.let { iconPng(context, it) },
-            large, picture?.let { jpeg(it, LiveWire.SNAPSHOT_LIMIT) })
+            large, picture?.let { jpeg(it, LiveWire.SNAPSHOT_LIMIT) }, words.take(LiveWire.WORDS_LIMIT))
     }
 
     // Pictures.
@@ -232,22 +248,28 @@ object LiveCapture {
 
     /** The app's own notification view drawn to a picture (main thread), when it has one; null when it hasn't or it can't be drawn. */
     @Suppress("DEPRECATION")
-    private fun snapshot(context: Context, n: Notification): Bitmap? {
+    private fun snapshot(context: Context, n: Notification, words: MutableList<String> = ArrayList()): Bitmap? {
         val big = n.bigContentView; val small = n.contentView
         if (big == null && small == null) return null
-        big?.let { v -> render(context, v, 256)?.let { return it } }
-        small?.let { v -> render(context, v, 128)?.let { return it } }
+        big?.let { v -> render(context, v, 256, words)?.let { return it } }
+        small?.let { v -> render(context, v, 128, words)?.let { return it } }
         val b = runCatching { Notification.Builder.recoverBuilder(context, n) }.getOrNull() ?: return null
-        runCatching { b.createBigContentView() }.getOrNull()?.let { v -> render(context, v, 256)?.let { return it } }
-        runCatching { b.createContentView() }.getOrNull()?.let { v -> render(context, v, 128)?.let { return it } }
+        runCatching { b.createBigContentView() }.getOrNull()?.let { v -> render(context, v, 256, words)?.let { return it } }
+        runCatching { b.createContentView() }.getOrNull()?.let { v -> render(context, v, 128, words)?.let { return it } }
         return null
     }
+    /** 1.12: the text a view shows, each visible TextView's once, in order. */
+    private fun collect(v: View, out: MutableList<String>) {
+        if (v.visibility != View.VISIBLE || out.size >= 24) return
+        if (v is android.widget.TextView) { val t = v.text?.toString()?.replace('\n', ' ')?.trim().orEmpty(); if (t.isNotEmpty() && t !in out) out += t }
+        if (v is android.view.ViewGroup) for (i in 0 until v.childCount) collect(v.getChildAt(i), out)
+    }
     /** RemoteViews laid out 360 dp wide (its own height, at most [capDp]) over the shade's colour. */
-    private fun render(context: Context, views: RemoteViews, capDp: Int): Bitmap? = try {
+    private fun render(context: Context, views: RemoteViews, capDp: Int, words: MutableList<String> = ArrayList()): Bitmap? = try {
         val density = context.resources.displayMetrics.density
         val night = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         val themed = ContextThemeWrapper(context, if (night) android.R.style.Theme_DeviceDefault else android.R.style.Theme_DeviceDefault_Light)
-        val parent = FrameLayout(themed); parent.addView(views.apply(themed, parent))
+        val parent = FrameLayout(themed); parent.addView(views.apply(themed, parent)); collect(parent, words)
         val width = (360 * density).roundToInt(); val cap = (capDp * density).roundToInt()
         val exact = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY)
         parent.measure(exact, View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))

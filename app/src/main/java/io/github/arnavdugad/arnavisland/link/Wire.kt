@@ -18,8 +18,11 @@ object Proto {
      * this phone's camera and microphone on the PC. Revision 10 (1.9, island 0.27): the PC's top apps, temperatures, files,
      * clipboard history, screenshots, slides and a speed test; transfers that resume after a dropped connection; this
      * phone's live activities on the island; compressed microphone audio and a real camera on the PC. Revision 11 (1.11,
-     * island 0.28): the PC's battery health, storage, startup apps, network, Windows Update and its Start menu's apps. */
-    const val REVISION = 11
+     * island 0.28): the PC's battery health, storage, startup apps, network, Windows Update and its Start menu's apps.
+     * Revision 12 (1.12, island 0.29): a notification in full (its conversation, the sender's picture, a picture it carries,
+     * suggested replies: NoticeWire), three actions, the PC dismissing a notification (action NoticeWire.DISMISS), rides
+     * marked apart from deliveries and a live activity's own words. */
+    const val REVISION = 12
     const val TCP_PORT = 47820
     const val UDP_PORT = 47821
     val MAGIC = byteArrayOf('A'.code.toByte(), 'R'.code.toByte(), 'N'.code.toByte(), 'V'.code.toByte())
