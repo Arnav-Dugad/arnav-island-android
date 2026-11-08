@@ -30,13 +30,14 @@ object NoticeActions {
     /**
      * The actions the island shows for a notification (1.12: at most three, island 0.29 shows them all; older islands
      * show the first two: a reply first, as the notification orders them), and the key they are asked for by. Actions that
-     * would open a screen on the phone are left out (they can't from a PC).
+     * would open a screen on the phone are left out (they can't from a PC). 1.13: a call under way ([ongoing]) offers the
+     * dialer's own three (Hang up, Mute, Speaker…).
      */
-    fun offer(sbnKey: String, n: Notification, call: Boolean): Pair<String, List<Pair<String, Boolean>>> {
+    fun offer(sbnKey: String, n: Notification, call: Boolean, ongoing: Boolean = false): Pair<String, List<Pair<String, Boolean>>> {
         val usable = n.actions.orEmpty().filter { a ->
             !a.title.isNullOrBlank() && a.actionIntent != null && !(Build.VERSION.SDK_INT >= 31 && a.actionIntent.isActivity && !call)
         }
-        val chosen = if (call) usable.take(2) else {
+        val chosen = if (call) usable.take(if (ongoing) 3 else 2) else {
             val reply = usable.firstOrNull { replies(it) }
             (listOfNotNull(reply) + usable.filter { it !== reply }).take(3)
         }

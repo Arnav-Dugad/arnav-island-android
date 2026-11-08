@@ -865,6 +865,10 @@ object Hub {
             if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) null
             else { Pages.arrived(app, peers.value.firstOrNull { it.id == peer }?.name ?: "your PC", url, title, scroll); ByteArray(0) }
         }
+        // 1.13 (revision 13): this phone's files, its text messages, and unlocking the PC. Each is off until turned on here.
+        Proto.QUERY_FILES -> PhoneFiles.answer(app, peer, payload)
+        Proto.QUERY_SMS -> Sms.answer(app, payload)
+        Proto.QUERY_UNLOCK -> Unlock.answer(app, peer, payload)
         else -> null
     }
     /** Changes a control at once here ([seen]: what it looks like meanwhile), then on the PC; what the PC says wins. */

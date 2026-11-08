@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- The link with your PCs: TCP and UDP on your own network, and discovery broadcasts. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -35,6 +36,17 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <!-- 1.13: your PCs browse this phone's files, only with Settings › My PCs can browse this phone's files on (off at
+         first) and all files access given in Android's settings. Nothing is ever written or deleted. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
+    <!-- 1.13: text messages on your PCs, only with Settings › Text messages on my PCs on (off at first). Contacts give
+         the conversations their names and faces. -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <!-- 1.13: unlocking your PC, confirmed each time with your fingerprint. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <!-- The camera app, for a photo taken for a PC's Shelf. -->
     <queries>
@@ -59,6 +71,7 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:enableOnBackInvokedCallback="true"
+        android:requestLegacyExternalStorage="true"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"
@@ -116,6 +129,15 @@
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <!-- 1.13: the fingerprint prompt for unlocking a PC (from its notification), and its "Not now". -->
+        <activity
+            android:name=".UnlockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode"
+            android:theme="@style/UnlockTheme" />
+        <receiver android:name=".UnlockReceiver" android:exported="false" />
         <!-- 1.7: Quick Settings tiles for screens, either way. -->
         <service
             android:name=".PcScreenTile"

@@ -211,8 +211,14 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
     val unrestricted = remember(version) { power?.isIgnoringBatteryOptimizations(context.packageName) == true }
     val photoAccess = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> set("recent_photos", granted); RecentPhotos.sync(context) }
     val hotspot by Hub.hotspot.collectAsState(); val hotspotOn by Hub.hotspotOn.collectAsState()
+    // 1.13: what your PCs may ask of this phone: its files, its text messages, unlocking them (each off until turned on).
+    val storageAccess = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> set(PhoneFiles.PREF, granted) }
+    val smsAccess = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { set(Sms.PREF, Sms.permitted(context)) }
+    val unlockPcs by remember { Unlock.init(context); Unlock.pcs }.collectAsState()
+    var forgetting by remember { mutableStateOf<String?>(null) }
     val widgets = remember { AppWidgetManager.getInstance(context) }
     fun open(i: Intent) = runCatching { context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    fun grantFiles() { if (Build.VERSION.SDK_INT >= 30) open(PhoneFiles.accessIntent(context)).onFailure { open(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) } else storageAccess.launch(Manifest.permission.READ_EXTERNAL_STORAGE) }
     val entries = listOf(
         Entry(0, "Reach my PCs anywhere", "internet relay mobile data network anywhere") {
             val anywhere = flag("internet")
@@ -250,6 +256,27 @@ private val SettingsPages = listOf("Connection", "On your PC’s island", "On th
                 GlassSwitch(flag("recent_photos", false) && RecentPhotos.permitted(context), { on -> if (on && !RecentPhotos.permitted(context)) photoAccess.launch(RecentPhotos.permission()) else { set("recent_photos", on); RecentPhotos.sync(context) } }) } },
         Entry(1, "Universal clipboard", "clipboard copy paste") {
             GlassRow(Icons.Rounded.ContentPaste, "Universal clipboard", tint = t.indigo) { GlassSwitch(flag("clipboard"), { set("clipboard", it) }) } },
+        // 1.13 (island 0.30): your PCs browse this phone's files and take them; read only.
+        Entry(1, "My PCs can browse this phone’s files", "files browse storage folders downloads documents photos take all files access") {
+            val wanted = flag(PhoneFiles.PREF, false); val ok = PhoneFiles.permitted(context)
+            GlassRow(Icons.Rounded.FolderOpen, "Files on my PCs", if (wanted && !ok) "Needs all files access: tap to allow" else "My PCs can browse this phone’s files and take them; nothing is changed", tint = t.blue,
+                onClick = if (wanted && !ok) ({ grantFiles() }) else null) {
+                GlassSwitch(wanted && ok, { on -> set(PhoneFiles.PREF, on); if (on && !ok) grantFiles() }) } },
+        Entry(1, "Text messages on my PCs", "sms text messages read send reply conversations mms") {
+            val wanted = flag(Sms.PREF, false); val ok = Sms.permitted(context)
+            GlassRow(Icons.Rounded.Sms, "Text messages on my PCs", if (wanted && !ok) "Needs SMS permission" else "Read and send them from your PC", tint = t.good) {
+                GlassSwitch(wanted && ok, { on -> if (on && !ok) smsAccess.launch(Sms.asked) else set(Sms.PREF, on) }) } },
+        Entry(1, "Unlock my PC", "unlock pc windows fingerprint biometric password sign in lock screen") {
+            Column {
+                GlassRow(Icons.Rounded.Fingerprint, "Unlock my PC", if (unlockPcs.isEmpty()) "Set it up from your PC’s island" else "With your fingerprint, each time", tint = t.good)
+                unlockPcs.forEach { (id, name) ->
+                    Hairline()
+                    GlassRow(Icons.Rounded.Computer, name, "Set up", tint = t.gray) {
+                        GlassButton({ if (forgetting == id) { Unlock.forget(id); forgetting = null } else forgetting = id }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) {
+                            Text(if (forgetting == id) "Tap again" else "Forget", style = Type.bodyStrong, color = t.danger) }
+                    }
+                }
+            } },
         Entry(2, "Your PC’s music player", "lock screen media player quick settings") {
             GlassRow(Icons.Rounded.MusicNote, "Your PC’s music player", "Lock screen and quick settings", tint = t.pink) {
                 GlassSwitch(flag("pcMedia"), { on -> set("pcMedia", on); if (on) PcMedia.update(context, Hub.pc(), Hub.status.value) else PcMedia.clear(context) }) } },

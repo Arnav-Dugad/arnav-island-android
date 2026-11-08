@@ -21,8 +21,10 @@ object Proto {
      * island 0.28): the PC's battery health, storage, startup apps, network, Windows Update and its Start menu's apps.
      * Revision 12 (1.12, island 0.29): a notification in full (its conversation, the sender's picture, a picture it carries,
      * suggested replies: NoticeWire), three actions, the PC dismissing a notification (action NoticeWire.DISMISS), rides
-     * marked apart from deliveries and a live activity's own words. */
-    const val REVISION = 12
+     * marked apart from deliveries and a live activity's own words. Revision 13 (1.13, island 0.30): the PC browses this
+     * phone's files (query 5) and its text messages (query 6), the phone unlocks the PC (query 7, notice 9: UnlockWire),
+     * and a call under way goes to the PC too (NoticeWire.ONGOING_CALL). */
+    const val REVISION = 13
     const val TCP_PORT = 47820
     const val UDP_PORT = 47821
     val MAGIC = byteArrayOf('A'.code.toByte(), 'R'.code.toByte(), 'N'.code.toByte(), 'V'.code.toByte())
@@ -81,6 +83,12 @@ object Proto {
     /** Revision 8, the PC asking: 3 a photo just taken (u64 its id, u8 1 to paste / 2 for the Shelf, u32 the ask its offer
      * carries); 4 a web page to open here (f32 how far down, 0..1, below 0 unknown; its address; its title). */
     const val QUERY_PHOTO = 3; const val QUERY_PAGE = 4
+    /** Revision 13, the PC asking: 5 this phone's files (FilesWire), 6 its text messages (SmsWire), 7 unlocking the PC (UnlockWire). */
+    const val QUERY_FILES = 5; const val QUERY_SMS = 6; const val QUERY_UNLOCK = 7
+    /** Revision 13: this phone's answer to an unlock question (UnlockWire.notice). */
+    const val NOTICE_UNLOCK = 9
+    /** Revision 13: the most an answer to a question may carry (it travels in one frame); pictures beyond it are left out. */
+    const val ANSWER_BUDGET = 240 * 1024
     /** Revision 8: a web page to open on the PC where it was scrolled to (f32 how far down, its address, its title). */
     const val CMD_PAGE = 19
     /**

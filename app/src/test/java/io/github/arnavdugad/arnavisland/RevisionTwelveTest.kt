@@ -13,7 +13,7 @@ import org.junit.Test
 /** 1.12: island 0.29's notifications in full (PROTOCOL-12), laid out as the island reads them. */
 class RevisionTwelveTest {
     @Test fun the_numbers_are_the_specs() {
-        assertEquals(12, Proto.REVISION); assertEquals(Proto.REVISION, NoticeWire.REVISION)
+        assertTrue(Proto.REVISION >= 12); assertEquals(12, NoticeWire.REVISION)
         assertEquals(0xE1, NoticeWire.MARK); assertEquals(255, NoticeWire.DISMISS); assertEquals(128, LiveWire.RIDE)
     }
 

@@ -6,6 +6,8 @@ package io.github.arnavdugad.arnavisland.link
  * when it was posted (u64 ms), up to eight of the conversation's messages (sender, text, u64 ms, u8 1 when this phone's owner
  * sent it), the sender's picture (<= 24 KB), a picture the message carries (<= 64 KB) and up to five suggested replies.
  * Islands before 0.29 stop reading after the actions, so they get the notification as before.
+ * Revision 13 (island 0.30): a call under way is sent too, urgent, flagged [ONGOING_CALL], with `posted` the moment it was
+ * answered; islands before 0.30 never get one.
  */
 object NoticeWire {
     const val REVISION = 12
@@ -13,6 +15,8 @@ object NoticeWire {
     /** The action number a PC sends to have this phone dismiss the notification. */
     const val DISMISS = 255
     const val GROUP = 1; const val CONVERSATION = 2; const val CLEARABLE = 8
+    /** Revision 13: a call under way (only islands of [CALL_REVISION] or later are sent one). */
+    const val ONGOING_CALL = 16; const val CALL_REVISION = 13
     const val AVATAR_LIMIT = 24 * 1024; const val PICTURE_LIMIT = 64 * 1024
 
     data class Message(val sender: String, val text: String, val time: Long, val me: Boolean)
@@ -20,6 +24,14 @@ object NoticeWire {
         val pkg: String, val conversation: String = "", val title: String = "", val flags: Int = 0, val posted: Long = 0,
         val messages: List<Message> = emptyList(), val avatar: ByteArray? = null, val picture: ByteArray? = null, val replies: List<String> = emptyList(),
     )
+
+    /**
+     * When a call under way was answered: the time its chronometer counts from when it shows one (the dialer sets it to
+     * the moment the call was picked up), else when the notification was posted.
+     */
+    fun answeredAt(chronometer: Boolean, `when`: Long, posted: Long): Long = if (chronometer && `when` > 0) `when` else posted
+    /** A call under way, in full: its app, [ONGOING_CALL] and when it was answered. */
+    fun ongoingCall(pkg: String, answered: Long, title: String = "") = Full(pkg, "", title, ONGOING_CALL, answered)
 
     /** The block, marker and length first. Text is cut to what the island keeps; pictures too large are left out. */
     fun block(f: Full): ByteArray {

@@ -5,4 +5,13 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
+    <!-- 1.13: the fingerprint prompt for unlocking a PC, over a see-through screen. AppCompat, as androidx.biometric's
+         fingerprint dialog (used on some Android 9 phones) needs it. -->
+    <style name="UnlockTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

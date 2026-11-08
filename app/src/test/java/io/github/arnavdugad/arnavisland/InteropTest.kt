@@ -237,6 +237,111 @@ class InteropTest {
         } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
     }
 
+    /**
+     * Revision 13 (island 0.30): the PC asks this phone (mode Q) for its files, its text messages and to unlock it, and
+     * reads each answer as the island does; a file asked for comes with the PC's ask; the unlock answer (notice 9) reaches
+     * the PC whole and opens with the PC's unlock key; a call under way is flagged so. The phone's storage is a made-up
+     * folder and its messages are made up (never a real phone's).
+     */
+    @Test fun the_phone_answers_revision_thirteen() {
+        val exe = System.getenv("ARNAV_SHARE_PEER"); assumeTrue("ARNAV_SHARE_PEER not set", exe != null && File(exe).exists())
+        val work = Files.createTempDirectory("arnav-r13").toFile(); val phoneDir = File(work, "phone").apply { mkdirs() }
+        val pcPort = 47939
+        val process = ProcessBuilder(exe, pcPort.toString(), File(work, "pc").path).redirectErrorStream(true).start()
+        val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
+        thread(isDaemon = true) { while (true) { val l = reader.readLine() ?: break; println("PC: $l"); lines.put(l) } }
+        val pc = process.outputStream.bufferedWriter(Charsets.UTF_8)
+        fun tell(cmd: String) { pc.write(cmd); pc.newLine(); pc.flush() }
+        val phone = Link(MemoryStore(), "Test Phone", FolderInbox(phoneDir), { events.put(it) }, Link.Options(tcpPort = 0, discovery = false, loopback = true))
+        // The phone's storage: a Download folder with a report, Notes with two notes, and a hidden file.
+        val storage = File(work, "storage").apply { mkdirs() }
+        val report = ByteArray(120_000) { (it * 11 + 1).toByte() }
+        File(storage, "Download").mkdirs(); File(storage, "Download/report.pdf").writeBytes(report)
+        File(storage, "Notes").mkdirs(); File(storage, "Notes/a.txt").writeText("first"); File(storage, "Notes/b.txt").writeText("second"); File(storage, ".secret").writeText("no")
+        val lister = FilesWire.Lister({ listOf(FilesWire.Root(storage, "Internal storage", FilesWire.PLACE)) },
+            { listOf(FilesWire.Root(storage, "Internal storage", FilesWire.PLACE), FilesWire.Root(File(storage, "Download"), "Downloads", FilesWire.PLACE)) })
+        val conversations = listOf(SmsWire.Thread(12, "+15551234", "Mum", "Dinner at 8?", 1_760_000_000_000, 1, 0, ByteArray(500) { 4 }),
+            SmsWire.Thread(9, "+15559999", "+15559999", "On my way", 1_759_000_000_000, 0, SmsWire.LAST_MINE, null))
+        val chat = listOf(SmsWire.Message(31, "Dinner at 8?", 1_760_000_000_000, 0, null), SmsWire.Message(30, "Home soon", 1_759_900_000_000, SmsWire.MINE, ByteArray(3_000) { 6 }))
+        val unlockAsked = LinkedBlockingQueue<UnlockWire.Request>(); val sent = LinkedBlockingQueue<String>()
+        try {
+            assertTrue(phone.start())
+            val pcId = line("READY ").split(' ')[0]
+            phone.addPeer(pcId, "Interop PC", "127.0.0.1", pcPort, 2, 13)
+            tell("peer ${phone.identity} ${phone.port}"); line("OK peer")
+            phone.pair(pcId); await<LinkEvent.PairCode>(); phone.confirmPair(true); assertTrue(await<LinkEvent.Paired>().ok); line("PAIRED ok")
+            phone.onQuery = { peer, command, payload -> assertEquals(pcId, peer)
+                when (command) {
+                    Proto.QUERY_FILES -> when (val r = FilesWire.request(payload)) {
+                        is FilesWire.Listing -> lister.answer(r)
+                        is FilesWire.Send -> lister.sources(r.path)?.let { (title, folder, items) -> phone.send(peer, items, title, folder = folder, ask = r.ask); FilesWire.state(FilesWire.LISTED) } ?: FilesWire.state(FilesWire.NOT_FOUND)
+                        null -> null
+                    }
+                    Proto.QUERY_SMS -> when (val r = SmsWire.request(payload)) {
+                        is SmsWire.Threads -> SmsWire.threads(conversations.drop(r.offset).take(r.max))
+                        is SmsWire.Messages -> SmsWire.messages(chat.filter { r.before == 0L || it.date < r.before }.take(r.max))
+                        is SmsWire.Send -> { sent.put("${r.address}|${r.text}"); SmsWire.state(SmsWire.OK) }
+                        is SmsWire.Read -> SmsWire.state(SmsWire.FAILED)
+                        null -> SmsWire.state(SmsWire.FAILED)
+                    }
+                    Proto.QUERY_UNLOCK -> UnlockWire.request(payload)?.let { unlockAsked.put(it); UnlockWire.answer(if (it.op == UnlockWire.UNLOCK && it.pcName == "Not set up") UnlockWire.NOT_SET_UP else UnlockWire.ASKED) }
+                    else -> null
+                }
+            }
+            fun ask(command: Int, payload: ByteArray, tag: Int): ByteArray { tell("query ${phone.identity} $command ${if (payload.isEmpty()) "-" else payload.hex()} $tag"); val h = line("QUERYREPLY $command $tag "); return if (h == "-") ByteArray(0) else h.unhex()!! }
+
+            // Query 5: the phone's places, a folder in them, and nothing outside its storage or hidden.
+            val places = IslandWire.files(ask(Proto.QUERY_FILES, FilesWire.listRequest(""), 11))!!
+            assertEquals(listOf("Internal storage", "Downloads"), places.entries.map { it.name }); assertEquals(listOf(3, 3), places.entries.map { it.kind })
+            val top = IslandWire.files(ask(Proto.QUERY_FILES, FilesWire.listRequest(storage.path), 12))!!
+            assertEquals(listOf("Download", "Notes"), top.entries.map { it.name }); assertEquals("Internal storage", top.title); assertEquals("", top.parent)
+            val download = IslandWire.files(ask(Proto.QUERY_FILES, FilesWire.listRequest(File(storage, "Download").path, sort = 2, thumbs = true), 13))!!
+            assertEquals("report.pdf", download.entries.single().name); assertEquals(120_000L, download.entries.single().size); assertEquals(storage.path, download.parent)
+            assertArrayEquals(byteArrayOf(4), ask(Proto.QUERY_FILES, FilesWire.listRequest(work.path), 14))
+            assertArrayEquals(byteArrayOf(4), ask(Proto.QUERY_FILES, FilesWire.listRequest(File(storage, ".secret").path), 15))
+            // A folder sent to the PC with its ask: the PC takes it without asking.
+            assertArrayEquals(byteArrayOf(1), ask(Proto.QUERY_FILES, FilesWire.sendRequest(File(storage, "Notes").path, 4242), 16))
+            assertEquals("2 11", line("OFFER ")); assertEquals("0 0 4242 Notes", line("OFFERPIC ")); assertTrue(line("RECEIVED ").endsWith("|ask 4242")); await<LinkEvent.Sent>()
+            assertEquals("first", File(work, "pc/dl/Notes/a.txt").readText()); assertEquals("second", File(work, "pc/dl/Notes/b.txt").readText())
+            assertArrayEquals(byteArrayOf(1), ask(Proto.QUERY_FILES, FilesWire.sendRequest(File(storage, "Download/report.pdf").path, 4243), 17))
+            assertEquals("0 0 4243 report.pdf", line("OFFERPIC ")); assertTrue(line("RECEIVED ").endsWith("|ask 4243")); await<LinkEvent.Sent>()
+            assertArrayEquals(report, File(work, "pc/dl/report.pdf").readBytes())
+
+            // Query 6: the conversations, one's messages (oldest first), a message sent; marking read isn't this app's to do.
+            val threads = SmsWire.parseThreads(ask(Proto.QUERY_SMS, SmsWire.threadsRequest(0, 50), 21))!!
+            assertEquals(listOf("Mum", "+15559999"), threads.map { it.name }); assertEquals(500, threads[0].photo!!.size); assertEquals(SmsWire.LAST_MINE, threads[1].flags)
+            val messages = SmsWire.parseMessages(ask(Proto.QUERY_SMS, SmsWire.messagesRequest(12, 0, 50), 22))!!
+            assertEquals(listOf("Home soon", "Dinner at 8?"), messages.map { it.text }); assertEquals(3_000, messages[0].picture!!.size); assertEquals(SmsWire.MINE, messages[0].flags)
+            assertArrayEquals(byteArrayOf(1), ask(Proto.QUERY_SMS, SmsWire.sendRequest("+15551234", "Leaving now ✓"), 23)); assertEquals("+15551234|Leaving now ✓", sent.poll(5, TimeUnit.SECONDS))
+            assertArrayEquals(byteArrayOf(5), ask(Proto.QUERY_SMS, SmsWire.readRequest(12), 24))
+
+            // Query 7: set up, asked here; the answer (notice 9) reaches the PC whole and opens only with its unlock key.
+            val cp = Crypto.newKeyPair(); val nonce = Crypto.random(32)
+            assertArrayEquals(byteArrayOf(1), ask(Proto.QUERY_UNLOCK, UnlockWire.enrolRequest(UnlockWire.point(cp.public), "Interop PC", nonce), 31))
+            val enrol = unlockAsked.poll(5, TimeUnit.SECONDS)!!; assertEquals(UnlockWire.ENROL, enrol.op); assertArrayEquals(nonce, enrol.nonce)
+            val k = Crypto.random(32)
+            assertTrue(phone.notice(pcId, UnlockWire.notice(enrol.op, UnlockWire.YES, enrol.nonce!!, UnlockWire.seal(enrol.op, enrol.nonce!!, enrol.cpPublic!!, k))))
+            val (head, envelope) = UnlockWire.parseNotice(line("UNLOCKNOTICE ").unhex()!!)!!
+            assertEquals(UnlockWire.ENROL, head.first); assertEquals(UnlockWire.YES, head.second); assertArrayEquals(nonce, head.third)
+            assertArrayEquals(k, UnlockWire.open(head.first, head.third, envelope!!, cp.private))
+            // An unlock declined here, and one for a PC not set up.
+            val nonce2 = Crypto.random(32)
+            assertArrayEquals(byteArrayOf(1), ask(Proto.QUERY_UNLOCK, UnlockWire.unlockRequest(nonce2, "Interop PC"), 32)); unlockAsked.poll(5, TimeUnit.SECONDS)
+            assertTrue(phone.notice(pcId, UnlockWire.notice(UnlockWire.UNLOCK, UnlockWire.DECLINED, nonce2)))
+            assertEquals("0102" + "20000000" + nonce2.hex(), line("UNLOCKNOTICE "))
+            assertArrayEquals(byteArrayOf(3), ask(Proto.QUERY_UNLOCK, UnlockWire.unlockRequest(nonce2, "Not set up"), 33))
+            // A question this phone can't answer.
+            tell("query ${phone.identity} 99 - 41"); assertEquals("99 41", line("QUERYFAIL "))
+
+            // A call under way: urgent, flagged, with the dialer's three buttons.
+            assertTrue(phone.notice(pcId, Link.notificationFrame("Phone", "Mum", "Call in progress", "Test Phone", true, null, "c1", listOf("Hang up" to false, "Mute" to false, "Speaker" to false),
+                NoticeWire.ongoingCall("com.google.android.dialer", 1_761_700_000_000, "Mum"))))
+            assertEquals("Phone|Mum|Call in progress|0|1|c1|Hang up|Mute|Speaker", line("PHONENOTICE "))
+            // (share_peer prints the group and clearable bits, not the call's; RevisionThirteenTest checks its flag byte by byte.)
+            assertEquals("com.google.android.dialer||Mum|00||0|0||1", line("NOTICEFULL "))
+        } finally { runCatching { tell("quit") }; phone.stop(); process.waitFor(5, TimeUnit.SECONDS); process.destroy() }
+    }
+
     @Test fun phone_and_windows_island_speak_the_same_protocol() {
         val exe = System.getenv("ARNAV_SHARE_PEER"); assumeTrue("ARNAV_SHARE_PEER not set", exe != null && File(exe).exists())
         val work = Files.createTempDirectory("arnav-interop").toFile(); val phoneDir = File(work, "phone").apply { mkdirs() }

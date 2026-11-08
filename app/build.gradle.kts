@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.arnavdugad.arnavisland"
         minSdk = 28
         targetSdk = 36
-        versionCode = 23
-        versionName = "1.12.0"
+        versionCode = 24
+        versionName = "1.13.0"
     }
     signingConfigs {
         if (System.getenv("ARNAVISLAND_KEYSTORE") != null) create("release") {
@@ -66,6 +66,10 @@ dependencies {
     // 1.9: App Functions, so Gemini (and other agents on Android 16+) can run the app's actions on your PC.
     implementation("androidx.appfunctions:appfunctions:1.0.0-alpha13")
     ksp("androidx.appfunctions:appfunctions-compiler:1.0.0-alpha13")
+    // 1.13: unlocking your PC: the fingerprint prompt over a Keystore key that opens only for a strong biometric.
+    implementation("androidx.biometric:biometric:1.1.0")
+    // biometric 1.1.0 brings Fragment 1.2, older than the Activity Result APIs need (lint stops a release on it).
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250107")

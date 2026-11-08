@@ -43,40 +43,46 @@ class Mirror : NotificationListenerService() {
         if (!Hub.prefs.getBoolean("mirror", true)) return
         val n = sbn.notification ?: return
         val call = n.category == Notification.CATEGORY_CALL
-        // An incoming call rings with a full-screen screen (or says so, Android 12+); a call under way is left out.
+        // An incoming call rings with a full-screen screen (or says so, Android 12+). 1.13: a call under way goes too, but
+        // only to islands that show one (0.30).
         val incoming = call && (n.fullScreenIntent != null || n.extras.getInt("android.callType", 0) == 1)
-        if (call && (!incoming || !Hub.prefs.getBoolean("calls", true))) return
-        if (sbn.packageName == packageName || (sbn.isOngoing && !incoming) || n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
+        val ongoingCall = call && !incoming
+        if (call && !Hub.prefs.getBoolean("calls", true)) return
+        if (sbn.packageName == packageName || (sbn.isOngoing && !call) || n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         if (n.category in skipped || n.visibility == Notification.VISIBILITY_SECRET) return
-        val ranking = Ranking(); if (!incoming && currentRanking?.getRanking(sbn.key, ranking) == true && ranking.importance < android.app.NotificationManager.IMPORTANCE_DEFAULT) return
+        val ranking = Ranking(); if (!call && currentRanking?.getRanking(sbn.key, ranking) == true && ranking.importance < android.app.NotificationManager.IMPORTANCE_DEFAULT) return
         val extras = n.extras
         val title = plain(extras.getCharSequence(Notification.EXTRA_TITLE))
         val text = plain(extras.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extras.getCharSequence(Notification.EXTRA_TEXT))
-            .ifEmpty { if (incoming) "Incoming call" else "" }
+            .ifEmpty { if (incoming) "Incoming call" else if (ongoingCall) "Call in progress" else "" }
         if (title.isEmpty() && text.isEmpty()) return
         // A conversation whose newest message is your own (a reply, from the island or here) isn't news.
-        if (Build.VERSION.SDK_INT >= 28 && ownLast(extras)) return
-        // An update saying the same words, or one the app makes quietly, isn't sent again.
-        val words = title + "\u0000" + text
+        if (!call && Build.VERSION.SDK_INT >= 28 && ownLast(extras)) return
+        // An update saying the same words, or one the app makes quietly, isn't sent again; but a call that was answered
+        // (the same notification, now under way) is.
+        val words = (if (ongoingCall) "\u0001" else "") + title + "\u0000" + text
         synchronized(sent) {
             val before = sent[sbn.key]
-            if (before != null && (before == words || n.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)) return
+            if (before != null && (before == words || (!call && n.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0))) return
             sent.remove(sbn.key); sent[sbn.key] = words
             while (sent.size > 300) sent.remove(sent.keys.first())
         }
         val link = Hub.link ?: return
-        val targets = Hub.peers.value.filter { it.paired && it.online && it.remote && !it.phone }; if (targets.isEmpty()) return
+        val targets = Hub.peers.value.filter { it.paired && it.online && it.remote && !it.phone && (!ongoingCall || it.revision >= NoticeWire.CALL_REVISION) }; if (targets.isEmpty()) return
         val app = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString() }.getOrDefault(sbn.packageName)
         val urgent = call || n.category == Notification.CATEGORY_ALARM
-        val (key, actions) = NoticeActions.offer(sbn.key, n, incoming)
+        val (key, actions) = NoticeActions.offer(sbn.key, n, call, ongoing = ongoingCall)
         // 1.12: the replies Android suggests for it (smart replies), read now while its ranking is at hand.
-        val smart = if (!incoming && Build.VERSION.SDK_INT >= 29) runCatching { ranking.smartReplies.map { it.toString() } }.getOrDefault(emptyList()) else emptyList()
+        val smart = if (!call && Build.VERSION.SDK_INT >= 29) runCatching { ranking.smartReplies.map { it.toString() } }.getOrDefault(emptyList()) else emptyList()
         Hub.scope.launch {
             val icon = synchronized(icons) { if (icons.containsKey(sbn.packageName)) icons[sbn.packageName] else null } ?: iconOf(sbn.packageName).also { synchronized(icons) { icons[sbn.packageName] = it } }
-            val shownTitle = if (incoming && title.isEmpty()) "Incoming call" else title
+            val shownTitle = if (incoming && title.isEmpty()) "Incoming call" else if (ongoingCall && title.isEmpty()) "Call" else title
             // Islands before 0.20 read no key or actions after the icon; they get the notification as it was. 0.29 (revision
             // 12) gets it in full: its conversation, faces, a picture it carries and suggested replies.
-            val rich by lazy { Link.notificationFrame(app, shownTitle, text, Hub.phoneName(), urgent, icon, key, actions, runCatching { fullOf(sbn, n, title, smart) }.getOrNull()) }
+            // 1.13: a call under way, flagged so, with when it was answered (its chronometer counts from then).
+            val full = if (ongoingCall) NoticeWire.ongoingCall(sbn.packageName, NoticeWire.answeredAt(n.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER), n.`when`, sbn.postTime), title)
+                else runCatching { fullOf(sbn, n, title, smart) }.getOrNull()
+            val rich by lazy { Link.notificationFrame(app, shownTitle, text, Hub.phoneName(), urgent, icon, key, actions, full) }
             val keyed by lazy { Link.notificationFrame(app, shownTitle, text, Hub.phoneName(), urgent, icon, key, actions) }
             val plain by lazy { Link.notificationFrame(app, title, text, Hub.phoneName(), urgent, icon) }
             targets.forEach { link.notice(it.id, when { it.revision >= NoticeWire.REVISION -> rich; it.revision >= 3 -> keyed; else -> plain }) }
